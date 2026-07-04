@@ -78,7 +78,21 @@ export const api = {
       version: string;
       authEnabled: boolean;
       authMethod: 'none' | 'pin' | 'password';
+      handoffEnabled?: boolean;
     }>,
+
+  // Trade a session-scoped handoff cookie (set after redeeming a QR) for normal
+  // access/refresh tokens. Only needed when PowerCodeDeck auth is enabled.
+  handoffExchange: () =>
+    fetch(`${API_BASE}/auth/handoff/exchange`, { method: 'POST', credentials: 'same-origin' })
+      .then(async (r) => {
+        if (!r.ok) throw new Error('handoff exchange failed');
+        return r.json() as Promise<{ accessToken: string; refreshToken: string; sessionId: string }>;
+      })
+      .then((data) => {
+        setTokens(data.accessToken, data.refreshToken);
+        return data;
+      }),
 
   // Submit a PIN or password; the server accepts the credential in `secret`.
   login: (secret: string) =>
@@ -97,6 +111,20 @@ export const api = {
   getAgent: (id: string) => apiFetch(`/agents/${id}`),
   deleteAgent: (id: string) => apiFetch(`/agents/${id}`, { method: 'DELETE' }),
   restartAgent: (id: string) => apiFetch(`/agents/${id}/restart`, { method: 'POST' }),
+
+  // Session Handoff — issue a one-time "Continue on Mobile" token + QR URLs.
+  createHandoff: (id: string) =>
+    apiFetch<{
+      token: string;
+      sessionId: string;
+      expiresAt: string;
+      ttlSeconds: number;
+      publicUrl: string;
+      localUrl: string;
+      lanEnabled: boolean;
+      authEnabled: boolean;
+      warning: string;
+    }>(`/agents/${id}/handoff`, { method: 'POST' }),
 
   // Files
   fileTree: (agentId: string, depth?: number) =>

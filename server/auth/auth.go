@@ -87,6 +87,50 @@ func (s *AuthService) VerifyToken(tokenStr string) error {
 	return nil
 }
 
+// GenerateHandoffCookie mints a short-lived JWT scoped to a single session. It
+// is set as an httpOnly cookie after a one-time handoff token is redeemed, so
+// the mobile browser can exchange it for normal access tokens without ever
+// seeing a PIN/password. It is NOT full app access — it names one session.
+func (s *AuthService) GenerateHandoffCookie(sessionID string) (string, error) {
+	claims := jwt.MapClaims{
+		"iat":       time.Now().Unix(),
+		"exp":       time.Now().Add(30 * time.Minute).Unix(),
+		"type":      "handoff",
+		"sessionId": sessionID,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(s.jwtSecret)
+}
+
+// VerifyHandoffCookie validates a handoff cookie and returns the session id it
+// is bound to.
+func (s *AuthService) VerifyHandoffCookie(cookie string) (string, error) {
+	if cookie == "" {
+		return "", errors.New("empty handoff cookie")
+	}
+	token, err := jwt.Parse(cookie, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return s.jwtSecret, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || !token.Valid {
+		return "", errors.New("invalid handoff cookie")
+	}
+	if t, _ := claims["type"].(string); t != "handoff" {
+		return "", errors.New("not a handoff cookie")
+	}
+	sessionID, _ := claims["sessionId"].(string)
+	if sessionID == "" {
+		return "", errors.New("handoff cookie missing session")
+	}
+	return sessionID, nil
+}
+
 func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (string, error) {
 	token, err := jwt.Parse(refreshTokenStr, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {

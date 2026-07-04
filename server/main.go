@@ -48,6 +48,8 @@ func main() {
 	gitSvc := services.NewGitService()
 	portScanner := services.NewPortScanner()
 	notifSvc := services.NewNotificationService(database)
+	handoffSvc := services.NewHandoffService(database)
+	handoffSvc.CleanupExpired()
 
 	// WebSocket hub
 	hub := ws.NewHub(ptySvc, watcherSvc, agentSvc, gitSvc, portScanner, notifSvc)
@@ -68,8 +70,8 @@ func main() {
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w,
-			`{"status":"ok","appName":%q,"version":%q,"authEnabled":%t,"authMethod":%q}`,
-			version.AppName, version.Version, cfg.AuthEnabled, cfg.AuthMethod,
+			`{"status":"ok","appName":%q,"version":%q,"authEnabled":%t,"authMethod":%q,"handoffEnabled":%t}`,
+			version.AppName, version.Version, cfg.AuthEnabled, cfg.AuthMethod, cfg.HandoffEnabled,
 		)
 	}
 	r.HandleFunc("/api/auth/health", healthHandler).Methods("GET")
@@ -80,6 +82,8 @@ func main() {
 	authRouter.Use(authLimiter.Middleware)
 	authRouter.HandleFunc("/login", handlers.Login(authSvc)).Methods("POST", "OPTIONS")
 	authRouter.HandleFunc("/refresh", handlers.Refresh(authSvc)).Methods("POST", "OPTIONS")
+	// Handoff exchange: trade a session-scoped handoff cookie for normal tokens.
+	authRouter.HandleFunc("/handoff/exchange", handlers.HandoffExchange(authSvc)).Methods("POST", "OPTIONS")
 
 	// Protected API endpoints
 	api := r.PathPrefix("/api").Subrouter()
@@ -130,6 +134,13 @@ func main() {
 	api.HandleFunc("/agents/{id}/meta/progress", handlers.SetAgentMetaProgress(hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}/meta/log", handlers.AddAgentMetaLog(hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}/notifications/read", handlers.MarkAgentNotificationsRead(notifSvc)).Methods("POST")
+
+	// Session Handoff — issue a one-time "Continue on Mobile" token/QR for a session.
+	api.HandleFunc("/agents/{id}/handoff", handlers.CreateHandoff(handoffSvc, agentSvc, cfg)).Methods("POST")
+
+	// Session Handoff redeem — scanned from a QR. No bearer auth: the one-time
+	// token itself is the credential. Registered before the SPA/static catch-all.
+	r.HandleFunc("/handoff/{token}", handlers.RedeemHandoff(handoffSvc, agentSvc, authSvc, cfg)).Methods("GET")
 
 	// WebSocket (auth via query param; skipped in no-auth mode)
 	r.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -196,9 +207,10 @@ func main() {
 
 	url := fmt.Sprintf("http://localhost:%s", cfg.Port)
 
-	// Start server in goroutine
+	// Start server in goroutine. BindHost defaults to 127.0.0.1 (localhost only);
+	// set POWERCODEDECK_BIND_HOST=0.0.0.0 to expose it on the LAN for handoff.
 	go func() {
-		if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
+		if err := http.ListenAndServe(cfg.BindHost+":"+cfg.Port, r); err != nil {
 			log.Fatal(err)
 		}
 	}()
@@ -307,6 +319,13 @@ func printBanner(cfg *config.Config, url string) {
 		fmt.Printf("  %s authentication is disabled.\n", version.AppName)
 		fmt.Println("  Do not expose this service directly to the public internet.")
 		fmt.Println("  Use Caddy + Authelia, Tailscale, VPN, or SSH tunnel.")
+		fmt.Println()
+	}
+	if !cfg.AuthEnabled && cfg.LanHandoffEnabled {
+		fmt.Println("  Warning (LAN handoff):")
+		fmt.Println("  Authentication is disabled and LAN handoff is enabled.")
+		fmt.Println("  Anyone on the same network who can reach this URL may open handoff links.")
+		fmt.Println("  Enable PIN/password auth or keep the service behind VPN/Tailscale.")
 		fmt.Println()
 	}
 	fmt.Println("     Browser will open automatically.")

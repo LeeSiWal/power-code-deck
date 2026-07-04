@@ -20,6 +20,12 @@ PowerCodeDeck의 다음 주요 기능은 **멀티 에이전트 관제실(Control
 
 ## 완료됨
 
+### Session Handoff (Continue on Mobile) — 구현 완료
+- 데스크톱 세션을 모바일 / iPad로 이어받는 핸드오프 기능. **구현 완료.**
+- QR 코드 + **일회용 토큰**(SHA-256 해시 저장, 기본 10분 TTL, 단일 사용, 세션 바인딩)으로 인계.
+- Public URL / LAN 핸드오프 지원, 바인드 호스트 설정 가능(기본 `127.0.0.1`).
+- 도착 시 모바일 Prompt Bar 자동 확장. 자세한 내용은 [README](README.md#session-handoff) · [CHANGELOG.md](CHANGELOG.md) 참고.
+
 ### v0.2.0 — PowerCodeDeck Renewal
 - AgentDeck → PowerCodeDeck 리브랜딩, 버전 관리 도입
 - 선택형 인증(none/PIN/password), 기본값 인증 없음

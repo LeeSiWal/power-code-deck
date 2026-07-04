@@ -36,21 +36,30 @@ export default function App() {
   const setAuthConfig = useAppStore((s) => s.setAuthConfig);
 
   // Fetch auth config once on boot. In no-auth mode this marks the user as
-  // authenticated so the login page is skipped.
+  // authenticated so the login page is skipped. When arriving from a handoff QR
+  // with auth enabled and no local token, exchange the handoff cookie for one.
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromHandoff = params.get('from') === 'handoff';
+
     api.getAuthConfig()
-      .then((cfg) =>
+      .then(async (cfg) => {
+        if (fromHandoff && cfg.authEnabled && !localStorage.getItem('accessToken')) {
+          // Redeemed a QR: trade the httpOnly handoff cookie for real tokens.
+          await api.handoffExchange().catch(() => {});
+        }
         setAuthConfig({
           appName: cfg.appName,
           version: cfg.version,
           authEnabled: cfg.authEnabled,
           authMethod: cfg.authMethod,
-        }),
-      )
+          handoffEnabled: cfg.handoffEnabled ?? true,
+        });
+      })
       .catch(() =>
         // If health is unreachable, fall back to auth-enabled so we don't
         // accidentally expose an unauthenticated app.
-        setAuthConfig({ appName: 'PowerCodeDeck', version: '', authEnabled: true, authMethod: 'pin' }),
+        setAuthConfig({ appName: 'PowerCodeDeck', version: '', authEnabled: true, authMethod: 'pin', handoffEnabled: true }),
       );
   }, [setAuthConfig]);
 

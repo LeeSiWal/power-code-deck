@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"powercodedeck/auth"
@@ -23,10 +24,18 @@ type Config struct {
 	PasswordHash  string
 	JWTSecret     string
 	Port          string
+	BindHost      string // interface to bind (default 127.0.0.1; 0.0.0.0 for LAN)
 	DBPath        string
 	CORSOrigins   string
 	WorkspaceRoot string // default root for the project browser (optional)
 	SetupMode     bool   // true when this run performed first-run setup
+
+	// Session Handoff (Continue on Mobile)
+	PublicURL         string // e.g. https://pcd.example.com — base for QR handoff URLs
+	HandoffEnabled    bool   // whether the handoff feature is available (default true)
+	HandoffTokenTTL   int    // one-time token lifetime in seconds (default 600)
+	LanHandoffEnabled bool   // expose a http://<lan-ip>:<port> handoff URL as well
+	LanURL            string // explicit LAN base URL; overrides auto-detected IP
 }
 
 // Load reads configuration from the environment / .env file.
@@ -49,10 +58,22 @@ func Load() *Config {
 		PasswordHash:  envDual("PASSWORD_HASH"),
 		JWTSecret:     envDual("JWT_SECRET"),
 		Port:          envDual("PORT"),
+		BindHost:      envDual("BIND_HOST"),
 		DBPath:        envDual("DB_PATH"),
 		CORSOrigins:   envDual("CORS_ORIGINS"),
 		WorkspaceRoot: envDual("WORKSPACE_ROOT"),
+		PublicURL:     strings.TrimRight(envDual("PUBLIC_URL"), "/"),
+		LanURL:        strings.TrimRight(envDual("LAN_URL"), "/"),
 	}
+
+	// Handoff feature — enabled by default; only "false" turns it off.
+	if v, ok := envDualLookup("HANDOFF_ENABLED"); ok {
+		cfg.HandoffEnabled = parseBool(v)
+	} else {
+		cfg.HandoffEnabled = true
+	}
+	cfg.LanHandoffEnabled = parseBool(envDual("LAN_HANDOFF_ENABLED"))
+	cfg.HandoffTokenTTL = parseIntDefault(envDual("HANDOFF_TOKEN_TTL_SECONDS"), 600)
 
 	authEnabledStr, authEnabledSet := envDualLookup("AUTH_ENABLED")
 	authMethod := envDual("AUTH_METHOD")
@@ -94,6 +115,12 @@ func Load() *Config {
 	}
 	if cfg.Port == "" {
 		cfg.Port = "33033"
+	}
+	if cfg.BindHost == "" {
+		cfg.BindHost = "127.0.0.1"
+	}
+	if cfg.HandoffTokenTTL <= 0 {
+		cfg.HandoffTokenTTL = 600
 	}
 	if cfg.DBPath == "" {
 		cfg.DBPath = resolveDBPath()
@@ -202,6 +229,31 @@ func envDualLookup(name string) (string, bool) {
 	return "", false
 }
 
+func defaultStr(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
+func defaultInt(n, def int) int {
+	if n <= 0 {
+		return def
+	}
+	return n
+}
+
+func parseIntDefault(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
+}
+
 func parseBool(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "1", "true", "yes", "on":
@@ -271,9 +323,16 @@ func saveEnvFile(cfg *Config) {
 	fmt.Fprintf(&b, "POWERCODEDECK_PASSWORD_HASH=%s\n", cfg.PasswordHash)
 	fmt.Fprintf(&b, "POWERCODEDECK_JWT_SECRET=%s\n", cfg.JWTSecret)
 	fmt.Fprintf(&b, "POWERCODEDECK_PORT=%s\n", cfg.Port)
+	fmt.Fprintf(&b, "POWERCODEDECK_BIND_HOST=%s\n", defaultStr(cfg.BindHost, "127.0.0.1"))
 	fmt.Fprintf(&b, "POWERCODEDECK_DB_PATH=%s\n", cfg.DBPath)
 	fmt.Fprintf(&b, "POWERCODEDECK_CORS_ORIGINS=%s\n", cfg.CORSOrigins)
 	fmt.Fprintf(&b, "POWERCODEDECK_WORKSPACE_ROOT=%s\n", cfg.WorkspaceRoot)
+	b.WriteString("\n# Session Handoff (Continue on Mobile)\n")
+	fmt.Fprintf(&b, "POWERCODEDECK_PUBLIC_URL=%s\n", cfg.PublicURL)
+	fmt.Fprintf(&b, "POWERCODEDECK_HANDOFF_ENABLED=%t\n", cfg.HandoffEnabled)
+	fmt.Fprintf(&b, "POWERCODEDECK_HANDOFF_TOKEN_TTL_SECONDS=%d\n", defaultInt(cfg.HandoffTokenTTL, 600))
+	fmt.Fprintf(&b, "POWERCODEDECK_LAN_HANDOFF_ENABLED=%t\n", cfg.LanHandoffEnabled)
+	fmt.Fprintf(&b, "POWERCODEDECK_LAN_URL=%s\n", cfg.LanURL)
 
 	os.WriteFile(envFilePath(), []byte(b.String()), 0600)
 }

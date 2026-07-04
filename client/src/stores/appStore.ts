@@ -46,6 +46,7 @@ export interface AuthConfig {
   version: string;
   authEnabled: boolean;
   authMethod: 'none' | 'pin' | 'password';
+  handoffEnabled: boolean;
 }
 
 interface AppState {

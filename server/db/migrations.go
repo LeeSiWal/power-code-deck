@@ -59,6 +59,24 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(agent_id, read);
 `
 
+// Session Handoff — one-time tokens for "Continue on Mobile". Only the SHA-256
+// hash of the token is stored; the raw token never touches the database.
+const handoffMigration = `
+CREATE TABLE IF NOT EXISTS handoff_tokens (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    session_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_by TEXT,
+    client_ip TEXT,
+    user_agent TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_handoff_session ON handoff_tokens(session_id);
+CREATE INDEX IF NOT EXISTS idx_handoff_expires ON handoff_tokens(expires_at);
+`
+
 func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return err
@@ -76,6 +94,9 @@ func Migrate(db *sql.DB) error {
 
 	// Notifications table
 	db.Exec(notificationMigration)
+
+	// Handoff tokens table
+	db.Exec(handoffMigration)
 
 	return nil
 }

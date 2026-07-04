@@ -30,6 +30,7 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 - [인증](#인증)
 - [보안 주의](#보안-주의)
 - [사용법](#사용법)
+- [Session Handoff](#session-handoff)
 - [설정](#설정)
 - [CLI 커맨드](#cli-커맨드)
 - [기술 스택](#기술-스택)
@@ -336,6 +337,68 @@ PowerCodeDeck은 하나의 **Interactive Terminal**을 기본으로 사용합니
 
 ---
 
+## Session Handoff
+
+데스크톱에서 실행 중인 터미널 또는 Claude 코딩 세션을 **모바일 / iPad로 그대로 이어받는** 기능입니다.
+QR 코드 한 번 스캔으로, 같은 tmux 세션에 그대로 붙어 이어서 작업할 수 있습니다.
+
+1. 데스크톱에서 터미널 또는 Claude 세션을 엽니다.
+2. **Continue on Mobile**(모바일에서 이어하기) 버튼을 클릭합니다.
+3. 화면에 표시된 QR 코드를 휴대폰/iPad로 스캔합니다.
+4. 모바일 / iPad에서 같은 세션을 이어서 사용합니다 — 한글·긴 프롬프트 입력을 위해 **Prompt Bar가 자동으로 펼쳐집니다.**
+
+### 일회용 토큰 (one-time token)
+
+핸드오프 링크에 담기는 토큰은 **일회용**이며, 다음 규칙으로 보호됩니다:
+
+- **만료** — 기본 10분(`POWERCODEDECK_HANDOFF_TOKEN_TTL_SECONDS=600`) 후 자동 만료됩니다.
+- **단일 사용(single-use)** — 한 번 사용(redeem)되면 즉시 무효화됩니다.
+- **세션 바인딩** — 발급 시점의 특정 세션에만 연결되어, 다른 에이전트/세션으로는 사용할 수 없습니다.
+- **원문 미저장** — 원문 토큰(raw token)은 데이터베이스에 저장되지 않습니다. **SHA-256 해시만** 저장하고 대조합니다.
+
+### Public URL
+
+리버스 프록시나 도메인 뒤에서 운영한다면, QR 코드에 넣을 외부 접근 주소를 지정합니다:
+
+```env
+POWERCODEDECK_PUBLIC_URL=https://pcd.example.com
+```
+
+### Local Wi-Fi Handoff
+
+같은 Wi-Fi(LAN)에서 휴대폰으로 바로 이어받으려면, **서버가 휴대폰에서 접근 가능해야** 합니다.
+기본값(`127.0.0.1`)은 로컬 전용이므로, LAN 핸드오프를 쓰려면 바인드 호스트와 LAN 주소를 지정합니다:
+
+```env
+POWERCODEDECK_BIND_HOST=0.0.0.0
+POWERCODEDECK_LAN_HANDOFF_ENABLED=true
+POWERCODEDECK_LAN_URL=http://192.168.0.25:33033
+```
+
+> `POWERCODEDECK_LAN_URL`의 IP는 데스크톱의 실제 LAN IP로 바꿔주세요.
+
+### 보안 경고
+
+핸드오프는 서버를 휴대폰에서 접근 가능하게 만들 수 있으므로, **인증 없이 PowerCodeDeck을 직접 노출하지 마세요.**
+
+- PIN / password 인증을 켜거나, Caddy + Authelia, Tailscale, VPN, SSH 터널 뒤에 배치하세요.
+- 특히 **인증이 꺼져 있고(`AUTH_ENABLED=false`) LAN 핸드오프가 켜져 있으면**(`LAN_HANDOFF_ENABLED=true`, `BIND_HOST=0.0.0.0`), 같은 네트워크의 누구나 세션에 접근할 수 있습니다. 신뢰할 수 있는 네트워크에서만 사용하세요.
+
+### 관련 환경변수
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `POWERCODEDECK_PUBLIC_URL` | (빈 값) | QR/핸드오프 링크에 사용할 외부 공개 URL |
+| `POWERCODEDECK_HANDOFF_ENABLED` | `true` | Session Handoff 기능 사용 여부 |
+| `POWERCODEDECK_HANDOFF_TOKEN_TTL_SECONDS` | `600` | 일회용 토큰 만료 시간(초, 기본 10분) |
+| `POWERCODEDECK_LAN_HANDOFF_ENABLED` | `false` | 같은 LAN에서의 핸드오프 허용 여부 |
+| `POWERCODEDECK_LAN_URL` | (빈 값) | LAN 핸드오프 시 QR에 사용할 주소 (예: `http://192.168.0.25:33033`) |
+| `POWERCODEDECK_BIND_HOST` | `127.0.0.1` | 서버 바인드 호스트. LAN 핸드오프에는 `0.0.0.0` 필요 |
+
+> `POWERCODEDECK_*` prefix를 권장하며, 기존 `AGENTDECK_*` 환경변수도 하위 호환을 위해 계속 지원됩니다.
+
+---
+
 ## 설정
 
 ### 환경변수 (`.env`)
@@ -353,6 +416,12 @@ PowerCodeDeck은 하나의 **Interactive Terminal**을 기본으로 사용합니
 | `POWERCODEDECK_DB_PATH` | `./powercodedeck.db` | SQLite 데이터베이스 경로 |
 | `POWERCODEDECK_CORS_ORIGINS` | `http://localhost:33033` | CORS 허용 origin |
 | `POWERCODEDECK_WORKSPACE_ROOT` | (빈 값) | 프로젝트 탐색 기본 루트 |
+| `POWERCODEDECK_BIND_HOST` | `127.0.0.1` | 서버 바인드 호스트. LAN 핸드오프에는 `0.0.0.0` 필요 |
+| `POWERCODEDECK_PUBLIC_URL` | (빈 값) | QR/핸드오프 링크에 사용할 외부 공개 URL |
+| `POWERCODEDECK_HANDOFF_ENABLED` | `true` | Session Handoff(모바일에서 이어하기) 사용 여부 |
+| `POWERCODEDECK_HANDOFF_TOKEN_TTL_SECONDS` | `600` | 일회용 핸드오프 토큰 만료 시간(초) |
+| `POWERCODEDECK_LAN_HANDOFF_ENABLED` | `false` | 같은 LAN에서의 핸드오프 허용 여부 |
+| `POWERCODEDECK_LAN_URL` | (빈 값) | LAN 핸드오프 시 QR에 사용할 주소 |
 
 > 기존 `AGENTDECK_*` 환경변수도 하위 호환을 위해 계속 지원됩니다.
 > 동일한 값이 함께 존재하면 `POWERCODEDECK_*`가 우선됩니다.

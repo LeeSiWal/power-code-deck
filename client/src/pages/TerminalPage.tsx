@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { TerminalView, type TerminalHandle } from '../components/terminal/TerminalView';
 import { MobileToolbar } from '../components/terminal/MobileToolbar';
 import { TerminalKeyBar } from '../components/terminal/TerminalKeyBar';
 import { PromptBar } from '../components/terminal/PromptBar';
+import { HandoffModal } from '../components/terminal/HandoffModal';
 import { FileExplorer } from '../components/file/FileExplorer';
 import { FilePreview } from '../components/file/FilePreview';
 import { FileEditor } from '../components/file/FileEditor';
@@ -25,9 +26,13 @@ type CenterTab = 'terminal' | 'editor';
 export function TerminalPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isMobile, isTablet, isTouchDevice } = useDevice();
+  const handoffEnabled = useAppStore((s) => s.authConfig?.handoffEnabled ?? true);
   const [agent, setAgent] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<CenterTab>('terminal');
+  const [handoffOpen, setHandoffOpen] = useState(false);
+  const [handoffToast, setHandoffToast] = useState(false);
 
   // Single interactive terminal + a device-aware Prompt Bar for Korean / long
   // prompts. Touch devices (mobile / iPad) can't reliably compose Korean in
@@ -95,6 +100,21 @@ export function TerminalPage() {
       api.getAgent(agentId).then(setAgent).catch(() => navigate('/dashboard'));
     }
   }, [agentId, navigate]);
+
+  // Arrived from a handoff QR — expand the Prompt Bar (Korean / long prompts)
+  // and briefly confirm the connection, then strip the query param.
+  useEffect(() => {
+    if (searchParams.get('from') !== 'handoff') return;
+    setPromptOpen(true);
+    setPromptCollapsed(false);
+    setHandoffToast(true);
+    const t = window.setTimeout(() => setHandoffToast(false), 5000);
+    const next = new URLSearchParams(searchParams);
+    next.delete('from');
+    setSearchParams(next, { replace: true });
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!agentId) return;
@@ -215,6 +235,15 @@ export function TerminalPage() {
           {AgentIcon && <AgentIcon size={18} />}
           <span className="font-medium text-sm truncate flex-1">{agent.name}</span>
           <StatusBadge status={agent.status} />
+          {handoffEnabled && (
+            <button
+              onClick={() => setHandoffOpen(true)}
+              className="p-1.5 rounded active:bg-deck-border/30 text-sm"
+              title="모바일에서 이어하기"
+            >
+              📱
+            </button>
+          )}
           <button
             onClick={() => setMobileAnimOpen(true)}
             className={`p-1.5 rounded active:bg-deck-border/30 ${mobileAnimOpen ? 'bg-purple-500/20' : ''}`}
@@ -326,6 +355,19 @@ export function TerminalPage() {
           </div>
         )}
 
+        {/* Handoff arrival toast */}
+        {handoffToast && (
+          <div className="fixed left-1/2 -translate-x-1/2 top-16 z-[55] px-4 py-2.5 rounded-lg text-xs text-center shadow-xl bg-deck-surface border border-deck-accent/40 text-deck-text max-w-[90%]">
+            PC에서 작업하던 세션에 연결되었습니다.<br />
+            한글/긴 프롬프트는 하단 <span className="text-deck-accent font-medium">Prompt Bar</span>에서 입력하세요.
+          </div>
+        )}
+
+        {/* Continue on Mobile modal */}
+        {handoffOpen && (
+          <HandoffModal agentId={agentId} agentName={agent.name} onClose={() => setHandoffOpen(false)} />
+        )}
+
         {/* File bottom sheet */}
         <FileBottomSheet
           open={mobileFilesOpen}
@@ -385,6 +427,16 @@ export function TerminalPage() {
         <span className="font-medium text-sm truncate">{agent.name}</span>
         <StatusBadge status={agent.status} />
         <span className="text-xs ml-auto truncate text-deck-text-dim">{agent.workingDir}</span>
+
+        {handoffEnabled && (
+          <button
+            onClick={() => setHandoffOpen(true)}
+            className="text-xs px-2 py-0.5 rounded transition-colors bg-deck-bg text-deck-text-dim hover:bg-deck-accent/20 hover:text-deck-accent"
+            title="Continue on Mobile — 모바일에서 이어하기"
+          >
+            📱 이어하기
+          </button>
+        )}
 
         {!forcePromptBar && (
           <button
@@ -563,6 +615,18 @@ export function TerminalPage() {
         <div className="fixed left-1/2 -translate-x-1/2 bottom-24 z-50 px-4 py-2 rounded-lg text-xs text-center shadow-xl bg-deck-surface border border-deck-accent/40 text-deck-text max-w-[90%]">
           한글 입력은 하단 <span className="text-deck-accent font-medium">Prompt Bar</span>를 사용하면 자모 분리를 피할 수 있습니다.
         </div>
+      )}
+
+      {/* Handoff arrival toast */}
+      {handoffToast && (
+        <div className="fixed left-1/2 -translate-x-1/2 top-16 z-[55] px-4 py-2.5 rounded-lg text-xs text-center shadow-xl bg-deck-surface border border-deck-accent/40 text-deck-text max-w-[90%]">
+          PC에서 작업하던 세션에 연결되었습니다. 한글/긴 프롬프트는 <span className="text-deck-accent font-medium">Prompt Bar</span>에서 입력하세요.
+        </div>
+      )}
+
+      {/* Continue on Mobile modal */}
+      {handoffOpen && (
+        <HandoffModal agentId={agentId} agentName={agent.name} onClose={() => setHandoffOpen(false)} />
       )}
     </div>
   );

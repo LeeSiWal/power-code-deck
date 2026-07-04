@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## v0.2.1 — Session Handoff
+
+### Added
+- **Session Handoff (Continue on Mobile)** — hand off an active terminal or Claude session from desktop to mobile / iPad by scanning a one-time QR code, attaching to the same tmux session.
+  - One-time handoff tokens: **SHA-256 hashed** (raw tokens are never stored in the database), **10-minute TTL** by default, **single-use**, and **session-bound**.
+  - New `POST /api/agents/:id/handoff` API to mint a handoff token/QR, and `GET /handoff/:token` redeem endpoint.
+  - Session-scoped handoff cookie set on redeem so the mobile client lands on the correct session.
+  - LAN + public URL support: QR encodes `POWERCODEDECK_PUBLIC_URL` (proxy/domain) or `POWERCODEDECK_LAN_URL` (same Wi-Fi) as configured.
+  - Configurable server bind host via `POWERCODEDECK_BIND_HOST` (default `127.0.0.1`; set `0.0.0.0` for LAN handoff).
+  - Mobile **Prompt Bar auto-expands** on handoff arrival for Korean / long prompts.
+- New environment variables: `POWERCODEDECK_PUBLIC_URL`, `POWERCODEDECK_HANDOFF_ENABLED` (default `true`), `POWERCODEDECK_HANDOFF_TOKEN_TTL_SECONDS` (default `600`), `POWERCODEDECK_LAN_HANDOFF_ENABLED` (default `false`), `POWERCODEDECK_LAN_URL`, `POWERCODEDECK_BIND_HOST` (default `127.0.0.1`).
+
+### Security
+- Raw handoff tokens are never persisted — only their SHA-256 hash is stored and compared.
+- Tokens expire (default 10 min), are single-use, and are bound to a specific session.
+- Documentation warns against exposing PowerCodeDeck directly without authentication — especially when auth is disabled **and** LAN handoff is enabled — recommending PIN/password auth, Caddy + Authelia, Tailscale, VPN, or an SSH tunnel.
+
+### Compatibility
+- All new handoff variables honor the legacy `AGENTDECK_*` prefix as well; `POWERCODEDECK_*` wins when both are set.
+
 ## v0.2.0 — PowerCodeDeck Renewal
 
 ### Changed
