@@ -1,6 +1,8 @@
 package ws
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -46,7 +48,7 @@ var upgrader = websocket.Upgrader{
 
 type Hub struct {
 	clients     sync.Map
-	ptySvc      *services.PtyService
+	engine      services.SessionEngine
 	watcherSvc  *services.WatcherService
 	agentSvc    *services.AgentService
 	gitSvc      *services.GitService
@@ -54,9 +56,9 @@ type Hub struct {
 	notifSvc    *services.NotificationService
 }
 
-func NewHub(ptySvc *services.PtyService, watcherSvc *services.WatcherService, agentSvc *services.AgentService, gitSvc *services.GitService, portScanner *services.PortScanner, notifSvc *services.NotificationService) *Hub {
+func NewHub(engine services.SessionEngine, watcherSvc *services.WatcherService, agentSvc *services.AgentService, gitSvc *services.GitService, portScanner *services.PortScanner, notifSvc *services.NotificationService) *Hub {
 	h := &Hub{
-		ptySvc:      ptySvc,
+		engine:      engine,
 		watcherSvc:  watcherSvc,
 		agentSvc:    agentSvc,
 		gitSvc:      gitSvc,
@@ -111,9 +113,10 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		hub:  h,
-		conn: conn,
-		send: make(chan []byte, 256),
+		hub:      h,
+		conn:     conn,
+		send:     make(chan []byte, 256),
+		viewerID: newViewerID(),
 	}
 	h.clients.Store(client, true)
 
@@ -126,9 +129,18 @@ func (h *Hub) unregister(c *Client) {
 	close(c.send)
 
 	if c.watchingAgent != "" {
-		h.ptySvc.Close(c.watchingAgent)
+		// A browser closing is a viewer Detach — the session process lives on.
+		h.engine.Detach(c.watchingAgent, c.viewerID)
 		h.watcherSvc.Unwatch(c.watchingAgent)
 	}
+}
+
+// newViewerID returns a random id identifying a single WebSocket connection as a
+// SessionEngine viewer.
+func newViewerID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func (h *Hub) handleMessage(c *Client, msg WSMessage) {
@@ -141,18 +153,12 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		h.handleTerminalAttach(c, payload)
 
 	case EventTerminalDetach:
+		// Detach the viewer only — the session process is NEVER killed here.
 		var payload TerminalAttachPayload
-		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-			if c.watchingAgent != "" {
-				h.ptySvc.Close(c.watchingAgent)
-				c.watchingAgent = ""
-			}
-			return
-		}
-
+		_ = json.Unmarshal(msg.Payload, &payload)
 		if payload.AgentID == "" || c.watchingAgent == payload.AgentID {
 			if c.watchingAgent != "" {
-				h.ptySvc.Close(c.watchingAgent)
+				h.engine.Detach(c.watchingAgent, c.viewerID)
 				c.watchingAgent = ""
 			}
 		}
@@ -162,28 +168,28 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return
 		}
-		h.ptySvc.Write(payload.AgentID, []byte(payload.Data))
+		h.engine.Write(payload.AgentID, []byte(payload.Data))
 
 	case EventTerminalResize:
 		var payload TerminalResizePayload
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return
 		}
-		h.ptySvc.Resize(payload.AgentID, payload.Cols, payload.Rows)
+		h.engine.Resize(payload.AgentID, int(payload.Cols), int(payload.Rows))
 
 	case EventTerminalPasteSubmit:
 		var payload TerminalPastePayload
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return
 		}
-		h.ptySvc.Write(payload.AgentID, []byte(buildPasteData(payload.Text, payload.Mode, true)))
+		h.engine.Write(payload.AgentID, []byte(buildPasteData(payload.Text, payload.Mode, true)))
 
 	case EventTerminalPasteOnly:
 		var payload TerminalPastePayload
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return
 		}
-		h.ptySvc.Write(payload.AgentID, []byte(buildPasteData(payload.Text, payload.Mode, false)))
+		h.engine.Write(payload.AgentID, []byte(buildPasteData(payload.Text, payload.Mode, false)))
 
 	case EventFileWatch:
 		var payload FileWatchPayload
@@ -202,42 +208,40 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 }
 
 func (h *Hub) handleTerminalAttach(c *Client, payload TerminalAttachPayload) {
-	agent, err := h.agentSvc.Get(payload.AgentID)
-	if err != nil {
+	if _, err := h.agentSvc.Get(payload.AgentID); err != nil {
 		log.Printf("Agent not found: %s", payload.AgentID)
 		return
 	}
 
-	// Close previous attachment if any
+	// Leaving a previous session is a viewer Detach — never a Kill.
 	if c.watchingAgent != "" && c.watchingAgent != payload.AgentID {
-		h.ptySvc.Close(c.watchingAgent)
+		h.engine.Detach(c.watchingAgent, c.viewerID)
 	}
-
 	c.watchingAgent = payload.AgentID
 
-	// Attach to tmux session via PTY
-	if !h.ptySvc.HasSession(payload.AgentID) {
-		cols := payload.Cols
-		rows := payload.Rows
-		if cols == 0 {
-			cols = 80
-		}
-		if rows == 0 {
-			rows = 24
-		}
+	res, err := h.engine.Attach(payload.AgentID, c.viewerID)
+	if err != nil {
+		log.Printf("Failed to attach session %s: %v", payload.AgentID, err)
+		return
+	}
 
-		_, err := h.ptySvc.AttachTmux(payload.AgentID, agent.TmuxSession, cols, rows)
-		if err != nil {
-			log.Printf("Failed to attach PTY for %s: %v", payload.AgentID, err)
-			return
-		}
+	// Apply this viewer's terminal size.
+	cols := payload.Cols
+	rows := payload.Rows
+	if cols == 0 {
+		cols = 80
+	}
+	if rows == 0 {
+		rows = 24
+	}
+	h.engine.Resize(payload.AgentID, int(cols), int(rows))
 
-		// Start reading PTY output
-		go h.ptySvc.ReadPump(payload.AgentID, func(data []byte) {
-			h.BroadcastToAgent(payload.AgentID, EventTerminalOutput, TerminalOutputPayload{
-				AgentID: payload.AgentID,
-				Data:    string(data),
-			})
+	// Replay scrollback to this viewer only (nil for the tmux engine, which
+	// relies on tmux redrawing the pane on attach).
+	if res != nil && len(res.Replay) > 0 {
+		c.sendEvent(EventTerminalOutput, TerminalOutputPayload{
+			AgentID: payload.AgentID,
+			Data:    string(res.Replay),
 		})
 	}
 }

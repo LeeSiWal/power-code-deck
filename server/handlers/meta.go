@@ -56,7 +56,7 @@ func SendToAgent(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc 
 			jsonError(w, "agent not found", http.StatusNotFound)
 			return
 		}
-		if err := agentSvc.SendKeys(agent.TmuxSession, body.Data); err != nil {
+		if err := agentSvc.SendKeys(agent.ID, body.Data); err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

@@ -38,9 +38,10 @@ func main() {
 	database := db.Init(cfg.DBPath)
 
 	// Services
-	tmuxSvc := services.NewTmuxService()
-	ptySvc := services.NewPtyService()
-	agentSvc := services.NewAgentService(database, tmuxSvc, ptySvc)
+	// The SessionEngine hides tmux/PTY behind an interface; today it is the
+	// tmux-backed implementation. handlers/hub/agent never touch tmux directly.
+	sessionEngine := services.NewTmuxSessionEngine()
+	agentSvc := services.NewAgentService(database, sessionEngine)
 	fileSvc := services.NewFileService()
 	watcherSvc := services.NewWatcherService()
 	projectSvc := services.NewProjectService(database)
@@ -52,8 +53,16 @@ func main() {
 	handoffSvc.CleanupExpired()
 
 	// WebSocket hub
-	hub := ws.NewHub(ptySvc, watcherSvc, agentSvc, gitSvc, portScanner, notifSvc)
+	hub := ws.NewHub(sessionEngine, watcherSvc, agentSvc, gitSvc, portScanner, notifSvc)
 	go hub.Run()
+
+	// Session output → broadcast to every viewer of that session.
+	sessionEngine.SetOutputHandler(func(sessionID string, data []byte) {
+		hub.BroadcastToAgent(sessionID, ws.EventTerminalOutput, ws.TerminalOutputPayload{
+			AgentID: sessionID,
+			Data:    string(data),
+		})
+	})
 
 	// Router
 	r := mux.NewRouter()

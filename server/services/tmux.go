@@ -69,6 +69,14 @@ func (s *TmuxService) SendKeys(sessionName, keys string) error {
 	return cmd.Run()
 }
 
+// SendKeysRaw sends bytes literally (no key-name interpretation, no appended
+// Enter) — used by the SessionEngine to deliver input when no viewer PTY is
+// attached. A trailing CR in the data submits.
+func (s *TmuxService) SendKeysRaw(sessionName, data string) error {
+	cmd := exec.Command("tmux", "send-keys", "-t", sessionName, "-l", data)
+	return cmd.Run()
+}
+
 func (s *TmuxService) CapturePane(sessionName string) (string, error) {
 	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", "-100")
 	out, err := cmd.Output()

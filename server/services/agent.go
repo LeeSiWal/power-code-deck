@@ -34,13 +34,12 @@ var colorPool = []struct {
 }
 
 type AgentService struct {
-	db      *sql.DB
-	tmuxSvc *TmuxService
-	ptySvc  *PtyService
+	db     *sql.DB
+	engine SessionEngine
 }
 
-func NewAgentService(db *sql.DB, tmuxSvc *TmuxService, ptySvc *PtyService) *AgentService {
-	return &AgentService{db: db, tmuxSvc: tmuxSvc, ptySvc: ptySvc}
+func NewAgentService(db *sql.DB, engine SessionEngine) *AgentService {
+	return &AgentService{db: db, engine: engine}
 }
 
 func (s *AgentService) List() ([]Agent, error) {
@@ -63,10 +62,10 @@ func (s *AgentService) List() ([]Agent, error) {
 	}
 	rows.Close()
 
-	// Second: check tmux status and update DB after rows are closed
+	// Second: check session status and update DB after rows are closed
 	for i := range agents {
 		a := &agents[i]
-		if s.tmuxSvc.HasSession(a.TmuxSession) {
+		if s.engine.HasSession(a.ID) {
 			if a.Status != "running" {
 				a.Status = "running"
 				s.db.Exec("UPDATE agents SET status = 'running', updated_at = datetime('now') WHERE id = ?", a.ID)
@@ -152,16 +151,25 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 	b := make([]byte, 4)
 	rand.Read(b)
 	id := hex.EncodeToString(b)
-	tmuxSession := s.tmuxSvc.GenerateSessionName(id)
+	// Legacy DB column value; the session id used everywhere is the agent id.
+	tmuxSession := "pcd-" + id
 
 	argsJSON, _ := json.Marshal(req.Args)
 
 	// Assign color
 	colorHue, colorName := s.assignColor()
 
-	// Create tmux session
-	if err := s.tmuxSvc.CreateSession(tmuxSession, req.WorkingDir, req.Command, req.Args); err != nil {
-		return nil, fmt.Errorf("failed to create tmux session: %w", err)
+	// Start the session's process via the engine (tmux/PTY details are hidden).
+	if _, err := s.engine.Create(CreateSessionRequest{
+		ID:      id,
+		Type:    req.Preset,
+		Command: req.Command,
+		Args:    req.Args,
+		Cwd:     req.WorkingDir,
+		Cols:    80,
+		Rows:    24,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to start session: %w", err)
 	}
 
 	now := time.Now().Format("2006-01-02T15:04:05Z")
@@ -185,7 +193,7 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 		agent.ID, agent.Preset, agent.Name, agent.TmuxSession, agent.WorkingDir, agent.Command, string(argsJSON), agent.Status, agent.ColorHue, agent.ColorName,
 	)
 	if err != nil {
-		s.tmuxSvc.KillSession(tmuxSession)
+		s.engine.Kill(id)
 		return nil, err
 	}
 
@@ -193,15 +201,14 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 }
 
 func (s *AgentService) Delete(id string) error {
-	agent, err := s.Get(id)
-	if err != nil {
+	if _, err := s.Get(id); err != nil {
 		return err
 	}
 
-	s.ptySvc.Close(id)
-	s.tmuxSvc.KillSession(agent.TmuxSession)
+	// Explicit user delete → Kill the underlying process.
+	s.engine.Kill(id)
 
-	_, err = s.db.Exec("DELETE FROM agents WHERE id = ?", id)
+	_, err := s.db.Exec("DELETE FROM agents WHERE id = ?", id)
 	return err
 }
 
@@ -211,11 +218,19 @@ func (s *AgentService) Restart(id string) (*Agent, error) {
 		return nil, err
 	}
 
-	s.ptySvc.Close(id)
-	s.tmuxSvc.KillSession(agent.TmuxSession)
-
-	if err := s.tmuxSvc.CreateSession(agent.TmuxSession, agent.WorkingDir, agent.Command, agent.Args); err != nil {
-		return nil, fmt.Errorf("failed to restart tmux session: %w", err)
+	// Restart = Kill the current process, then start a fresh one. Rebuilt from
+	// the DB record so it works even after a server restart (engine memory lost).
+	s.engine.Kill(id)
+	if _, err := s.engine.Create(CreateSessionRequest{
+		ID:      id,
+		Type:    agent.Preset,
+		Command: agent.Command,
+		Args:    agent.Args,
+		Cwd:     agent.WorkingDir,
+		Cols:    80,
+		Rows:    24,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to restart session: %w", err)
 	}
 
 	s.db.Exec("UPDATE agents SET status = 'running', updated_at = datetime('now') WHERE id = ?", id)
@@ -236,6 +251,9 @@ func (s *AgentService) UpdateStatus(id, status string) error {
 	return err
 }
 
-func (s *AgentService) SendKeys(tmuxSession, data string) error {
-	return s.tmuxSvc.SendKeys(tmuxSession, data)
+// SendKeys delivers a line of input to a session (used by the REST /send API).
+// It addresses the session by id — callers never handle tmux names. A CR is
+// appended so the line is submitted.
+func (s *AgentService) SendKeys(sessionID, data string) error {
+	return s.engine.Write(sessionID, []byte(data+"\r"))
 }

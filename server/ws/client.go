@@ -20,6 +20,7 @@ type Client struct {
 	conn          *websocket.Conn
 	send          chan []byte
 	watchingAgent string
+	viewerID      string // stable id for this connection (SessionEngine viewer)
 }
 
 func (c *Client) readPump() {
