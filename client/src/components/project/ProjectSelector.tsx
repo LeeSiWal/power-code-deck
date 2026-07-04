@@ -31,7 +31,7 @@ export function ProjectSelector() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <div className="text-center mb-8">
-        <h1 className="text-xl font-semibold mb-1">AgentDeck</h1>
+        <h1 className="text-xl font-semibold mb-1">PowerCodeDeck</h1>
         <p className="text-sm text-deck-text-dim">Select a project to start</p>
       </div>
 

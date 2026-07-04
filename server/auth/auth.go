@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"errors"
 	"time"
 
@@ -8,19 +9,43 @@ import (
 )
 
 type AuthService struct {
-	pin       string
-	jwtSecret []byte
+	enabled      bool
+	method       string // "none" | "pin" | "password"
+	pin          string
+	passwordHash string
+	jwtSecret    []byte
 }
 
-func NewAuthService(pin, jwtSecret string) *AuthService {
+func NewAuthService(enabled bool, method, pin, passwordHash, jwtSecret string) *AuthService {
+	if method == "" {
+		method = "none"
+	}
 	return &AuthService{
-		pin:       pin,
-		jwtSecret: []byte(jwtSecret),
+		enabled:      enabled,
+		method:       method,
+		pin:          pin,
+		passwordHash: passwordHash,
+		jwtSecret:    []byte(jwtSecret),
 	}
 }
 
-func (s *AuthService) VerifyPin(pin string) bool {
-	return s.pin == pin
+// Enabled reports whether PowerCodeDeck enforces its own authentication.
+func (s *AuthService) Enabled() bool { return s.enabled }
+
+// Method returns the configured auth method: none, pin, or password.
+func (s *AuthService) Method() string { return s.method }
+
+// VerifyCredential checks a submitted secret (PIN or password) against the
+// configured method. Returns true in no-auth mode.
+func (s *AuthService) VerifyCredential(secret string) bool {
+	switch s.method {
+	case "pin":
+		return s.pin != "" && subtle.ConstantTimeCompare([]byte(secret), []byte(s.pin)) == 1
+	case "password":
+		return VerifyPassword(secret, s.passwordHash)
+	default:
+		return true
+	}
 }
 
 func (s *AuthService) GenerateToken() (string, error) {

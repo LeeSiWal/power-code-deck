@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { useAppStore } from './stores/appStore';
 import { useWebSocket } from './hooks/useWebSocket';
+import { api } from './lib/api';
 
 import { LoginPage } from './pages/LoginPage';
 import { ProjectSelectPage } from './pages/ProjectSelectPage';
@@ -13,7 +14,11 @@ import { SettingsPage } from './pages/SettingsPage';
 import { CommandPalette } from './components/CommandPalette';
 
 function AuthGuard() {
-  const { isAuthenticated } = useAppStore();
+  const { isAuthenticated, authReady } = useAppStore();
+
+  // Wait for the auth config before deciding, so no-auth mode doesn't flash the
+  // login page on first paint.
+  if (!authReady) return null;
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
@@ -28,6 +33,27 @@ function WebSocketProvider({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const setAuthConfig = useAppStore((s) => s.setAuthConfig);
+
+  // Fetch auth config once on boot. In no-auth mode this marks the user as
+  // authenticated so the login page is skipped.
+  useEffect(() => {
+    api.getAuthConfig()
+      .then((cfg) =>
+        setAuthConfig({
+          appName: cfg.appName,
+          version: cfg.version,
+          authEnabled: cfg.authEnabled,
+          authMethod: cfg.authMethod,
+        }),
+      )
+      .catch(() =>
+        // If health is unreachable, fall back to auth-enabled so we don't
+        // accidentally expose an unauthenticated app.
+        setAuthConfig({ appName: 'PowerCodeDeck', version: '', authEnabled: true, authMethod: 'pin' }),
+      );
+  }, [setAuthConfig]);
+
   // Mobile keyboard: override height only when virtual keyboard shrinks the viewport
   useEffect(() => {
     const vv = window.visualViewport;

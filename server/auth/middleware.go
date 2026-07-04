@@ -8,6 +8,12 @@ import (
 func Middleware(authSvc *AuthService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// No-auth mode: let every request through.
+			if !authSvc.Enabled() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
 				http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)

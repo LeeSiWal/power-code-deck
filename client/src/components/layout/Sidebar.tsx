@@ -19,7 +19,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
   return (
     <aside className="hidden md:flex flex-col w-48 bg-deck-surface border-r border-deck-border h-full">
       <div className="p-4 border-b border-deck-border flex items-center justify-between">
-        <span className="text-sm font-bold text-deck-text">AgentDeck</span>
+        <span className="text-sm font-bold text-deck-text">PowerCodeDeck</span>
         <NotificationBadge />
       </div>
 

@@ -49,7 +49,7 @@ func ProxyHandler() http.HandlerFunc {
 			return
 		}
 
-		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; AgentDeck/1.0)")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; PowerCodeDeck/0.2)")
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 		req.Header.Set("Accept-Language", "en-US,en;q=0.9,ko;q=0.8")
 

@@ -2,15 +2,16 @@
 set -e
 
 # ================================================
-#  AgentDeck - One-Click Installer
+#  PowerCodeDeck - One-Click Installer
 # ================================================
 
+# Data dir keeps the legacy name so existing .env / DB are preserved.
 INSTALL_DIR="$HOME/.agentdeck"
-BIN_NAME="agentdeck"
+BIN_NAME="pcd"
 
 echo ""
 echo "  ================================================"
-echo "     AgentDeck Installer"
+echo "     PowerCodeDeck Installer"
 echo "  ================================================"
 echo ""
 
@@ -117,11 +118,11 @@ else
     echo "  ✓ pnpm found"
 fi
 
-# ── 6. Build AgentDeck ──
+# ── 6. Build PowerCodeDeck ──
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo ""
-echo "  Building AgentDeck..."
+echo "  Building PowerCodeDeck..."
 
 cd "$SCRIPT_DIR"
 cd client && pnpm install --silent && pnpm build
@@ -151,54 +152,54 @@ echo "  ✓ Installed"
 # ── 8. Create launcher ──
 if [ "$OS" = "Darwin" ]; then
     # Create macOS .command file (double-clickable)
-    LAUNCHER="$HOME/Desktop/AgentDeck.command"
+    LAUNCHER="$HOME/Desktop/PowerCodeDeck.command"
     cat > "$LAUNCHER" << 'LAUNCHER_EOF'
 #!/bin/bash
 cd "$HOME/.agentdeck"
-./agentdeck
+./pcd
 LAUNCHER_EOF
     chmod +x "$LAUNCHER"
-    echo "  ✓ Desktop shortcut created: AgentDeck.command"
+    echo "  ✓ Desktop shortcut created: PowerCodeDeck.command"
 
     # Also create a .app bundle for cleaner experience
-    APP_DIR="$HOME/Applications/AgentDeck.app/Contents/MacOS"
+    APP_DIR="$HOME/Applications/PowerCodeDeck.app/Contents/MacOS"
     mkdir -p "$APP_DIR"
-    cat > "$APP_DIR/AgentDeck" << 'APP_EOF'
+    cat > "$APP_DIR/PowerCodeDeck" << 'APP_EOF'
 #!/bin/bash
 cd "$HOME/.agentdeck"
-exec ./agentdeck
+exec ./pcd
 APP_EOF
-    chmod +x "$APP_DIR/AgentDeck"
+    chmod +x "$APP_DIR/PowerCodeDeck"
 
     # Info.plist
-    cat > "$HOME/Applications/AgentDeck.app/Contents/Info.plist" << 'PLIST_EOF'
+    cat > "$HOME/Applications/PowerCodeDeck.app/Contents/Info.plist" << 'PLIST_EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>AgentDeck</string>
+    <string>PowerCodeDeck</string>
     <key>CFBundleIdentifier</key>
-    <string>com.agentdeck.app</string>
+    <string>com.powercodedeck.app</string>
     <key>CFBundleName</key>
-    <string>AgentDeck</string>
+    <string>PowerCodeDeck</string>
     <key>CFBundleVersion</key>
-    <string>1.0.0</string>
+    <string>0.2.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
 </dict>
 </plist>
 PLIST_EOF
-    echo "  ✓ App created: ~/Applications/AgentDeck.app"
+    echo "  ✓ App created: ~/Applications/PowerCodeDeck.app"
 fi
 
 if [ "$OS" = "Linux" ]; then
     # Create .desktop file
-    DESKTOP_FILE="$HOME/.local/share/applications/agentdeck.desktop"
+    DESKTOP_FILE="$HOME/.local/share/applications/powercodedeck.desktop"
     mkdir -p "$(dirname "$DESKTOP_FILE")"
     cat > "$DESKTOP_FILE" << DESKTOP_EOF
 [Desktop Entry]
-Name=AgentDeck
+Name=PowerCodeDeck
 Exec=$INSTALL_DIR/$BIN_NAME
 Terminal=true
 Type=Application
@@ -235,21 +236,27 @@ echo ""
 echo "  How to start:"
 echo ""
 if [ "$OS" = "Darwin" ]; then
-    echo "    Option 1: Double-click 'AgentDeck.command' on Desktop"
-    echo "    Option 2: Open 'AgentDeck' from ~/Applications"
+    echo "    Option 1: Double-click 'PowerCodeDeck.command' on Desktop"
+    echo "    Option 2: Open 'PowerCodeDeck' from ~/Applications"
     echo "    Option 3: Run '$INSTALL_DIR/$BIN_NAME'"
 else
     echo "    Run: $INSTALL_DIR/$BIN_NAME"
 fi
 echo ""
-echo "  First time? A PIN will be auto-generated."
+echo "  On first run you can choose:"
+echo "    - no authentication (default)"
+echo "    - PIN authentication"
+echo "    - password authentication"
+echo ""
+echo "  If exposing through the internet, protect it with"
+echo "  Caddy + Authelia, Tailscale, VPN, or SSH tunnel."
 echo "  The browser will open automatically."
 echo ""
 echo "  ================================================"
 echo ""
 
 # Ask to launch now
-read -p "  Launch AgentDeck now? [Y/n] " -n 1 -r
+read -p "  Launch PowerCodeDeck now? [Y/n] " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
     cd "$INSTALL_DIR"

@@ -41,10 +41,20 @@ export interface AgentMeta {
   progress?: { value: number; label?: string };
 }
 
+export interface AuthConfig {
+  appName: string;
+  version: string;
+  authEnabled: boolean;
+  authMethod: 'none' | 'pin' | 'password';
+}
+
 interface AppState {
   // Auth
   isAuthenticated: boolean;
   setAuthenticated: (v: boolean) => void;
+  authConfig: AuthConfig | null;
+  authReady: boolean;
+  setAuthConfig: (c: AuthConfig) => void;
 
   // Agents
   agents: Agent[];
@@ -97,6 +107,15 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   isAuthenticated: !!localStorage.getItem('accessToken'),
   setAuthenticated: (v) => set({ isAuthenticated: v }),
+  authConfig: null,
+  authReady: false,
+  setAuthConfig: (c) =>
+    set({
+      authConfig: c,
+      authReady: true,
+      // No-auth mode: user is implicitly authenticated (skip login page).
+      isAuthenticated: c.authEnabled ? !!localStorage.getItem('accessToken') : true,
+    }),
 
   agents: [],
   setAgents: (agents) => set({ agents }),

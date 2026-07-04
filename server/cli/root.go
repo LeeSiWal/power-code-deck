@@ -4,9 +4,22 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"agentdeck/version"
 )
 
-var serverURL = "http://localhost:33033"
+var serverURL = resolveServerURL()
+
+func resolveServerURL() string {
+	port := os.Getenv("POWERCODEDECK_PORT")
+	if port == "" {
+		port = os.Getenv("AGENTDECK_PORT")
+	}
+	if port == "" {
+		port = "33033"
+	}
+	return "http://localhost:" + port
+}
 
 func Run(args []string) {
 	if len(args) == 0 {
@@ -34,7 +47,7 @@ func Run(args []string) {
 	case "ping":
 		cmdPing()
 	case "--version", "version":
-		fmt.Println("agentdeck v0.1.0")
+		fmt.Printf("%s v%s\n", version.Binary, version.Version)
 	case "--help", "help":
 		printHelp()
 	default:
@@ -59,9 +72,9 @@ func IsSubcommand(args []string) bool {
 }
 
 func printHelp() {
-	help := `AgentDeck - AI Agent Terminal Manager
+	help := `PowerCodeDeck - AI Coding Terminal Console
 
-Usage: agentdeck [command]
+Usage: pcd [command]
 
 Commands:
   (no command)     Start the server
@@ -81,7 +94,7 @@ Commands:
 func requireToken() string {
 	token := loadToken()
 	if token == "" {
-		fmt.Fprintln(os.Stderr, "Not authenticated. Run: agentdeck login")
+		fmt.Fprintln(os.Stderr, "Not authenticated. Run: pcd login")
 		os.Exit(1)
 	}
 	return token

@@ -1,10 +1,10 @@
 # ================================================
-#  AgentDeck - Windows Installer (via WSL)
+#  PowerCodeDeck - Windows Installer (via WSL)
 # ================================================
 
 Write-Host ""
 Write-Host "  ================================================" -ForegroundColor Cyan
-Write-Host "     AgentDeck Windows Installer" -ForegroundColor Cyan
+Write-Host "     PowerCodeDeck Windows Installer" -ForegroundColor Cyan
 Write-Host "  ================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -23,7 +23,7 @@ if (-not $wslInstalled) {
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  WSL is not installed." -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "  AgentDeck requires WSL (Windows Subsystem for Linux)." -ForegroundColor White
+        Write-Host "  PowerCodeDeck requires WSL (Windows Subsystem for Linux)." -ForegroundColor White
         Write-Host "  This is a one-time setup that takes a few minutes." -ForegroundColor Gray
         Write-Host ""
 
@@ -84,23 +84,23 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "     Installation complete!" -ForegroundColor Green
     Write-Host "  ================================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  To start AgentDeck:" -ForegroundColor White
+    Write-Host "  To start PowerCodeDeck:" -ForegroundColor White
     Write-Host ""
-    Write-Host "    wsl ~/.agentdeck/agentdeck" -ForegroundColor Yellow
+    Write-Host "    wsl ~/.agentdeck/pcd" -ForegroundColor Yellow
     Write-Host ""
 
     # Create desktop shortcut
     $desktopPath = [Environment]::GetFolderPath("Desktop")
-    $shortcutPath = Join-Path $desktopPath "AgentDeck.bat"
+    $shortcutPath = Join-Path $desktopPath "PowerCodeDeck.bat"
 
     @"
 @echo off
-title AgentDeck
-wsl bash -c "cd ~/.agentdeck && ./agentdeck"
+title PowerCodeDeck
+wsl bash -c "cd ~/.agentdeck && ./pcd"
 "@ | Out-File -FilePath $shortcutPath -Encoding ASCII
 
-    Write-Host "  ✓ Desktop shortcut created: AgentDeck.bat" -ForegroundColor Green
-    Write-Host "    Double-click it to start AgentDeck!" -ForegroundColor Gray
+    Write-Host "  ✓ Desktop shortcut created: PowerCodeDeck.bat" -ForegroundColor Green
+    Write-Host "    Double-click it to start PowerCodeDeck!" -ForegroundColor Gray
     Write-Host ""
 } else {
     Write-Host ""

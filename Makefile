@@ -23,15 +23,15 @@ build-server: build-client
 	@echo "Copying client dist to server/static..."
 	rm -rf server/static
 	cp -r client/dist server/static
-	cd server && CGO_ENABLED=1 go build -o ../agentdeck .
+	cd server && CGO_ENABLED=1 go build -o ../pcd .
 
 # Run production binary
 run:
-	./agentdeck
+	./pcd
 
 # Clean
 clean:
-	rm -f agentdeck
+	rm -f pcd agentdeck
 	rm -rf client/dist
 	rm -rf server/static
 

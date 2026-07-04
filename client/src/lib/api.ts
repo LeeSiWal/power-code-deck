@@ -69,10 +69,22 @@ async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promi
 
 export const api = {
   // Auth
-  login: (pin: string) =>
+  // Public health/config endpoint — no token required. Lets the client learn
+  // whether auth is enabled (and which method) so it can skip the login page.
+  getAuthConfig: () =>
+    fetch(`${API_BASE}/auth/health`).then((r) => r.json()) as Promise<{
+      status: string;
+      appName: string;
+      version: string;
+      authEnabled: boolean;
+      authMethod: 'none' | 'pin' | 'password';
+    }>,
+
+  // Submit a PIN or password; the server accepts the credential in `secret`.
+  login: (secret: string) =>
     apiFetch<{ accessToken: string; refreshToken: string }>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ pin }),
+      body: JSON.stringify({ secret }),
     }).then((data) => {
       setTokens(data.accessToken, data.refreshToken);
       return data;
