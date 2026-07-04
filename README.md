@@ -140,99 +140,38 @@ bash install.sh
 
 > `bash install.sh` 는 실행 권한이 없어도 동작합니다. `./install.sh` 로 실행했을 때 `permission denied` 가 뜨면 `chmod +x install.sh` 후 다시 시도하세요.
 
-**Windows:** 아래 [Windows 설치 (비개발자용 단계별 가이드)](#windows-설치-비개발자용-단계별-가이드)를 따라 하세요.
+**Windows:** 아래 [Windows 설치 (복사-붙여넣기)](#windows-설치-복사-붙여넣기) 한 줄이면 됩니다.
 
 설치 스크립트가 자동으로 처리하는 것:
-- Homebrew (macOS) / WSL (Windows) 설치
+- Homebrew (macOS) / WSL·Ubuntu (Windows) 설치
 - tmux, Go, Node.js, pnpm 설치
 - 프로젝트 빌드
 - `~/.powercodedeck/`에 바이너리 설치
 - 바탕화면 바로가기 생성 (macOS: `.command` + `.app`, Windows: `.bat`)
 
-### Windows 설치 (비개발자용 단계별 가이드)
+### Windows 설치 (복사-붙여넣기)
 
-> PowerCodeDeck 는 내부적으로 **WSL(Windows에 내장된 리눅스)** 위에서 동작합니다.
-> 개발 경험이 없어도 아래 순서를 그대로 따라 하면 됩니다. **한 번만** 준비해 두면 다음부터는 실행만 하면 됩니다.
+개발 경험이 없어도 됩니다. **복사-붙여넣기 + (필요하면) 재부팅 한 번**이면 끝납니다.
 
-#### 1단계 · WSL(우분투) 준비 — 최초 1회만
+1. 시작 메뉴에서 **PowerShell** → 마우스 오른쪽 → **"관리자 권한으로 실행"**.
+2. 아래 **한 줄**을 붙여넣고 Enter:
 
-1. 시작 메뉴에서 **PowerShell** 을 찾아 **마우스 오른쪽 클릭 → "관리자 권한으로 실행"**.
-2. 아래를 입력하고 Enter:
    ```powershell
-   wsl --install
+   iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-install.ps1 | iex
    ```
-3. 설치가 끝나면 **컴퓨터를 다시 시작(재부팅)** 합니다. ← 이 단계를 건너뛰면 다음이 진행되지 않습니다.
-4. 재부팅 후 검은 창(Ubuntu)이 자동으로 열립니다. (안 열리면 시작 메뉴에서 **Ubuntu** 실행)
-   여기서 사용할 **사용자 이름(username)** 과 **비밀번호(password)** 를 만듭니다.
-   - 비밀번호 입력 시 화면에 아무것도 안 보이는 게 정상입니다. 그대로 입력하고 Enter 하세요.
-5. `이름@컴퓨터:~$` 같은 표시가 나오면 준비 완료. 이 창은 닫아도 됩니다.
 
-> 이미 WSL/Ubuntu 를 쓰고 있다면 1단계는 건너뛰어도 됩니다.
-> 확인하려면 PowerShell에서 `wsl -l -v` 를 입력해 **Ubuntu** 가 보이는지 확인하세요.
+3. WSL 설치가 처음이라 **재부팅이 필요하면**, 스크립트가 물어봅니다 → **`Y` (Enter)**.
+   재부팅 후 로그인하면 **설치가 자동으로 이어집니다.** (다시 붙여넣지 않아도 됩니다.)
+4. "설치 완료 🎉" 가 뜨면, 실행은 아래 한 줄:
 
-#### 2단계 · 작업 폴더 만들고 프로젝트 내려받기
+   ```powershell
+   wsl -d Ubuntu -u root -- bash -lc "cd ~/.powercodedeck && ./pcd"
+   ```
 
-> ⚠️ `C:\Windows\System32` 같은 시스템 폴더에서 하면 **권한 오류(Permission denied)** 가 납니다.
-> 반드시 **내 사용자 폴더(`C:\Users\내이름`) 아래** 에서 하세요.
+5. 브라우저에서 **<http://localhost:33033>** 접속. 끝.
 
-**방법 A — ZIP 다운로드 (Git 설치 없이, 가장 쉬움)**
-
-1. 파일 탐색기(폴더 아이콘)를 열고, 위쪽 **주소창에 `%USERPROFILE%`** 를 입력하고 Enter → 내 사용자 폴더(`C:\Users\내이름`)가 열립니다.
-2. 그 안에 **새 폴더**를 하나 만듭니다. 예: `PowerCodeDeck`.
-3. 브라우저에서 <https://github.com/LeeSiWal/power-code-deck> 접속 → 초록색 **`< > Code`** 버튼 → **Download ZIP**.
-4. 내려받은 ZIP 파일을 방금 만든 `PowerCodeDeck` 폴더 안에 **압축 해제**합니다.
-   폴더 안에 `install.bat` 파일이 보이면 성공입니다.
-
-**방법 B — 명령어로 (Git for Windows 가 설치돼 있는 경우)**
-
-```powershell
-cd $HOME                # 내 사용자 폴더(C:\Users\내이름)로 이동
-mkdir PowerCodeDeck -Force
-cd PowerCodeDeck
-git clone https://github.com/LeeSiWal/power-code-deck.git
-cd power-code-deck
-```
-
-#### 3단계 · 설치 실행
-
-- **가장 쉬운 방법:** 압축을 푼 폴더 안의 **`install.bat` 파일을 더블클릭** 합니다.
-- 또는 PowerShell에서 그 폴더로 이동한 뒤:
-  ```powershell
-  .\install.bat
-  ```
-  PowerShell 에서는 반드시 앞에 **`.\`** 를 붙여야 합니다. (`install.bat` 만 입력하면 "인식되지 않습니다" 오류)
-
-설치 도중 **우분투 비밀번호(1단계에서 만든 것)** 를 물어보면 입력하세요.
-그 다음 tmux · Go · Node.js · pnpm 설치 → 빌드 → `~/.powercodedeck/` 설치까지 자동으로 진행됩니다. (몇 분 걸립니다.)
-
-#### 4단계 · 실행 & 접속
-
-설치가 끝나면 다음 명령으로 실행합니다(바탕화면 바로가기가 생겼다면 그걸 눌러도 됩니다):
-
-```powershell
-wsl -d Ubuntu -- bash -lc "cd ~/.powercodedeck && ./pcd"
-```
-
-그다음 웹 브라우저에서 **<http://localhost:33033>** 로 접속하면 PowerCodeDeck 이 열립니다. 🎉
-
-<details>
-<summary>고급: 2~4단계를 명령어 한 줄로 (Git for Windows 불필요)</summary>
-
-WSL/Ubuntu 준비(1단계)가 끝난 상태라면, PowerShell에서 아래 한 줄이면 내려받기·설치까지 끝납니다:
-
-```powershell
-wsl -d Ubuntu -- bash -lc "sudo apt-get update && sudo apt-get install -y git && cd ~ && git clone https://github.com/LeeSiWal/power-code-deck.git && cd power-code-deck && bash install.sh"
-```
-
-</details>
-
-#### 잘 안 될 때
-
-| 증상 | 해결 |
-|------|------|
-| `install.bat : 인식되지 않습니다` | PowerShell에서는 `.\install.bat` 처럼 앞에 `.\` 를 붙이세요. |
-| `could not create work tree dir ... Permission denied` | `C:\Windows\System32` 등 시스템 폴더에서 실행 중입니다. 2단계처럼 내 사용자 폴더에서 다시 하세요. |
-| `No Linux distribution found` 가 반복됨 | 1단계 WSL 설치 후 **재부팅** 및 Ubuntu 첫 실행(계정 생성)이 안 끝난 것입니다. `wsl -l -v` 로 Ubuntu가 보이는지 확인하세요. |
+> 이 방식은 WSL/Ubuntu를 자동으로 준비하고 **root 계정으로 실행**하므로, 우분투 사용자 이름·비밀번호를 따로 만들 필요가 없습니다.
+> 직접 단계별로 하고 싶다면 아래 [수동 설치](#수동-설치)를 참고하세요.
 
 ### 수동 설치
 
