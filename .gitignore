@@ -1,8 +1,19 @@
+# Binaries
+pcd
 agentdeck
-agentdeck.db
+
+# Secrets / local config
 .env
+
+# SQLite data (+ WAL/SHM)
+powercodedeck.db*
+agentdeck.db*
+
+# Deps / build output
 node_modules/
 client/dist/
 server/static/
+
+# OS / logs
 .DS_Store
 *.log

@@ -14,11 +14,11 @@ func tokenPath() string {
 	var dir string
 	switch runtime.GOOS {
 	case "darwin":
-		dir = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "agentdeck")
+		dir = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "powercodedeck")
 	case "windows":
-		dir = filepath.Join(os.Getenv("APPDATA"), "agentdeck")
+		dir = filepath.Join(os.Getenv("APPDATA"), "powercodedeck")
 	default:
-		dir = filepath.Join(os.Getenv("HOME"), ".config", "agentdeck")
+		dir = filepath.Join(os.Getenv("HOME"), ".config", "powercodedeck")
 	}
 	os.MkdirAll(dir, 0700)
 	return filepath.Join(dir, "token.json")

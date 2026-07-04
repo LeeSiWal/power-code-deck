@@ -86,7 +86,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host ""
     Write-Host "  To start PowerCodeDeck:" -ForegroundColor White
     Write-Host ""
-    Write-Host "    wsl ~/.agentdeck/pcd" -ForegroundColor Yellow
+    Write-Host "    wsl ~/.powercodedeck/pcd" -ForegroundColor Yellow
     Write-Host ""
 
     # Create desktop shortcut
@@ -96,7 +96,7 @@ if ($LASTEXITCODE -eq 0) {
     @"
 @echo off
 title PowerCodeDeck
-wsl bash -c "cd ~/.agentdeck && ./pcd"
+wsl bash -c "cd ~/.powercodedeck && ./pcd"
 "@ | Out-File -FilePath $shortcutPath -Encoding ASCII
 
     Write-Host "  ✓ Desktop shortcut created: PowerCodeDeck.bat" -ForegroundColor Green

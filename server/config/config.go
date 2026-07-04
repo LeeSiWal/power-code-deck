@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"agentdeck/auth"
-	"agentdeck/version"
+	"powercodedeck/auth"
+	"powercodedeck/version"
 
 	"github.com/joho/godotenv"
 )
@@ -241,12 +241,11 @@ func findEnvFile() string {
 }
 
 func resolveDBPath() string {
-	// Keep the legacy filename so existing installs keep their data.
 	exe, err := os.Executable()
 	if err == nil {
-		return filepath.Join(filepath.Dir(exe), "agentdeck.db")
+		return filepath.Join(filepath.Dir(exe), "powercodedeck.db")
 	}
-	return "./agentdeck.db"
+	return "./powercodedeck.db"
 }
 
 func envFilePath() string {

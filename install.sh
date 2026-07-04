@@ -5,8 +5,7 @@ set -e
 #  PowerCodeDeck - One-Click Installer
 # ================================================
 
-# Data dir keeps the legacy name so existing .env / DB are preserved.
-INSTALL_DIR="$HOME/.agentdeck"
+INSTALL_DIR="$HOME/.powercodedeck"
 BIN_NAME="pcd"
 
 echo ""
@@ -134,7 +133,7 @@ cd ..
 
 echo "  ✓ Build complete"
 
-# ── 7. Install to ~/.agentdeck ──
+# ── 7. Install to ~/.powercodedeck ──
 echo ""
 echo "  Installing to $INSTALL_DIR ..."
 
@@ -142,9 +141,16 @@ mkdir -p "$INSTALL_DIR"
 cp "$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
 chmod +x "$INSTALL_DIR/$BIN_NAME"
 
-# Copy .env if exists, otherwise it will auto-generate on first run
-if [ -f .env ]; then
-    cp .env "$INSTALL_DIR/.env"
+# NOTE: We deliberately do NOT copy the repo's local .env into the install.
+# A developer .env may carry stale/legacy settings (e.g. a leftover
+# AGENTDECK_PIN) that would silently enable authentication and override the
+# no-auth default. On first run the app generates a clean config and lets the
+# user choose none/pin/password. To preserve an existing install's config,
+# leave the .env already in "$INSTALL_DIR" untouched.
+if [ -f "$INSTALL_DIR/.env" ]; then
+    echo "  ✓ Existing config kept ($INSTALL_DIR/.env)"
+else
+    echo "  ○ No auth by default — config will be created on first run"
 fi
 
 echo "  ✓ Installed"
@@ -155,7 +161,7 @@ if [ "$OS" = "Darwin" ]; then
     LAUNCHER="$HOME/Desktop/PowerCodeDeck.command"
     cat > "$LAUNCHER" << 'LAUNCHER_EOF'
 #!/bin/bash
-cd "$HOME/.agentdeck"
+cd "$HOME/.powercodedeck"
 ./pcd
 LAUNCHER_EOF
     chmod +x "$LAUNCHER"
@@ -166,7 +172,7 @@ LAUNCHER_EOF
     mkdir -p "$APP_DIR"
     cat > "$APP_DIR/PowerCodeDeck" << 'APP_EOF'
 #!/bin/bash
-cd "$HOME/.agentdeck"
+cd "$HOME/.powercodedeck"
 exec ./pcd
 APP_EOF
     chmod +x "$APP_DIR/PowerCodeDeck"
