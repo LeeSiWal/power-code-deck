@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { TerminalView, type TerminalHandle } from '../components/terminal/TerminalView';
 import { PromptBar } from '../components/terminal/PromptBar';
 import { MobileToolbar } from '../components/terminal/MobileToolbar';
+import { TerminalKeyBar } from '../components/terminal/TerminalKeyBar';
 import { FileExplorer } from '../components/file/FileExplorer';
 import { FilePreview } from '../components/file/FilePreview';
 import { FileEditor } from '../components/file/FileEditor';
@@ -457,13 +458,20 @@ export function TerminalPage() {
             </div>
           )}
 
-          {/* Bottom Prompt Bar — Korean / long / multi-line entry, pasted into the terminal */}
+          {/* Bottom controls — PTY control keys (arrows / Enter / Esc / …) plus
+              the Prompt Bar for Korean / long / multi-line text. */}
           {activeTab === 'terminal' && (
-            <PromptBar
-              agentId={agentId}
-              onFocusChange={(f) => { promptFocusedRef.current = f; }}
-              onDone={() => { promptFocusedRef.current = false; terminalApiRef.current?.focus(); }}
-            />
+            <>
+              <TerminalKeyBar
+                agentId={agentId}
+                onKeySent={() => terminalApiRef.current?.focus()}
+              />
+              <PromptBar
+                agentId={agentId}
+                onFocusChange={(f) => { promptFocusedRef.current = f; }}
+                onDone={() => { promptFocusedRef.current = false; terminalApiRef.current?.focus(); }}
+              />
+            </>
           )}
         </div>
 

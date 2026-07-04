@@ -1,4 +1,5 @@
 import { agentDeckWS } from '../../lib/ws';
+import { TERMINAL_KEYS } from './TerminalKeyBar';
 
 interface MobileToolbarProps {
   agentId: string;
@@ -6,22 +7,9 @@ interface MobileToolbarProps {
   onOpenPrompt: () => void;
 }
 
-// Keys sent straight to the PTY. Everything here is terminal control — the
-// Prompt Bar handles text; these handle navigation, choices and signals.
-const KEYS = [
-  { label: 'Esc', data: '\x1b' },
-  { label: 'Tab', data: '\t' },
-  { label: '⇧Tab', data: '\x1b[Z', accent: true },
-  { label: 'Enter', data: '\r' },
-  { label: 'y', data: 'y' },
-  { label: 'n', data: 'n' },
-  { label: 'Ctrl+C', data: '\x03' },
-  { label: 'Ctrl+D', data: '\x04' },
-  { label: '↑', data: '\x1b[A' },
-  { label: '↓', data: '\x1b[B' },
-  { label: '←', data: '\x1b[D' },
-  { label: '→', data: '\x1b[C' },
-];
+// PTY control keys are shared with the desktop key bar (TERMINAL_KEYS) so both
+// surfaces expose the same navigation / choice / signal keys.
+const KEYS = TERMINAL_KEYS;
 
 export function MobileToolbar({ agentId, onOpenPrompt }: MobileToolbarProps) {
   const send = (data: string) => {
