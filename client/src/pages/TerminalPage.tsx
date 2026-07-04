@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { TerminalView } from '../components/terminal/TerminalView';
-import { TerminalInput } from '../components/terminal/TerminalInput';
+import { TerminalView, type TerminalHandle } from '../components/terminal/TerminalView';
+import { PromptBar } from '../components/terminal/PromptBar';
 import { MobileToolbar } from '../components/terminal/MobileToolbar';
 import { FileExplorer } from '../components/file/FileExplorer';
 import { FilePreview } from '../components/file/FilePreview';
@@ -16,7 +16,6 @@ import { useFileExplorer } from '../hooks/useFileExplorer';
 import { useSubAgents } from '../hooks/useSubAgents';
 import { IconBack, IconFiles, IconClose, IconTerminal, AGENT_ICON_MAP } from '../components/icons';
 import { api } from '../lib/api';
-import { agentDeckWS } from '../lib/ws';
 import { generatePalette } from '../lib/paletteGenerator';
 import { useAppStore } from '../stores/appStore';
 
@@ -27,8 +26,14 @@ export function TerminalPage() {
   const navigate = useNavigate();
   const { isMobile, isTablet } = useDevice();
   const [agent, setAgent] = useState<any>(null);
-  const [rawMode, setRawMode] = useState(false);
   const [activeTab, setActiveTab] = useState<CenterTab>('terminal');
+  const [promptOpen, setPromptOpen] = useState(false);
+
+  // Single interactive terminal + Prompt Bar. `promptFocusedRef` tells the
+  // terminal to suspend auto-focus while the user types in the Prompt Bar;
+  // `terminalApiRef` returns focus to the terminal after Send.
+  const terminalApiRef = useRef<TerminalHandle | null>(null);
+  const promptFocusedRef = useRef(false);
 
   const { zoomedPanel, setZoomedPanel } = useAppStore();
 
@@ -96,65 +101,6 @@ export function TerminalPage() {
 
     return () => clearTimeout(timer);
   }, [agentId]);
-
-  // CHAT mode: forward keyboard events to terminal when focus is NOT on an input/textarea
-  // Shift+Tab always forwarded (Claude Code mode cycling: plan/auto/etc.)
-  useEffect(() => {
-    if (!agentId) return;
-
-    const KEY_MAP: Record<string, string> = {
-      ArrowUp: '\x1b[A',
-      ArrowDown: '\x1b[B',
-      ArrowLeft: '\x1b[D',
-      ArrowRight: '\x1b[C',
-      Escape: '\x1b',
-      Tab: '\t',
-    };
-
-    const handler = (e: KeyboardEvent) => {
-      // Shift+Tab → forward to terminal for Claude Code mode switching (all modes)
-      if (e.key === 'Tab' && e.shiftKey) {
-        e.preventDefault();
-        agentDeckWS.send('terminal:input', { agentId, data: '\x1b[Z' });
-        return;
-      }
-
-      // In RAW mode, xterm handles all input directly
-      if (rawMode) return;
-
-      const tag = (e.target as HTMLElement)?.tagName;
-      // Don't intercept if user is typing in input/textarea
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-
-      const mapped = KEY_MAP[e.key];
-      if (mapped) {
-        e.preventDefault();
-        agentDeckWS.send('terminal:input', { agentId, data: mapped });
-        return;
-      }
-
-      // Forward single printable characters (y, n, Enter, etc.)
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        agentDeckWS.send('terminal:input', { agentId, data: '\r' });
-        return;
-      }
-
-      // Single character keys (y/n for prompts, number keys for selections)
-      if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        agentDeckWS.send('terminal:input', { agentId, data: e.key });
-      }
-
-      // Ctrl+C
-      if (e.ctrlKey && e.key === 'c') {
-        e.preventDefault();
-        agentDeckWS.send('terminal:input', { agentId, data: '\x03' });
-      }
-    };
-
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [rawMode, agentId]);
 
   // Cmd+Shift+Z: panel zoom toggle
   useEffect(() => {
@@ -234,15 +180,6 @@ export function TerminalPage() {
           <span className="font-medium text-sm truncate flex-1">{agent.name}</span>
           <StatusBadge status={agent.status} />
           <button
-            onClick={() => setRawMode(!rawMode)}
-            title="Shift+Tab to toggle"
-            className={`text-xs px-2.5 py-1.5 rounded active:opacity-70 ${
-              rawMode ? 'bg-deck-accent/20 text-deck-accent' : 'bg-emerald-500/20 text-emerald-400'
-            }`}
-          >
-            {rawMode ? 'RAW' : 'CHAT'}
-          </button>
-          <button
             onClick={() => setMobileAnimOpen(true)}
             className={`p-1.5 rounded active:bg-deck-border/30 ${mobileAnimOpen ? 'bg-purple-500/20' : ''}`}
             title="Animation"
@@ -301,7 +238,12 @@ export function TerminalPage() {
         {activeTab === 'terminal' && (
           <div className="flex-1 min-h-0">
             {terminalReady ? (
-              <TerminalView key={`${agentId}:${terminalMountKey}`} agentId={agentId} rawMode={rawMode} />
+              <TerminalView
+                key={`${agentId}:${terminalMountKey}`}
+                ref={terminalApiRef}
+                agentId={agentId}
+                focusGuardRef={promptFocusedRef}
+              />
             ) : (
               <div className="h-full w-full" />
             )}
@@ -322,11 +264,20 @@ export function TerminalPage() {
           </div>
         )}
 
-        {/* Bottom input */}
-        {rawMode ? (
-          <MobileToolbar agentId={agentId} />
-        ) : (
-          activeTab === 'terminal' && <TerminalInput agentId={agentId} />
+        {/* Bottom input — interactive terminal with an optional Prompt Bar for Korean/long text */}
+        {activeTab === 'terminal' && (
+          <>
+            {promptOpen && (
+              <PromptBar
+                agentId={agentId}
+                autoFocus
+                showClose
+                onFocusChange={(f) => { promptFocusedRef.current = f; }}
+                onDone={() => { promptFocusedRef.current = false; setPromptOpen(false); }}
+              />
+            )}
+            <MobileToolbar agentId={agentId} onOpenPrompt={() => setPromptOpen(true)} />
+          </>
         )}
 
         {/* File bottom sheet */}
@@ -388,16 +339,6 @@ export function TerminalPage() {
         <span className="font-medium text-sm truncate">{agent.name}</span>
         <StatusBadge status={agent.status} />
         <span className="text-xs ml-auto truncate text-deck-text-dim">{agent.workingDir}</span>
-
-        <button
-          onClick={() => setRawMode(!rawMode)}
-          title="Shift+Tab to toggle"
-          className={`text-xs px-2 py-0.5 rounded transition-colors ${
-            rawMode ? 'bg-deck-accent/20 text-deck-accent' : 'bg-emerald-500/20 text-emerald-400'
-          }`}
-        >
-          {rawMode ? 'RAW' : 'CHAT'}
-        </button>
 
         <button
           onClick={() => setLeftPanelOpen(!leftPanelOpen)}
@@ -490,7 +431,12 @@ export function TerminalPage() {
           {activeTab === 'terminal' && (
             <div className="flex-1 min-h-0">
               {terminalReady ? (
-                <TerminalView key={`${agentId}:${terminalMountKey}`} agentId={agentId} rawMode={rawMode} />
+                <TerminalView
+                  key={`${agentId}:${terminalMountKey}`}
+                  ref={terminalApiRef}
+                  agentId={agentId}
+                  focusGuardRef={promptFocusedRef}
+                />
               ) : (
                 <div className="h-full w-full" />
               )}
@@ -511,8 +457,14 @@ export function TerminalPage() {
             </div>
           )}
 
-          {/* Bottom input - CHAT mode shows TerminalInput on ALL devices */}
-          {!rawMode && activeTab === 'terminal' && <TerminalInput agentId={agentId} />}
+          {/* Bottom Prompt Bar — Korean / long / multi-line entry, pasted into the terminal */}
+          {activeTab === 'terminal' && (
+            <PromptBar
+              agentId={agentId}
+              onFocusChange={(f) => { promptFocusedRef.current = f; }}
+              onDone={() => { promptFocusedRef.current = false; terminalApiRef.current?.focus(); }}
+            />
+          )}
         </div>
 
         {/* Right: Sub-agent panel */}

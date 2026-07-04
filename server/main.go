@@ -20,6 +20,7 @@ import (
 	"agentdeck/handlers"
 	"agentdeck/middleware"
 	"agentdeck/services"
+	"agentdeck/version"
 	"agentdeck/ws"
 
 	"github.com/gorilla/mux"
@@ -43,7 +44,7 @@ func main() {
 	fileSvc := services.NewFileService()
 	watcherSvc := services.NewWatcherService()
 	projectSvc := services.NewProjectService(database)
-	authSvc := auth.NewAuthService(cfg.Pin, cfg.JWTSecret)
+	authSvc := auth.NewAuthService(cfg.AuthEnabled, cfg.AuthMethod, cfg.Pin, cfg.PasswordHash, cfg.JWTSecret)
 	gitSvc := services.NewGitService()
 	portScanner := services.NewPortScanner()
 	notifSvc := services.NewNotificationService(database)
@@ -62,11 +63,17 @@ func main() {
 	// Rate limiter for auth endpoints
 	authLimiter := middleware.NewRateLimiter(10, time.Minute)
 
-	// Health check (no auth required)
-	r.HandleFunc("/api/auth/health", func(w http.ResponseWriter, r *http.Request) {
+	// Health check (no auth required). Exposes version + auth config so the
+	// client can skip the login page in no-auth mode.
+	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
-	}).Methods("GET")
+		fmt.Fprintf(w,
+			`{"status":"ok","appName":%q,"version":%q,"authEnabled":%t,"authMethod":%q}`,
+			version.AppName, version.Version, cfg.AuthEnabled, cfg.AuthMethod,
+		)
+	}
+	r.HandleFunc("/api/auth/health", healthHandler).Methods("GET")
+	r.HandleFunc("/api/health", healthHandler).Methods("GET")
 
 	// Auth endpoints (no JWT required)
 	authRouter := r.PathPrefix("/api/auth").Subrouter()
@@ -124,12 +131,14 @@ func main() {
 	api.HandleFunc("/agents/{id}/meta/log", handlers.AddAgentMetaLog(hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}/notifications/read", handlers.MarkAgentNotificationsRead(notifSvc)).Methods("POST")
 
-	// WebSocket (auth via query param)
+	// WebSocket (auth via query param; skipped in no-auth mode)
 	r.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		token := r.URL.Query().Get("token")
-		if err := authSvc.VerifyToken(token); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
+		if authSvc.Enabled() {
+			token := r.URL.Query().Get("token")
+			if err := authSvc.VerifyToken(token); err != nil {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
 		}
 		hub.HandleWebSocket(w, r)
 	})
@@ -209,7 +218,7 @@ func main() {
 	<-quit
 
 	fmt.Println()
-	log.Println("Shutting down AgentDeck...")
+	log.Printf("Shutting down %s...", version.AppName)
 	database.Close()
 	log.Println("Goodbye!")
 }
@@ -279,17 +288,25 @@ func searchString(s, sub string) bool {
 }
 
 func printBanner(cfg *config.Config, url string) {
+	authLabel := "disabled"
+	if cfg.AuthEnabled {
+		authLabel = cfg.AuthMethod // "pin" or "password" — never print the secret
+	}
+
 	fmt.Println()
 	fmt.Println("  ================================================")
-	fmt.Println("     AgentDeck - AI Agent Terminal Manager")
+	fmt.Printf("     %s v%s\n", version.AppName, version.Version)
+	fmt.Printf("     %s\n", version.Tagline)
 	fmt.Println("  ================================================")
 	fmt.Println()
-	fmt.Printf("     URL :  %s\n", url)
-	fmt.Printf("     PIN :  %s\n", cfg.Pin)
+	fmt.Printf("     URL  : %s\n", url)
+	fmt.Printf("     Auth : %s\n", authLabel)
 	fmt.Println()
-	if cfg.SetupMode {
-		fmt.Println("  ** First run! PIN has been auto-generated. **")
-		fmt.Println("  ** Settings saved to .env file.             **")
+	if !cfg.AuthEnabled {
+		fmt.Println("  Warning:")
+		fmt.Printf("  %s authentication is disabled.\n", version.AppName)
+		fmt.Println("  Do not expose this service directly to the public internet.")
+		fmt.Println("  Use Caddy + Authelia, Tailscale, VPN, or SSH tunnel.")
 		fmt.Println()
 	}
 	fmt.Println("     Browser will open automatically.")

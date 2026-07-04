@@ -1,7 +1,7 @@
 {
-  "name": "AgentDeck",
-  "short_name": "AgentDeck",
-  "description": "AI Agent Terminal Manager",
+  "name": "PowerCodeDeck",
+  "short_name": "PowerCodeDeck",
+  "description": "AI Coding Terminal Console",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0f",

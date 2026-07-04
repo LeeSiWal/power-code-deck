@@ -1,33 +1,118 @@
-# AgentDeck
+# PowerCodeDeck
 
-AI 에이전트를 브라우저에서 관리하는 터미널 대시보드.
+**PowerCodeDeck v0.2.0** — 브라우저에서 서버 프로젝트를 열고, 터미널과 AI 코딩 에이전트를 실행하는 개인용 웹 콘솔입니다.
+*PowerCodeDeck is a self-hosted web console for project terminals and AI coding agents.*
 
 Claude Code, Gemini CLI, Codex CLI 등 AI 코딩 에이전트를 한 화면에서 실행하고 모니터링합니다.
-Go 단일 바이너리로 빌드되어 설치가 간편합니다.
+Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 
+> **v0.1.0 (AgentDeck) → v0.2.0 (PowerCodeDeck) 리브랜딩 버전입니다.** 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
+
+![Version](https://img.shields.io/badge/version-0.2.0-6366f1)
 ![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![SQLite](https://img.shields.io/badge/SQLite-embedded-003B57?logo=sqlite&logoColor=white)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
+> 이 README 하나만 읽으면 PowerCodeDeck의 기능·사용법·아키텍처 전반을 파악할 수 있습니다.
+> 코드 레벨의 상세 설계는 [ARCHITECTURE.md](ARCHITECTURE.md)를 참고하세요.
+
+---
+
+## 목차
+
+- [주요 기능](#주요-기능)
+- [기능 상태 (Stable / Experimental / Roadmap)](#기능-상태-stable--experimental--roadmap)
+- [한눈에 보는 구조](#한눈에-보는-구조)
+- [사전 요구사항](#사전-요구사항)
+- [설치](#설치)
+- [실행](#실행)
+- [인증](#인증)
+- [보안 주의](#보안-주의)
+- [사용법](#사용법)
+- [설정](#설정)
+- [CLI 커맨드](#cli-커맨드)
+- [기술 스택](#기술-스택)
+- [프로젝트 구조](#프로젝트-구조)
+- [아키텍처](#아키텍처)
+- [Roadmap](#roadmap)
+- [라이선스](#라이선스)
+
 ---
 
 ## 주요 기능
 
-- **멀티 에이전트** — 여러 AI 에이전트를 동시에 실행/모니터링
-- **웹 터미널** — xterm.js 기반 실시간 터미널 (Interactive/Chat 모드)
-- **파일 탐색기** — 프로젝트 파일 탐색/편집/생성/삭제
+- **멀티 에이전트** — 여러 AI 에이전트를 동시에 실행/모니터링 (Claude Code / Gemini CLI / Codex CLI / Custom)
+- **웹 터미널** — xterm.js 기반 실시간 Interactive Terminal + 한글/긴 프롬프트용 Prompt Bar, tmux 세션으로 프로세스 유지
+- **대시보드** — 그리드/리스트 뷰로 전체 에이전트 상태를 한눈에, `+`로 즉시 생성
+- **에이전트 메타** — Git 브랜치·변경 여부·ahead 커밋 수, 리스닝 포트 자동 감지 표시
+- **파일 탐색기** — 프로젝트 파일 탐색/편집/생성/삭제/이름변경
+- **내장 브라우저** — 에이전트가 띄운 로컬 포트를 iframe으로 미리보기 (외부 URL은 프록시 경유)
+- **알림 센터** — 에이전트의 완료/대기/승인요청 등 이벤트를 수집·표시
+- **로그 뷰어** — 에이전트별 출력 로그를 SQLite에 저장하고 검색
 - **도트 캐릭터** — 에이전트 활동을 픽셀 애니메이션으로 시각화 (Default/Cat 테마)
 - **슬래시 자동완성** — `~/.claude/commands`, `agents`, `skills` 자동 감지
 - **사운드** — 레트로 게임 스타일 효과음 (도구별 고유 사운드)
-- **원클릭 실행** — 바이너리 더블클릭 → 브라우저 자동 열기 → PIN 자동 생성
-- **단일 바이너리** — Go 바이너리에 프론트엔드가 임베드, 외부 의존성 없음
+- **선택형 인증** — 최초 실행 시 none/PIN/password 중 선택 (기본값: 인증 없음)
+- **CLI** — 서버 실행 없이 터미널에서 에이전트 조작 (`pcd list/create/send` 등)
+- **원클릭 실행** — 바이너리 실행 → 브라우저 자동 열기
+- **단일 바이너리** — Go 바이너리(`pcd`)에 프론트엔드가 임베드, 외부 의존성 없음
+
+---
+
+## 기능 상태 (Stable / Experimental / Roadmap)
+
+### Stable in v0.2
+- Interactive Terminal
+- Prompt Bar (한글/긴 프롬프트)
+- Project Sessions (프로젝트별 세션)
+- File Explorer
+- Claude / Gemini / Codex Launcher
+- Optional Authentication (none / PIN / password)
+- Local / Proxy-friendly deployment
+
+### Experimental
+아래 기능은 동작하지만 v0.2에서 크게 다듬지 않았고, 이후 버전에서 변경될 수 있습니다.
+- Multi-agent dashboard (멀티 에이전트 대시보드)
+- Browser preview (내장 브라우저)
+- Notification center (알림 센터)
+- Pixel character (도트 캐릭터)
+- Sound effects (효과음)
+- CLI subcommands
+
+### Roadmap
+- **v0.3.0 — Control Room**: 여러 에이전트 세션을 한눈에 관리하는 관제실. → [Roadmap 섹션](#roadmap)
+
+---
+
+## 한눈에 보는 구조
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Browser (React SPA, 단일 바이너리에 임베드됨)              │
+│  Dashboard · Terminal · Files · Browser · Logs · Settings  │
+└───────────────┬────────────────────────────────────────────┘
+                │  REST (HTTP/JWT)  +  WebSocket (터미널 스트림)
+                ▼
+┌────────────────────────────────────────────────────────────┐
+│  Go Server (pcd 바이너리)                                  │
+│  Router → Handlers → Services → SQLite                     │
+│  WebSocket Hub → PTY → tmux                                │
+└───────────────┬────────────────────────────────────────────┘
+                │  PTY (pseudo-terminal)
+                ▼
+┌────────────────────────────────────────────────────────────┐
+│  tmux 세션: Claude Code / Gemini CLI / Codex CLI / Custom  │
+└────────────────────────────────────────────────────────────┘
+```
+
+핵심 아이디어: **각 AI CLI 에이전트는 독립된 tmux 세션에서 실행**되고, Go 서버가 PTY로 그 세션의 입출력을 중계합니다. 브라우저의 xterm.js는 WebSocket으로 이 스트림을 실시간 표시합니다. tmux 덕분에 브라우저를 닫아도 에이전트는 계속 실행됩니다.
 
 ---
 
 ## 사전 요구사항
 
-AgentDeck은 AI CLI 도구의 **런처**입니다. 사용하려는 CLI가 미리 설치되어 있어야 합니다.
+PowerCodeDeck은 AI CLI 도구의 **런처**입니다. 사용하려는 CLI가 미리 설치되어 있어야 합니다.
 
 | CLI | 설치 명령 |
 |-----|----------|
@@ -35,7 +120,8 @@ AgentDeck은 AI CLI 도구의 **런처**입니다. 사용하려는 CLI가 미리
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `npm install -g @google/gemini-cli` |
 | [OpenAI Codex CLI](https://github.com/openai/codex) | `npm install -g @openai/codex` |
 
-> AgentDeck 자체는 CLI를 설치하지 않습니다. 원하는 CLI를 먼저 설치한 뒤 AgentDeck을 실행하세요.
+> PowerCodeDeck 자체는 CLI를 설치하지 않습니다. 원하는 CLI를 먼저 설치한 뒤 실행하세요.
+> `Custom` 프리셋을 쓰면 위 목록 외 임의의 커맨드도 실행할 수 있습니다.
 
 ---
 
@@ -71,10 +157,14 @@ cd AgentDeck
 ```bash
 git clone https://github.com/LeeSiWal/AgentDeck.git
 cd AgentDeck
-make setup    # 의존성 설치
-make build    # 빌드
-./agentdeck   # 실행
+make setup    # 의존성 설치 (client pnpm install + go mod download)
+make build    # client 빌드 → server/static/ 복사 → go build (→ ./pcd)
+./pcd         # 실행
 ```
+
+주요 Make 타깃: `make setup`, `make build`, `make dev`(개발 서버), `make clean`.
+
+> 저장소 이름은 아직 `AgentDeck`이며 바이너리는 `pcd`, 데이터 디렉터리는 하위 호환을 위해 `~/.agentdeck/`를 유지합니다.
 
 ---
 
@@ -82,22 +172,34 @@ make build    # 빌드
 
 ### 첫 실행
 
-바이너리를 실행하면 자동으로:
+첫 실행 시 **인증 사용 여부를 선택**합니다. 기본값은 **인증 없음**입니다.
+(터미널이 아닌 방식 — PM2, `.app` 더블클릭 등 — 으로 실행되면 자동으로 인증 없음으로 설정됩니다.)
 
-1. PIN 6자리 자동 생성
-2. JWT 시크릿 자동 생성
-3. `.env` 파일 자동 저장
-4. 브라우저 자동 열기
+```
+  PowerCodeDeck v0.2.0 first run
+  ------------------------------------------------
+  인증을 사용할까요?  (Choose authentication)
+    [1] 사용 안 함 / none   (기본값, default)
+    [2] PIN 사용 / pin
+    [3] 비밀번호 사용 / password
+  선택 (Enter = 1):
+```
+
+선택 후 서버가 시작되며 배너가 표시됩니다:
 
 ```
   ================================================
-     AgentDeck - AI Agent Terminal Manager
+     PowerCodeDeck v0.2.0
+     AI Coding Terminal Console
   ================================================
 
-     URL :  http://localhost:33033
-     PIN :  847293
+     URL  : http://localhost:33033
+     Auth : disabled
 
-  ** First run! PIN has been auto-generated. **
+  Warning:
+  PowerCodeDeck authentication is disabled.
+  Do not expose this service directly to the public internet.
+  Use Caddy + Authelia, Tailscale, VPN, or SSH tunnel.
 
      Browser will open automatically.
      Press Ctrl+C to stop the server.
@@ -105,15 +207,65 @@ make build    # 빌드
   ================================================
 ```
 
-터미널에 표시된 PIN을 브라우저에 입력하면 바로 사용 가능합니다.
+인증 없음 모드에서는 로그인 페이지 없이 바로 앱으로 진입합니다.
 
 ### 이후 실행
 
-- **macOS:** 바탕화면 `AgentDeck.command` 더블클릭 또는 `~/Applications`의 AgentDeck 앱
-- **Windows:** 바탕화면 `AgentDeck.bat` 더블클릭
-- **터미널:** `~/.agentdeck/agentdeck` 또는 `./agentdeck`
+- **macOS:** 바탕화면 `PowerCodeDeck.command` 더블클릭 또는 `~/Applications`의 PowerCodeDeck 앱
+- **Windows:** 바탕화면 `PowerCodeDeck.bat` 더블클릭
+- **터미널:** `~/.agentdeck/pcd` 또는 `./pcd`
 
-한 번 로그인하면 7일간 재로그인 불필요 (JWT).
+인증 사용 시 한 번 로그인하면 7일간 재로그인 불필요 (JWT). WSL 환경에서는 Windows 기본 브라우저를 자동으로 엽니다.
+
+---
+
+## 인증
+
+PowerCodeDeck의 자체 인증은 **선택 사항**이며 기본값은 사용 안 함입니다.
+최초 실행 시 마법사에서 선택하거나, `.env`에서 직접 설정할 수 있습니다.
+
+| 방법 | 동작 |
+|------|------|
+| **none** (기본) | 로그인 없이 즉시 진입. API·WebSocket 인증 통과. 시작 로그에 `Auth: disabled` + 보안 경고 |
+| **pin** | 사용자가 직접 정한 PIN으로 로그인. PIN 값은 로그에 노출되지 않음 |
+| **password** | 사용자가 정한 비밀번호로 로그인. 비밀번호는 평문이 아닌 해시로 저장 |
+
+- PIN/비밀번호는 **자동 생성하지 않고 사용자가 직접 정합니다.**
+- 인증 사용 시 JWT 서명 키(`*_JWT_SECRET`)가 자동 생성되어 `.env`에 저장됩니다.
+- 비밀번호는 stdlib salted-iterated SHA-256 해시로 저장됩니다(외부 의존성 없이). 추후 bcrypt/argon2로 교체 가능합니다.
+
+### 인증 방법 변경
+
+`~/.agentdeck/.env`를 편집한 뒤 재시작합니다:
+
+```bash
+# 인증 없음
+POWERCODEDECK_AUTH_ENABLED=false
+POWERCODEDECK_AUTH_METHOD=none
+
+# PIN 사용
+POWERCODEDECK_AUTH_ENABLED=true
+POWERCODEDECK_AUTH_METHOD=pin
+POWERCODEDECK_PIN=123456
+
+# 재시작
+~/.agentdeck/pcd
+```
+
+> 비밀번호 해시는 UI에서 직접 만들 수 없으므로, password 방식은 최초 실행 마법사에서 설정하는 것을 권장합니다.
+
+---
+
+## 보안 주의
+
+PowerCodeDeck은 **서버 터미널과 파일에 접근할 수 있는 도구**입니다.
+인증 없음 모드는 로컬 실행, VPN, Tailscale, SSH 터널, 또는 Caddy + Authelia 같은 외부 인증 뒤에서 사용하는 것을 전제로 합니다.
+
+권장:
+- `127.0.0.1`에만 바인딩 (리버스 프록시 뒤에 배치)
+- Caddy + Authelia 등 외부 인증 뒤에서 사용
+- **공개 인터넷에 직접 노출 금지**
+- 작업 가능한 루트 디렉터리 제한 (`POWERCODEDECK_WORKSPACE_ROOT`)
 
 ---
 
@@ -122,33 +274,39 @@ make build    # 빌드
 ### 1. 프로젝트 선택
 
 첫 화면에서 프로젝트를 선택합니다:
-- **최근 프로젝트** — 이전에 열었던 프로젝트 바로 열기
+- **최근 프로젝트** — 이전에 열었던 프로젝트 바로 열기 (SQLite에 방문 이력 저장)
 - **폴더 탐색** — 파일 브라우저로 선택
 - **직접 입력** — 경로 직접 입력 (예: `~/code/my-project`)
 - **새 프로젝트 만들기** — 폴더 생성
 
 ### 2. 에이전트 실행
 
-프로젝트를 선택하면 에이전트 타입을 고릅니다:
+프로젝트를 선택하면 에이전트 타입(프리셋)을 고릅니다:
 - **Claude Code** — Anthropic의 AI 코딩 에이전트
 - **Gemini CLI** — Google의 AI CLI
 - **Codex CLI** — OpenAI의 AI CLI
 - **Custom** — 원하는 커맨드 직접 입력
 
+각 에이전트는 고유 색상(hue)과 도트 캐릭터를 부여받아 대시보드에서 구분됩니다.
+
 ### 3. 터미널 사용
 
-| 모드 | 설명 |
-|------|------|
-| **CHAT** (기본) | 하단 입력창으로 명령 입력. `/`로 슬래시 커맨드 자동완성 |
-| **RAW** | 터미널 직접 입력. 일반 터미널처럼 사용 |
+PowerCodeDeck은 하나의 **Interactive Terminal**을 사용합니다. 별도의 Chat/Raw 모드는 없습니다.
 
-- 방향키로 선택지 선택 가능 (Chat 모드에서도 동작)
-- `Shift+Enter`로 멀티라인 입력
-- 긴 프롬프트도 전송 가능 (자동 청크 분할)
+- 기본 입력은 실제 터미널에 직접 전달됩니다.
+- Claude의 선택지, 승인 요청(y/n), 방향키, Tab, Esc, Ctrl+C는 터미널에서 그대로 조작합니다.
+- 긴 프롬프트나 한글 입력은 하단 **Prompt Bar**에서 작성한 뒤 **Send**로 전송합니다.
+- Prompt Bar는 내용을 터미널에 안전하게 붙여넣고(bracketed paste) Enter를 전송합니다.
+  - **Send** — 붙여넣고 Enter까지 전송
+  - **Paste** — 붙여넣기만 하고 Enter는 보내지 않음 (터미널에서 검토 후 직접 Enter)
+- `Enter`로 전송, `Shift+Enter`로 줄바꿈, `/`로 슬래시 커맨드 자동완성을 사용합니다.
+
+> 짧은 쉘 조작·선택지·y/n·방향키는 터미널 직접 입력, 한글/긴 문장/멀티라인은 Prompt Bar — 라는 단순한 규칙입니다.
 
 ### 4. 패널
 
-- **Files** — 좌측 파일 탐색기 (파일 보기/편집/생성/삭제)
+- **Files** — 좌측 파일 탐색기 (파일 보기/편집/생성/삭제/이름변경, 실시간 변경 감지)
+- **Browser** — 에이전트가 띄운 로컬 포트를 iframe으로 미리보기 (외부 URL은 프록시 경유)
 - **Anim** — 우측 애니메이션 패널 (도트 캐릭터 + 캐릭터 테마 설정)
 - 패널 크기 드래그로 조절 가능
 
@@ -157,7 +315,13 @@ make build    # 빌드
 여러 에이전트를 동시에 관리:
 - 그리드/리스트 뷰
 - `+` 버튼으로 에이전트 바로 생성
-- 에이전트 상태 실시간 표시
+- 에이전트 상태·Git 브랜치·리스닝 포트 실시간 표시
+- 커맨드 팔레트(⌘/Ctrl+K 계열)로 빠른 이동
+
+### 6. 알림 · 로그
+
+- **알림 센터** — 에이전트 완료/대기/승인요청 등 이벤트를 모아 표시, 읽음 처리
+- **로그 뷰어** — 에이전트별 출력 로그 검색 (SQLite 저장)
 
 ---
 
@@ -165,66 +329,86 @@ make build    # 빌드
 
 ### 환경변수 (`.env`)
 
+`POWERCODEDECK_*` prefix를 권장합니다.
+
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `AGENTDECK_PIN` | (자동 생성) | 로그인 PIN 6자리 |
-| `AGENTDECK_JWT_SECRET` | (자동 생성) | JWT 서명 키 |
-| `AGENTDECK_PORT` | `33033` | 서버 포트 |
-| `AGENTDECK_DB_PATH` | `./agentdeck.db` | SQLite 데이터베이스 경로 |
-| `AGENTDECK_CORS_ORIGINS` | `http://localhost:33033` | CORS 허용 origin |
+| `POWERCODEDECK_AUTH_ENABLED` | `false` | PowerCodeDeck 자체 인증 사용 여부 |
+| `POWERCODEDECK_AUTH_METHOD` | `none` | `none`, `pin`, `password` |
+| `POWERCODEDECK_PIN` | (빈 값) | PIN 인증 사용 시 PIN |
+| `POWERCODEDECK_PASSWORD_HASH` | (빈 값) | password 인증 사용 시 비밀번호 해시 |
+| `POWERCODEDECK_JWT_SECRET` | (자동) | 인증 사용 시 JWT 서명 키 |
+| `POWERCODEDECK_PORT` | `33033` | 서버 포트 |
+| `POWERCODEDECK_DB_PATH` | `./agentdeck.db` | SQLite 데이터베이스 경로 |
+| `POWERCODEDECK_CORS_ORIGINS` | `http://localhost:33033` | CORS 허용 origin |
+| `POWERCODEDECK_WORKSPACE_ROOT` | (빈 값) | 프로젝트 탐색 기본 루트 |
 
-첫 실행 시 자동 생성되며, 직접 편집도 가능합니다.
+> 기존 `AGENTDECK_*` 환경변수도 하위 호환을 위해 계속 지원됩니다.
+> 동일한 값이 함께 존재하면 `POWERCODEDECK_*`가 우선됩니다.
+>
+> **하위 호환 규칙**: `AUTH_ENABLED`/`AUTH_METHOD`가 없고 `AGENTDECK_PIN`만 있어도 기존 PIN 인증으로 동작합니다.
 
-### PIN 변경
-
-PIN은 `~/.agentdeck/.env` 파일에 저장됩니다.
-
-```bash
-# PIN 확인
-cat ~/.agentdeck/.env
-
-# PIN 변경 (원하는 숫자로 교체)
-nano ~/.agentdeck/.env
-# AGENTDECK_PIN=123456  ← 이 값을 수정
-
-# 변경 후 재시작
-~/.agentdeck/agentdeck
-```
-
-> UI에서 변경하는 기능은 현재 없으며 `.env` 파일 직접 수정 방식입니다.
+첫 실행 시 선택한 설정이 `.env`에 저장되며, 직접 편집도 가능합니다. 인증 변경은 [인증 섹션](#인증) 참고.
 
 ### PM2로 상시 실행
 
 ```bash
-pm2 start ./agentdeck --name agentdeck
+pm2 start ./pcd --name pcd
 pm2 save
 pm2 startup  # 재부팅 후 자동 시작
 ```
+
+`ecosystem.config.js`가 함께 제공됩니다.
+
+---
+
+## CLI 커맨드
+
+서버가 실행 중일 때, 같은 바이너리를 서브커맨드와 함께 호출하면 터미널에서 에이전트를 조작할 수 있습니다.
+
+```bash
+pcd                    # (인자 없음) 서버 시작
+pcd login              # CLI 인증 (토큰을 OS 설정 폴더에 저장)
+pcd list               # 에이전트 목록
+pcd create --preset claude-code --dir ~/code/app --name "내 에이전트"  # 에이전트 생성
+pcd send <id> "메시지"  # 에이전트에 텍스트 전송
+pcd status [id]        # 상태 확인
+pcd delete <id>        # 에이전트 삭제
+pcd open               # 브라우저 열기
+pcd ping               # 서버 상태 확인
+pcd version            # 버전 (pcd v0.2.0)
+pcd help               # 도움말
+```
+
+CLI 토큰 저장 위치: macOS `~/Library/Application Support/agentdeck/`, Linux `~/.config/agentdeck/`, Windows `%APPDATA%\agentdeck\`.
 
 ---
 
 ## 기술 스택
 
-### 서버 (Go)
+### 서버 (Go 1.23)
 - **Gorilla Mux** — HTTP 라우터
-- **Gorilla WebSocket** — 실시간 통신
-- **SQLite** (mattn/go-sqlite3) — 에이전트/프로젝트/로그 저장
+- **Gorilla WebSocket** — 실시간 터미널 스트림
+- **SQLite** (mattn/go-sqlite3, WAL 모드) — 에이전트/프로젝트/로그/알림 저장
 - **creack/pty** — 터미널 PTY 관리
-- **tmux** — 에이전트 세션 관리
+- **tmux** — 에이전트 세션 관리 (외부 바이너리)
 - **fsnotify** — 파일 변경 감지
-- **JWT** (golang-jwt) — 인증
+- **golang-jwt/jwt v5** — 인증
+- **joho/godotenv** — `.env` 로드
+- 내장 서비스: Git 상태, 포트 스캐너, 알림, 파일 감시
 
-### 클라이언트 (React + TypeScript)
-- **Vite** — 빌드 도구
+### 클라이언트 (React 18 + TypeScript)
+- **Vite 6** — 빌드 도구 (`eruda`로 모바일 디버깅)
 - **React Router v6** — 클라이언트 라우팅
-- **Zustand** — 상태 관리
-- **xterm.js** — 웹 터미널
+- **Zustand** — 상태 관리 (`appStore`)
+- **xterm.js** (@xterm/xterm + addon-fit / unicode11 / web-links) — 웹 터미널
+- **react-markdown + remark-gfm** — 마크다운 렌더링
 - **Tailwind CSS** — 스타일링
-- **Web Audio API** — 효과음
+- **Web Audio API** — 효과음 (`soundManager`, `subAgentSounds`)
 
 ### 빌드 결과물
-- Go 바이너리 1개 (프론트엔드 임베드)
-- SQLite DB 파일 1개
+- Go 바이너리 1개 (프론트엔드 `embed.FS`로 임베드)
+- SQLite DB 파일 1개 (`agentdeck.db` + WAL/SHM)
 - `.env` 설정 파일 1개
 
 ---
@@ -234,29 +418,70 @@ pm2 startup  # 재부팅 후 자동 시작
 ```
 agentdeck-go/
 ├── server/                 # Go 백엔드
-│   ├── main.go            # 엔트리포인트 + 라우터
-│   ├── auth/              # JWT 인증
-│   ├── config/            # 환경변수 로드
-│   ├── db/                # SQLite + 마이그레이션
+│   ├── main.go            # 엔트리포인트: 서비스 조립, 라우터, static 임베드, 배너
+│   ├── cli/               # 서브커맨드 CLI (root, agents, auth)
+│   ├── auth/              # JWT 발급/검증, HTTP·WS 인증 미들웨어
+│   ├── version/           # 제품명/버전 상수 (PowerCodeDeck v0.2.0)
+│   ├── config/            # 이중 prefix env 로드 + 최초 실행 인증 마법사
+│   ├── db/                # SQLite 초기화 + 마이그레이션
 │   ├── handlers/          # HTTP 핸들러
-│   ├── middleware/         # CORS, Helmet, Rate Limiter
-│   ├── services/          # 비즈니스 로직 (Agent, File, Project, PTY, Tmux)
-│   └── ws/                # WebSocket 허브
+│   │   ├── agents.go      #   에이전트 CRUD, send, slash-commands
+│   │   ├── auth_handler.go#   login / refresh
+│   │   ├── files.go       #   파일 tree/read/write/mkdir/delete/rename/stat
+│   │   ├── projects.go    #   최근/탐색/검색/생성/삭제/이름변경
+│   │   ├── logs.go        #   로그 검색/조회
+│   │   ├── notification.go#   알림 목록/클리어/읽음
+│   │   ├── meta.go        #   에이전트 메타(git/포트) 및 상태/진행/로그 갱신
+│   │   ├── proxy.go       #   외부 URL 프록시 (iframe X-Frame-Options 우회)
+│   │   └── helpers.go     #   공통 응답 헬퍼
+│   ├── middleware/        # CORS, Helmet(CSP), Rate Limiter
+│   ├── services/          # 비즈니스 로직
+│   │   ├── agent.go       #   에이전트 생성/삭제/재시작 (tmux+pty 연동)
+│   │   ├── tmux.go        #   tmux 세션 관리
+│   │   ├── pty.go         #   PTY 읽기/쓰기 펌프
+│   │   ├── file.go        #   파일시스템 접근
+│   │   ├── watcher.go     #   fsnotify 파일 변경 감시
+│   │   ├── project.go     #   프로젝트/최근 목록
+│   │   ├── git.go         #   git 브랜치·dirty·ahead 조회
+│   │   ├── port_scanner.go#   에이전트 리스닝 포트 감지
+│   │   └── notification.go#   알림 저장/조회
+│   ├── ws/                # WebSocket 허브
+│   │   ├── hub.go         #   연결·메시지 라우팅·브로드캐스트
+│   │   ├── client.go      #   read/write pump
+│   │   └── message.go     #   이벤트/페이로드 타입 정의
+│   └── static/            # 임베드된 Vite 빌드 산출물 (make build가 생성)
 ├── client/                 # React 프론트엔드
 │   └── src/
-│       ├── components/    # UI 컴포넌트
+│       ├── pages/         # 라우트 페이지
+│       │   ├── ProjectSelectPage.tsx
+│       │   ├── AgentLauncherPage.tsx
+│       │   ├── DashboardPage.tsx
+│       │   ├── TerminalPage.tsx
+│       │   ├── LogsPage.tsx
+│       │   ├── SettingsPage.tsx
+│       │   └── LoginPage.tsx
+│       ├── components/
 │       │   ├── agent/     # 에이전트 카드, 런처, 생성 시트
-│       │   ├── animation/ # 도트 캐릭터, 오비탈, 타임라인
-│       │   ├── file/      # 파일 탐색기, 에디터, 프리뷰
 │       │   ├── terminal/  # 터미널 뷰, 입력, 모바일 툴바
-│       │   └── layout/    # 네비게이션, 사이드바
+│       │   ├── file/      # 파일 탐색기, 에디터, 프리뷰
+│       │   ├── browser/   # 내장 브라우저 패널
+│       │   ├── animation/ # 도트 캐릭터, 오비탈, 타임라인, sprites
+│       │   ├── notification/ # 알림 센터
+│       │   ├── project/   # 프로젝트 선택 UI
+│       │   ├── settings/  # 설정 패널
+│       │   ├── sidebar/   # 사이드바
+│       │   ├── layout/    # 네비게이션, 레이아웃
+│       │   ├── auth/      # 로그인/PIN 입력
+│       │   ├── CommandPalette.tsx
+│       │   └── icons.tsx
 │       ├── hooks/         # React 훅
-│       ├── lib/           # API, WebSocket, 사운드, 팔레트
-│       ├── stores/        # Zustand 스토어
-│       └── pages/         # 페이지 컴포넌트
-├── install.sh             # macOS/Linux 설치 스크립트
-├── install.ps1            # Windows 설치 스크립트
+│       ├── lib/           # api.ts, ws.ts, soundManager, subAgentSounds, paletteGenerator
+│       ├── stores/        # appStore.ts (Zustand)
+│       └── styles/        # 전역 스타일
+├── install.sh / install.ps1  # 설치 스크립트 (macOS·Linux / Windows)
 ├── Makefile               # 빌드 커맨드
+├── ecosystem.config.js    # PM2 설정
+├── ARCHITECTURE.md        # 상세 설계 문서
 └── .env.example           # 환경변수 예시
 ```
 
@@ -294,8 +519,8 @@ agentdeck-go/
 │  └──────────┘    └──────┬───────┘    └──────────────────┘   │
 │                         │                                    │
 │  ┌──────────┐    ┌──────┴───────┐    ┌──────────────────┐   │
-│  │ SQLite   │    │ Tmux Service │    │ Auth / JWT       │   │
-│  │ (WAL)    │    │              │    │                  │   │
+│  │ SQLite   │    │ Tmux Service │    │ Git / PortScan / │   │
+│  │ (WAL)    │    │              │    │ Notify / Auth    │   │
 │  └──────────┘    └──────┬───────┘    └──────────────────┘   │
 └─────────────────────────┼───────────────────────────────────┘
                           │ PTY (pseudo-terminal)
@@ -325,46 +550,122 @@ Server:  hub.BroadcastToAgent(agentId, 'terminal:output', data)
 Browser: agentDeckWS.on('terminal:output') → xterm.write(data)
 ```
 
+출력은 동시에 SQLite `logs` 테이블에도 저장되어 로그 뷰어에서 검색됩니다.
+
+### DB 스키마 (SQLite, WAL)
+
+| 테이블 | 주요 컬럼 | 용도 |
+|--------|-----------|------|
+| `agents` | id, preset, name, tmux_session, working_dir, command, args, status, color_hue, color_name | 에이전트 레코드 |
+| `recent_projects` | path, name, last_opened_at, last_agent_preset, open_count | 최근 프로젝트 이력 |
+| `logs` | agent_id, data, created_at | 터미널 출력 로그 (agent 삭제 시 CASCADE) |
+| `notifications` | agent_id, reason, message, read, created_at | 알림 (agent 삭제 시 CASCADE) |
+
+### REST API (주요 엔드포인트)
+
+모든 `/api/*`는 `Authorization: Bearer <JWT>` 필요 (auth·health 제외).
+
+```
+POST /api/auth/login            PIN → JWT + Refresh Token
+POST /api/auth/refresh          토큰 갱신
+GET  /api/auth/health           헬스체크 (무인증)
+
+GET    /api/agents              에이전트 목록
+POST   /api/agents              생성
+GET    /api/agents/{id}         조회
+DELETE /api/agents/{id}         삭제
+POST   /api/agents/{id}/restart 재시작
+POST   /api/agents/{id}/send    텍스트 전송
+GET    /api/agents/{id}/meta    git/포트 메타
+GET    /api/agents/slash-commands  슬래시 커맨드 목록
+
+GET  /api/files/tree|read|stat            파일 조회
+PUT  /api/files/write   POST /api/files/mkdir
+DELETE /api/files/delete  PATCH /api/files/rename
+
+GET /api/projects/recent|browse|detect|search
+POST /api/projects/create  DELETE /api/projects/delete  PATCH /api/projects/rename
+
+GET  /api/logs   GET /api/logs/{agentId}          로그 검색/조회
+GET  /api/notifications  POST /api/notifications/clear
+GET  /api/proxy?url=...                            외부 URL 프록시
+
+GET  /ws?token=<JWT>                               WebSocket
+```
+
 ### WebSocket 이벤트
 
 | 방향 | 이벤트 | 설명 |
 |------|--------|------|
-| C→S | `terminal:attach` | 터미널 연결 (agentId, cols, rows) |
-| C→S | `terminal:detach` | 터미널 해제 |
-| C→S | `terminal:input` | 키 입력 전송 |
+| C→S | `terminal:attach` / `terminal:detach` | 터미널 연결/해제 (agentId, cols, rows) |
+| C→S | `terminal:input` | 키 입력 전송 (xterm 직접 입력) |
+| C→S | `terminal:pasteSubmit` | Prompt Bar 텍스트를 붙여넣고 Enter 전송 (서버가 bracketed paste로 래핑) |
+| C→S | `terminal:pasteOnly` | Prompt Bar 텍스트를 붙여넣기만 (Enter 없음) |
 | C→S | `terminal:resize` | 터미널 크기 변경 |
-| C→S | `file:watch` | 파일 감시 시작 |
+| C→S | `file:watch` / `file:unwatch` | 파일 감시 시작/중지 |
 | S→C | `terminal:output` | 터미널 출력 스트림 |
-| S→C | `agent:list/status/created/destroyed` | 에이전트 상태 변경 |
-| S→C | `file:changed` | 파일 변경 알림 |
+| S→C | `agent:list` / `status` / `created` / `destroyed` | 에이전트 상태 변경 |
+| S→C | `file:changed` / `file:tree` | 파일 변경/트리 갱신 |
+| S→C | `agent:meta` | git 브랜치·dirty·ahead, 리스닝 포트 |
+| S→C | `agent:meta:status` / `:progress` / `:log` | 커스텀 상태·진행률·로그 |
+| S→C | `agent:notification` / `:clear` | 알림 도착/해제 |
+
+### 내장 브라우저 프록시
+
+에이전트가 로컬 포트(예: 개발 서버)를 띄우면 포트 스캐너가 감지해 iframe으로 바로 붙입니다.
+외부 URL은 `X-Frame-Options`/CSP로 iframe 로드가 막히므로 `/api/proxy`가 서버에서 대신 가져와(최대 10MB, 리다이렉트 5회 제한) 렌더링합니다.
 
 ### 빌드 파이프라인
 
 ```
 client/src/ ──(vite build)──▶ client/dist/
                                     │
-                              (cp to server/static/)
+                              (cp → server/static/)
                                     │
-server/*.go + server/static/ ──(go build + embed)──▶ ./agentdeck
+server/*.go + server/static/ ──(go build + embed.FS)──▶ ./pcd
                                                         │
                                                   (pm2 restart)
 ```
 
-### 인증
+### 인증 (선택 사항)
 
 ```
-PIN 입력 → POST /api/auth/login → JWT (7일) + Refresh Token (30일)
-         → localStorage 저장
-         → API: Authorization: Bearer <token>
-         → WS:  /ws?token=<token>
-         → 만료 시 자동 refresh
+부팅 시 GET /api/auth/health → { authEnabled, authMethod, version }
+  authEnabled=false → 로그인 건너뛰고 진입, WS 토큰 없이 연결 (서버가 통과)
+  authEnabled=true  → 로그인 필요:
+     PIN/비밀번호 입력 → POST /api/auth/login → JWT (7일) + Refresh Token (30일)
+                       → localStorage 저장
+                       → API: Authorization: Bearer <token>
+                       → WS:  /ws?token=<token>
+                       → 만료 시 자동 refresh
+                       → 로그인 엔드포인트는 Rate Limiter(분당 10회)로 보호
 ```
+
+---
+
+## Roadmap
+
+### v0.3.0 — Control Room
+
+PowerCodeDeck의 다음 주요 기능은 **멀티 에이전트 관제실(Control Room)**입니다.
+(이번 v0.2.0에서는 구현하지 않고 로드맵으로만 정의합니다.)
+
+목표:
+- 여러 에이전트 세션을 한 화면에서 관리
+- 프로젝트별 세션 그룹핑
+- 실행 중 / 종료됨 / 주의 필요 상태 표시
+- Claude / Gemini / Codex / Shell 세션 빠른 진입
+- 세션별 최근 출력 요약
+- 세션 종료 / 재시작 / 로그 보기
+- 승인 대기나 장시간 무응답 같은 주의 상태 표시
+
+v0.2.0에서는 기존 멀티 에이전트 대시보드를 크게 수정하지 않고(Experimental로 분류), Control Room은 다음 버전 작업으로 남깁니다. 상세 로드맵은 [ROADMAP.md](ROADMAP.md) 참고.
 
 ---
 
 ## 라이선스
 
-AgentDeck은 듀얼 라이선스로 배포됩니다:
+PowerCodeDeck은 듀얼 라이선스로 배포됩니다:
 
 - **오픈소스**: [AGPL-3.0](LICENSE) — 오픈소스 프로젝트는 무료
 - **상업용**: [Commercial License](LICENSE-COMMERCIAL.md) — SaaS/클로즈드소스 제품에 사용 시

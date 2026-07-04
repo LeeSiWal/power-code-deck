@@ -9,12 +9,14 @@ type WSMessage struct {
 
 // Client -> Server events
 const (
-	EventTerminalAttach = "terminal:attach"
-	EventTerminalDetach = "terminal:detach"
-	EventTerminalInput  = "terminal:input"
-	EventTerminalResize = "terminal:resize"
-	EventFileWatch      = "file:watch"
-	EventFileUnwatch    = "file:unwatch"
+	EventTerminalAttach      = "terminal:attach"
+	EventTerminalDetach      = "terminal:detach"
+	EventTerminalInput       = "terminal:input"
+	EventTerminalResize      = "terminal:resize"
+	EventTerminalPasteSubmit = "terminal:pasteSubmit"
+	EventTerminalPasteOnly   = "terminal:pasteOnly"
+	EventFileWatch           = "file:watch"
+	EventFileUnwatch         = "file:unwatch"
 )
 
 // Server -> Client events
@@ -53,6 +55,15 @@ type TerminalResizePayload struct {
 	AgentID string `json:"agentId"`
 	Cols    uint16 `json:"cols"`
 	Rows    uint16 `json:"rows"`
+}
+
+// TerminalPastePayload carries Prompt Bar text that the server converts into a
+// safe paste sequence before writing to the PTY. Mode selects how the text is
+// wrapped: "bracketed-paste" (default), "plain-paste", or "typewriter".
+type TerminalPastePayload struct {
+	AgentID string `json:"agentId"`
+	Text    string `json:"text"`
+	Mode    string `json:"mode,omitempty"`
 }
 
 type TerminalOutputPayload struct {

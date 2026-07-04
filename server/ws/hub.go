@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +12,31 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+// buildPasteData converts Prompt Bar text into the byte sequence written to the
+// PTY. The Prompt Bar is the single place multi-line / IME text enters the
+// terminal, so wrapping happens here (one place) rather than per-client.
+//
+//	bracketed-paste (default): ESC[200~ <text> ESC[201~  — the app treats it as a
+//	                           single paste, so embedded newlines never submit.
+//	plain-paste / typewriter:  raw text, no wrapping.
+//
+// When submit is true a trailing CR is appended to send the prompt.
+func buildPasteData(text, mode string, submit bool) string {
+	var b strings.Builder
+	switch mode {
+	case "plain-paste", "typewriter":
+		b.WriteString(text)
+	default: // bracketed-paste
+		b.WriteString("\x1b[200~")
+		b.WriteString(text)
+		b.WriteString("\x1b[201~")
+	}
+	if submit {
+		b.WriteString("\r")
+	}
+	return b.String()
+}
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
@@ -144,6 +170,20 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 			return
 		}
 		h.ptySvc.Resize(payload.AgentID, payload.Cols, payload.Rows)
+
+	case EventTerminalPasteSubmit:
+		var payload TerminalPastePayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		h.ptySvc.Write(payload.AgentID, []byte(buildPasteData(payload.Text, payload.Mode, true)))
+
+	case EventTerminalPasteOnly:
+		var payload TerminalPastePayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		h.ptySvc.Write(payload.AgentID, []byte(buildPasteData(payload.Text, payload.Mode, false)))
 
 	case EventFileWatch:
 		var payload FileWatchPayload

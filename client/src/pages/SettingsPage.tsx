@@ -1,9 +1,11 @@
 import { useAuth } from '../hooks/useAuth';
 import { SoundSettings } from '../components/settings/SoundSettings';
 import { BottomNav } from '../components/layout/BottomNav';
+import { useAppStore } from '../stores/appStore';
 
 export function SettingsPage() {
   const { logout } = useAuth();
+  const { authConfig } = useAppStore();
 
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
@@ -17,16 +19,21 @@ export function SettingsPage() {
         <div className="card p-3">
           <div className="text-sm font-medium mb-1">About</div>
           <div className="text-xs text-deck-text-dim">
-            AgentDeck Go - AI Agent Terminal Manager
+            {authConfig?.appName || 'PowerCodeDeck'} - AI Coding Terminal Console
+          </div>
+          <div className="text-xs text-deck-text-dim mt-1">
+            Version {authConfig?.version || '0.2.0'} · Auth: {authConfig?.authMethod ?? 'none'}
           </div>
           <div className="text-xs text-deck-text-dim mt-1">
             Single binary, zero dependencies
           </div>
         </div>
 
-        <button onClick={logout} className="btn-danger w-full">
-          Logout
-        </button>
+        {authConfig?.authEnabled && (
+          <button onClick={logout} className="btn-danger w-full">
+            Logout
+          </button>
+        )}
       </main>
 
       <BottomNav />

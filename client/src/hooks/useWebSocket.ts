@@ -5,7 +5,8 @@ import { useAppStore } from '../stores/appStore';
 
 export function useWebSocket() {
   const connected = useRef(false);
-  const { setAgents, addAgent, removeAgent, updateAgentStatus, isAuthenticated } = useAppStore();
+  const { setAgents, addAgent, removeAgent, updateAgentStatus, isAuthenticated, authConfig } = useAppStore();
+  const authEnabled = authConfig?.authEnabled ?? true;
 
   useEffect(() => {
     if (isAuthenticated) return;
@@ -16,10 +17,11 @@ export function useWebSocket() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
+    // In no-auth mode there is no token; the server accepts the WS anyway.
     const token = api.getToken();
-    if (!token || connected.current) return;
+    if ((authEnabled && !token) || connected.current) return;
 
-    agentDeckWS.connect(token);
+    agentDeckWS.connect(token || '');
     connected.current = true;
 
     const unsubs = [
@@ -60,7 +62,7 @@ export function useWebSocket() {
     return () => {
       unsubs.forEach((fn) => fn());
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, authEnabled]);
 
   return { ws: agentDeckWS };
 }

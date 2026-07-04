@@ -65,7 +65,7 @@ func cmdDelete(args []string) {
 	token := requireToken()
 	pos := positionalArgs(args)
 	if len(pos) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: agentdeck delete <id>")
+		fmt.Fprintln(os.Stderr, "Usage: pcd delete <id>")
 		os.Exit(1)
 	}
 	_, err := apiDelete("/api/agents/"+pos[0], token)
@@ -80,7 +80,7 @@ func cmdSend(args []string) {
 	token := requireToken()
 	pos := positionalArgs(args)
 	if len(pos) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: agentdeck send <id> <text>")
+		fmt.Fprintln(os.Stderr, "Usage: pcd send <id> <text>")
 		os.Exit(1)
 	}
 	id := pos[0]

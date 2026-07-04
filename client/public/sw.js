@@ -1,4 +1,4 @@
-const CACHE_NAME = 'agentdeck-v1';
+const CACHE_NAME = 'powercodedeck-v2';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

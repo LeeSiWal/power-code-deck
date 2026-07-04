@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -7,18 +7,36 @@ import '@xterm/xterm/css/xterm.css';
 import { agentDeckWS } from '../../lib/ws';
 import { useDevice } from '../../hooks/useDevice';
 
+export interface TerminalHandle {
+  /** Imperatively move keyboard focus into the terminal (used after Prompt Bar Send). */
+  focus: () => void;
+}
+
 interface TerminalViewProps {
   agentId: string;
   fontSize?: number;
-  rawMode?: boolean;
+  /**
+   * While `true` the Prompt Bar owns the keyboard, so the terminal must not
+   * auto-grab focus (font/resize/visibility events would otherwise steal it
+   * mid-typing). Explicit user taps and imperative focus() still work.
+   */
+  focusGuardRef?: React.MutableRefObject<boolean>;
+  /** Fired when the user focuses the terminal directly (pointer down). */
+  onFocusTerminal?: () => void;
 }
 
-export function TerminalView({ agentId, fontSize, rawMode = false }: TerminalViewProps) {
+export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(function TerminalView(
+  { agentId, fontSize, focusGuardRef, onFocusTerminal },
+  ref,
+) {
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const dataDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const { isMobile, isTablet, isTouchDevice } = useDevice();
+
+  useImperativeHandle(ref, () => ({
+    focus: () => terminalRef.current?.focus(),
+  }), []);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [hasOutput, setHasOutput] = useState(false);
 
@@ -71,12 +89,15 @@ export function TerminalView({ agentId, fontSize, rawMode = false }: TerminalVie
         brightCyan: '#22d3ee',
         brightWhite: '#f8fafc',
       },
-      cursorBlink: false,
+      cursorBlink: true,
       scrollback: 3000,
       scrollSensitivity: isTouchDevice ? 1.1 : 1.16,
       smoothScrollDuration: isTouchDevice ? 245 : 180,
       allowTransparency: false,
-      disableStdin: true,
+      // Single interactive terminal: xterm always accepts input and forwards it
+      // straight to the PTY. Short shell ops, Claude choices, y/n, arrows, Ctrl+C
+      // are typed here directly; the Prompt Bar is only for Korean / long text.
+      disableStdin: false,
       allowProposedApi: true,
       scrollOnUserInput: false,
     });
@@ -92,6 +113,20 @@ export function TerminalView({ agentId, fontSize, rawMode = false }: TerminalVie
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+
+    // All keystrokes typed into the terminal go straight to the PTY.
+    const dataDisposable = terminal.onData((data) => {
+      agentDeckWS.send('terminal:input', { agentId, data });
+    });
+
+    // Auto-focus that must yield to the Prompt Bar and never pop the mobile
+    // keyboard. Explicit taps / imperative focus() bypass this.
+    const autoFocusTerminal = () => {
+      if (disposed) return;
+      if (isTouchDevice) return;
+      if (focusGuardRef?.current) return;
+      terminal.focus();
+    };
 
     // --- safeFit: skip same size, double-RAF, then focus ---
     let lastW = 0;
@@ -194,7 +229,7 @@ export function TerminalView({ agentId, fontSize, rawMode = false }: TerminalVie
       safeFit(true, reattach);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          if (!disposed) terminal.focus();
+          autoFocusTerminal();
         });
       });
     };
@@ -313,8 +348,14 @@ export function TerminalView({ agentId, fontSize, rawMode = false }: TerminalVie
     // 4. Web fonts
     document.fonts?.ready?.then(() => scheduleViewportSettle(false));
 
-    // 5. pointerdown on container → focus terminal (re-grab after overlay/tab switch)
-    const onPointerDown = () => { terminal.focus(); };
+    // 5. pointerdown on container → focus terminal (explicit user intent).
+    // Skipped on touch so tapping to scroll/select never pops the keyboard;
+    // touch users type via the Prompt Bar and mobile toolbar instead.
+    const onPointerDown = () => {
+      if (isTouchDevice) return;
+      terminal.focus();
+      onFocusTerminal?.();
+    };
     container.addEventListener('pointerdown', onPointerDown, { passive: true });
 
     // Initial
@@ -338,38 +379,17 @@ export function TerminalView({ agentId, fontSize, rawMode = false }: TerminalVie
       document.removeEventListener('visibilitychange', onVisibilityChange);
       vv?.removeEventListener('resize', onVVResize);
       container.removeEventListener('pointerdown', onPointerDown);
-      dataDisposableRef.current?.dispose();
-      dataDisposableRef.current = null;
+      dataDisposable.dispose();
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
   }, [agentId, isTouchDevice, resolvedFontSize]);
 
-  // Toggle raw mode without recreating terminal
-  useEffect(() => {
-    const terminal = terminalRef.current;
-    if (!terminal) return;
-
-    dataDisposableRef.current?.dispose();
-    dataDisposableRef.current = null;
-
-    if (rawMode) {
-      terminal.options.disableStdin = false;
-      terminal.options.cursorBlink = true;
-      dataDisposableRef.current = terminal.onData((data) => {
-        agentDeckWS.send('terminal:input', { agentId, data });
-      });
-      terminal.focus();
-    } else {
-      terminal.options.disableStdin = true;
-      terminal.options.cursorBlink = false;
-    }
-  }, [rawMode, agentId]);
-
   const handleClick = useCallback(() => {
+    if (isTouchDevice) return;
     terminalRef.current?.focus();
-  }, []);
+  }, [isTouchDevice]);
 
   return (
     <div className="relative w-full h-full terminal-shell">
@@ -401,4 +421,4 @@ export function TerminalView({ agentId, fontSize, rawMode = false }: TerminalVie
       />
     </div>
   );
-}
+});

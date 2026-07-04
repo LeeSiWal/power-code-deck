@@ -8,7 +8,9 @@ import (
 )
 
 type loginRequest struct {
-	Pin string `json:"pin"`
+	Pin      string `json:"pin"`
+	Password string `json:"password"`
+	Secret   string `json:"secret"`
 }
 
 type tokenResponse struct {
@@ -24,8 +26,17 @@ func Login(authSvc *auth.AuthService) http.HandlerFunc {
 			return
 		}
 
-		if !authSvc.VerifyPin(req.Pin) {
-			jsonError(w, "invalid pin", http.StatusUnauthorized)
+		// Accept the credential from whichever field the client used.
+		secret := req.Secret
+		if secret == "" {
+			secret = req.Pin
+		}
+		if secret == "" {
+			secret = req.Password
+		}
+
+		if !authSvc.VerifyCredential(secret) {
+			jsonError(w, "invalid credentials", http.StatusUnauthorized)
 			return
 		}
 
