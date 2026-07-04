@@ -26,7 +26,7 @@ func (s *PortScanner) GetPorts(agentID string) []int {
 	return s.cache[agentID]
 }
 
-func (s *PortScanner) Poll(agentID, tmuxSession string) []int {
+func (s *PortScanner) Poll(agentID string) []int {
 	var ports []int
 
 	if runtime.GOOS == "darwin" {

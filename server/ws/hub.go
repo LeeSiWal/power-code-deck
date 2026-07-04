@@ -93,7 +93,7 @@ func (h *Hub) pollMeta() {
 			continue
 		}
 		gitInfo := h.gitSvc.Poll(agent.ID, agent.WorkingDir)
-		ports := h.portScanner.Poll(agent.ID, agent.TmuxSession)
+		ports := h.portScanner.Poll(agent.ID)
 		payload := AgentMetaPayload{
 			AgentID:        agent.ID,
 			GitBranch:      gitInfo.Branch,
@@ -236,8 +236,7 @@ func (h *Hub) handleTerminalAttach(c *Client, payload TerminalAttachPayload) {
 	}
 	h.engine.Resize(payload.AgentID, int(cols), int(rows))
 
-	// Replay scrollback to this viewer only (nil for the tmux engine, which
-	// relies on tmux redrawing the pane on attach).
+	// Replay scrollback to this viewer only (the engine's ring buffer snapshot).
 	if res != nil && len(res.Replay) > 0 {
 		c.sendEvent(EventTerminalOutput, TerminalOutputPayload{
 			AgentID: payload.AgentID,

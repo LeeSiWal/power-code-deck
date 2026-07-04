@@ -38,19 +38,14 @@ func main() {
 	database := db.Init(cfg.DBPath)
 
 	// Services
-	// The SessionEngine hides the session runtime behind an interface. Two
-	// implementations exist; POWERCODEDECK_SESSION_ENGINE selects one (default
-	// tmux). handlers/hub/agent never touch tmux/PTY directly.
-	var sessionEngine services.SessionEngine
-	switch cfg.SessionEngine {
-	case "internal":
-		sessionEngine = services.NewInternalPtySessionEngine(cfg.ScrollbackBytes)
-	case "tmux", "":
-		sessionEngine = services.NewTmuxSessionEngine()
-	default:
-		log.Fatalf("unknown POWERCODEDECK_SESSION_ENGINE %q (use tmux|internal)", cfg.SessionEngine)
+	// PowerCodeDeck owns its PTY sessions directly via the internal engine — no
+	// tmux. handlers/hub/agent only ever talk to the SessionEngine interface.
+	if cfg.SessionEngine != "" && cfg.SessionEngine != "internal" {
+		log.Printf("Warning: POWERCODEDECK_SESSION_ENGINE=%s is no longer supported; "+
+			"PowerCodeDeck now always uses the internal PTY session engine.", cfg.SessionEngine)
 	}
-	log.Printf("Session engine: %s", cfg.SessionEngine)
+	var sessionEngine services.SessionEngine = services.NewInternalPtySessionEngine(cfg.ScrollbackBytes)
+	log.Printf("Session engine: internal")
 	agentSvc := services.NewAgentService(database, sessionEngine)
 	fileSvc := services.NewFileService()
 	watcherSvc := services.NewWatcherService()

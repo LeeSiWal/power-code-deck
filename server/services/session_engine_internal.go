@@ -19,7 +19,7 @@ import (
 // creack/pty for go-pty/ConPTY to run natively on Windows, and the same design
 // can move into a separate pcd-sessiond daemon — with no caller change.
 //
-// The core invariant is identical to the tmux engine:
+// The core invariant:
 //
 //	Detach removes a viewer and NEVER touches the process.
 //	Kill (via Delete/Restart/explicit kill) is the only thing that ends it.

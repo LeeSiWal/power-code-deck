@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased — Session engine
+
+### Changed
+- **Session engine refactor** — terminal/agent sessions now go through a single `SessionEngine` interface. The web/API/WebSocket layers no longer touch the session runtime directly. The invariant **"Detach is not Kill"** is enforced: a browser disconnect only detaches the viewer; the shell/Claude process keeps running. Only Kill / Restart / Delete end the process.
+- **tmux removed** — PowerCodeDeck now uses its own in-process `InternalPtySessionEngine` (owns each session's PTY process directly via `creack/pty`, with a per-session scrollback ring buffer replayed on reconnect). tmux is no longer a runtime dependency, is no longer installed by `install.sh`, and `TmuxSessionEngine`/`tmux.go`/`pty.go` were deleted. mac/Linux run natively without tmux; native Windows (go-pty/ConPTY) is future work.
+- `POWERCODEDECK_SESSION_ENGINE` is **deprecated** — the internal engine is always used; a set value logs a warning and is otherwise ignored.
+
+### Added
+- `POWERCODEDECK_SESSION_SCROLLBACK_BYTES` (default `524288`) — per-session replay buffer size.
+- `docs/session-engine.md` documenting the engine, the Detach≠Kill rule, server-restart behavior, and the future `pcd-sessiond` split.
+
+### Notes
+- If the `pcd` **server process** restarts, live sessions may stop (session lifetime is tied to the server for now); agents are not auto-respawned — press Restart. The legacy `tmux_session` DB column is kept but unused.
+
 ## v0.2.1 — Session Handoff
 
 ### Added

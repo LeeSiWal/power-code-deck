@@ -4,36 +4,42 @@
 
 PowerCodeDeck routes all terminal/agent session management through a single
 `SessionEngine` interface ([server/services/session_engine.go](../server/services/session_engine.go)).
-Two implementations exist; `POWERCODEDECK_SESSION_ENGINE` selects one (default
-`tmux`):
-
-| Engine | `POWERCODEDECK_SESSION_ENGINE` | What it does |
-|--------|-------------------------------|--------------|
-| **TmuxSessionEngine** ([code](../server/services/session_engine_tmux.go)) | `tmux` (default) | Stable path. Uses **tmux + PTY** under the hood. |
-| **InternalPtySessionEngine** ([code](../server/services/session_engine_internal.go)) | `internal` | Experimental. `pcd` owns the **PTY process directly (creack/pty), no tmux** — the mac/Linux-native path and the basis for future go-pty/ConPTY + pcd-sessiond. Keeps per-session scrollback in a [ring buffer](../server/services/ring_buffer.go). |
-
-Either way, the web/API/WebSocket layers depend only on `SessionEngine` — never
-on tmux directly.
+There is **one implementation**: `InternalPtySessionEngine`
+([code](../server/services/session_engine_internal.go)). `pcd` owns each
+session's process + PTY directly (creack/pty) and keeps per-session scrollback in
+a bounded [ring buffer](../server/services/ring_buffer.go). **tmux is no longer
+used or required** anywhere.
 
 ```
 Browser / Mobile / iPad
         │
         ▼
-      pcd            Web UI · REST API · WebSocket gateway · Auth · QR Handoff
+      pcd                     Web UI · REST API · WebSocket gateway · Auth · QR Handoff
         │
         ▼
-  SessionEngine      (interface — the only way sessions are touched)
+  SessionEngine               (interface — the only way sessions are touched)
         │
         ▼
-  TmuxSessionEngine  Persistent session · viewer attach/detach · PTY streaming
+  InternalPtySessionEngine    Persistent process · viewer attach/detach · ring buffer
         │
         ▼
-  tmux + PTY  →  Claude / Gemini / Codex / Shell
+  PTY  →  Claude / Gemini / Codex / Shell
 ```
 
-Handlers, the WebSocket hub, and the agent service call **only**
-`SessionEngine`. They never import tmux, never call `ptySvc.Close`, and never
-handle a tmux session name.
+Handlers, the WebSocket hub, and the agent service call **only** `SessionEngine`.
+
+> **History:** earlier versions ran each agent in a tmux session
+> (`TmuxSessionEngine`). tmux was removed once the internal engine was verified;
+> only the unused `tmux_session` DB column remains, kept to avoid a migration.
+
+## Configuration
+
+```env
+POWERCODEDECK_SESSION_SCROLLBACK_BYTES=524288   # per-session replay buffer (512KB default)
+```
+
+`POWERCODEDECK_SESSION_ENGINE` is **deprecated**. If set to anything other than
+`internal`, the server logs a warning and continues with the internal engine.
 
 ## The key rule: Detach is not Kill
 
@@ -49,11 +55,12 @@ This is the invariant the whole refactor exists to guarantee:
 - **Kill** happens only on explicit user actions: Delete, Restart (kills the old
   process before starting a new one), or an explicit kill.
 
-In `TmuxSessionEngine`, Detach tears down the `tmux attach` streaming PTY when
-the last viewer leaves, but **never** runs `tmux kill-session`. Only `Kill`
+In `InternalPtySessionEngine`, Detach removes the viewer and — even when the
+last viewer leaves — **never** closes the PTY or kills the process. Only `Kill`
 does. This is covered by
-[session_engine_tmux_test.go](../server/services/session_engine_tmux_test.go)
-(`TestDetachDoesNotKill`, `TestMultiViewerDetach`, `TestRestartKeepsSessionAlive`).
+[session_engine_internal_test.go](../server/services/session_engine_internal_test.go)
+(`TestInternalDetachDoesNotKill`, `TestInternalKillAndRestart`,
+`TestInternalNaturalExit`).
 
 ## Viewers
 
@@ -77,34 +84,36 @@ stopped  — no longer alive (e.g. after a server restart)
 unknown  — status could not be determined
 ```
 
-The tmux engine currently maps these onto tmux-session existence
-(`running` / `stopped`); a richer in-process engine will distinguish
-`exited` vs `killed` precisely.
+The internal engine distinguishes `exited` (the process ended on its own) from
+`killed` (an explicit user action) precisely, and reports `running` while the
+process is alive.
 
 ## Scrollback / replay
 
-`Attach` returns an `AttachResult{ Replay []byte }`. The tmux engine leaves
-`Replay` nil and relies on tmux redrawing the pane on attach. A future
-in-process engine returns its ring-buffer snapshot here, which the hub sends to
-the newly-attached viewer before live output resumes.
+`Attach` returns an `AttachResult{ Replay []byte }`. The internal engine returns
+the session's ring-buffer snapshot, which the hub sends to the newly-attached
+viewer before live output resumes — so a reconnecting browser/mobile sees the
+current screen.
 
-## In-process PTY engine (available, experimental)
+## Server restart behavior
 
-`InternalPtySessionEngine` drops tmux and owns each child process + PTY directly
-via `creack/pty`, keeping a scrollback ring buffer per session. Enable it with:
+PowerCodeDeck now owns PTY processes directly.
 
-```env
-POWERCODEDECK_SESSION_ENGINE=internal
-POWERCODEDECK_SESSION_SCROLLBACK_BYTES=524288   # per-session replay buffer (512KB default)
-```
+If the PowerCodeDeck **server process restarts**, live shell/Claude processes may
+stop — session lifetime is currently tied to the `pcd` process. The app does
+**not** auto-respawn agents after a restart; a stopped session stays `stopped`
+and the user presses Restart to start a fresh one. A future version
+(`pcd-sessiond`, below) will separate session lifetime from the web server so
+sessions survive a `pcd` restart.
 
-On mac/Linux this already runs sessions **without tmux**. A later variant swaps
-`creack/pty` for `go-pty`/ConPTY to also run **natively on Windows** (no WSL) —
-callers change nothing because they only talk to `SessionEngine`.
+Browser disconnects are unaffected — those are viewer detaches, and the process
+keeps running.
 
-Trade-off (accepted): without a separate daemon, sessions do not survive a
-`pcd` **server restart** — they survive browser disconnects, which is what
-handoff needs.
+## Native Windows (future)
+
+The internal engine uses `creack/pty` (Unix). A later variant swaps it for
+`go-pty`/ConPTY so `pcd` runs **natively on Windows with no WSL** — callers
+change nothing because they only talk to `SessionEngine`.
 
 ## Future phase: pcd-sessiond
 
@@ -124,9 +133,9 @@ Reached via a third `SessionEngine` implementation, `RemoteSessionEngineClient`.
 
 ### Implementations
 
-- `TmuxSessionEngine` — **current default** (tmux + PTY)
-- `InternalPtySessionEngine` — **available, experimental** — in-process PTY, no
-  tmux (mac/Linux today; go-pty/ConPTY for Windows later)
+- `InternalPtySessionEngine` — **current** — in-process PTY, no tmux (mac/Linux
+  today; go-pty/ConPTY for native Windows later)
+- `TmuxSessionEngine` — **removed** — earlier tmux-backed implementation
 - `RemoteSessionEngineClient` — **planned** — talks to `pcd-sessiond`
 
 ### Draft pcd-sessiond API
@@ -153,8 +162,7 @@ Security:
 ### Draft configuration (not yet implemented)
 
 ```env
-POWERCODEDECK_SESSION_ENGINE=tmux            # tmux | internal | remote
-POWERCODEDECK_SESSIOND_ENABLED=false
+POWERCODEDECK_SESSIOND_ENABLED=false                    # opt into the remote daemon
 POWERCODEDECK_SESSIOND_ADDR=http://127.0.0.1:33034
 POWERCODEDECK_SESSIOND_TOKEN=
 POWERCODEDECK_SESSION_SCROLLBACK_BYTES=524288

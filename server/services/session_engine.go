@@ -15,11 +15,11 @@ import "time"
 //	  Kill   — the underlying process is terminated. Only Delete/Restart (or an
 //	           explicit user action) may do this.
 //
-// Today the concrete implementation is [TmuxSessionEngine] (tmux + PTY under
-// the hood). The interface is shaped so it can later be swapped for an
-// in-process PTY engine (creack/pty or go-pty/ConPTY) or a RemoteSessionEngine
-// client that talks to a separate `pcd-sessiond` daemon — with no change to the
-// callers. See docs/session-engine.md.
+// The concrete implementation is [InternalPtySessionEngine]: `pcd` owns each
+// session's process + PTY directly (creack/pty), with no tmux. The interface is
+// shaped so it can later be swapped for a go-pty/ConPTY variant (native Windows)
+// or a RemoteSessionEngine client that talks to a separate `pcd-sessiond`
+// daemon — with no change to the callers. See docs/session-engine.md.
 type SessionEngine interface {
 	// Create starts a new session's underlying process and registers it.
 	Create(req CreateSessionRequest) (*SessionInfo, error)
@@ -55,8 +55,8 @@ type SessionEngine interface {
 // OutputHandler receives a chunk of a session's terminal output.
 type OutputHandler func(sessionID string, data []byte)
 
-// Session status values. tmux-backed engines map these onto tmux-session
-// existence; richer engines distinguish exited vs. killed precisely.
+// Session status values. The internal engine distinguishes exited (process
+// ended on its own) from killed (explicit user action) precisely.
 const (
 	SessionRunning = "running" // process is alive
 	SessionExited  = "exited"  // process ended on its own
@@ -91,8 +91,9 @@ type SessionInfo struct {
 	UpdatedAt time.Time
 }
 
-// AttachResult carries scrollback to replay to a freshly-attached viewer.
-// Replay may be nil (e.g. the tmux engine relies on tmux's own redraw-on-attach).
+// AttachResult carries scrollback to replay to a freshly-attached viewer
+// (the engine's ring-buffer snapshot). Replay may be nil when there is nothing
+// buffered yet.
 type AttachResult struct {
 	SessionID string
 	Replay    []byte

@@ -60,18 +60,8 @@ if [ "$OS" = "Darwin" ]; then
     fi
 fi
 
-# ── 3. Install tmux (required) ──
-if ! command -v tmux &>/dev/null; then
-    echo "  Installing tmux..."
-    if [ "$OS" = "Darwin" ]; then
-        brew install tmux
-    else
-        sudo apt-get update -qq && sudo apt-get install -y -qq tmux
-    fi
-    echo "  ✓ tmux installed"
-else
-    echo "  ✓ tmux found ($(tmux -V))"
-fi
+# ── 3. tmux is no longer required ──
+# PowerCodeDeck now uses its internal PTY session engine, so tmux is not needed.
 
 # ── 4. Install Go (for building) ──
 if ! command -v go &>/dev/null; then

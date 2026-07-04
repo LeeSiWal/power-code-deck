@@ -30,9 +30,10 @@ type Config struct {
 	WorkspaceRoot string // default root for the project browser (optional)
 	SetupMode     bool   // true when this run performed first-run setup
 
-	// Session engine
-	SessionEngine   string // "tmux" (default) | "internal"
-	ScrollbackBytes int    // per-session replay buffer for the internal engine
+	// Session engine. PowerCodeDeck always uses the internal PTY engine now;
+	// this field only carries a legacy/deprecated value for a startup warning.
+	SessionEngine   string
+	ScrollbackBytes int // per-session replay buffer for the internal engine
 
 	// Session Handoff (Continue on Mobile)
 	PublicURL         string // e.g. https://pcd.example.com — base for QR handoff URLs
@@ -79,11 +80,9 @@ func Load() *Config {
 	cfg.LanHandoffEnabled = parseBool(envDual("LAN_HANDOFF_ENABLED"))
 	cfg.HandoffTokenTTL = parseIntDefault(envDual("HANDOFF_TOKEN_TTL_SECONDS"), 600)
 
-	// Session engine selection (default tmux for safety).
+	// Session engine is always internal now; keep any set value only so the
+	// server can warn that the setting is deprecated.
 	cfg.SessionEngine = strings.ToLower(strings.TrimSpace(envDual("SESSION_ENGINE")))
-	if cfg.SessionEngine == "" {
-		cfg.SessionEngine = "tmux"
-	}
 	cfg.ScrollbackBytes = parseIntDefault(envDual("SESSION_SCROLLBACK_BYTES"), 524288)
 
 	authEnabledStr, authEnabledSet := envDualLookup("AUTH_ENABLED")
@@ -338,8 +337,7 @@ func saveEnvFile(cfg *Config) {
 	fmt.Fprintf(&b, "POWERCODEDECK_DB_PATH=%s\n", cfg.DBPath)
 	fmt.Fprintf(&b, "POWERCODEDECK_CORS_ORIGINS=%s\n", cfg.CORSOrigins)
 	fmt.Fprintf(&b, "POWERCODEDECK_WORKSPACE_ROOT=%s\n", cfg.WorkspaceRoot)
-	b.WriteString("\n# Session engine: tmux (default) | internal\n")
-	fmt.Fprintf(&b, "POWERCODEDECK_SESSION_ENGINE=%s\n", defaultStr(cfg.SessionEngine, "tmux"))
+	b.WriteString("\n# Session engine: PowerCodeDeck uses its internal PTY engine (no tmux).\n")
 	fmt.Fprintf(&b, "POWERCODEDECK_SESSION_SCROLLBACK_BYTES=%d\n", defaultInt(cfg.ScrollbackBytes, 524288))
 	b.WriteString("\n# Session Handoff (Continue on Mobile)\n")
 	fmt.Fprintf(&b, "POWERCODEDECK_PUBLIC_URL=%s\n", cfg.PublicURL)

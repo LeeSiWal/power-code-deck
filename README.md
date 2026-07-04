@@ -24,6 +24,7 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 - [주요 기능](#주요-기능)
 - [기능 상태 (Stable / Experimental / Roadmap)](#기능-상태-stable--experimental--roadmap)
 - [한눈에 보는 구조](#한눈에-보는-구조)
+- [Session Engine](#session-engine)
 - [사전 요구사항](#사전-요구사항)
 - [설치](#설치)
 - [실행](#실행)
@@ -44,7 +45,7 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 ## 주요 기능
 
 - **멀티 에이전트** — 여러 AI 에이전트를 동시에 실행/모니터링 (Claude Code / Gemini CLI / Codex CLI / Custom)
-- **웹 터미널** — xterm.js 기반 단일 Interactive Terminal + 디바이스별 Prompt Bar(한글/긴 프롬프트), 방향키 툴바, tmux 세션으로 프로세스 유지
+- **웹 터미널** — xterm.js 기반 단일 Interactive Terminal + 디바이스별 Prompt Bar(한글/긴 프롬프트), 방향키 툴바, 내부 PTY 세션 엔진으로 프로세스 유지 (브라우저를 닫아도 유지)
 - **대시보드** — 그리드/리스트 뷰로 전체 에이전트 상태를 한눈에, `+`로 즉시 생성
 - **에이전트 메타** — Git 브랜치·변경 여부·ahead 커밋 수, 리스닝 포트 자동 감지 표시
 - **파일 탐색기** — 프로젝트 파일 탐색/편집/생성/삭제/이름변경
@@ -99,16 +100,27 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 ┌────────────────────────────────────────────────────────────┐
 │  Go Server (pcd 바이너리)                                  │
 │  Router → Handlers → Services → SQLite                     │
-│  WebSocket Hub → PTY → tmux                                │
+│  WebSocket Hub → PTY (내부 세션 엔진)                       │
 └───────────────┬────────────────────────────────────────────┘
                 │  PTY (pseudo-terminal)
                 ▼
 ┌────────────────────────────────────────────────────────────┐
-│  tmux 세션: Claude Code / Gemini CLI / Codex CLI / Custom  │
+│  PTY 세션: Claude Code / Gemini CLI / Codex CLI / Custom    │
 └────────────────────────────────────────────────────────────┘
 ```
 
-핵심 아이디어: **각 AI CLI 에이전트는 독립된 tmux 세션에서 실행**되고, Go 서버가 PTY로 그 세션의 입출력을 중계합니다. 브라우저의 xterm.js는 WebSocket으로 이 스트림을 실시간 표시합니다. tmux 덕분에 브라우저를 닫아도 에이전트는 계속 실행됩니다.
+핵심 아이디어: **각 AI CLI 에이전트는 pcd 서버가 소유한 독립된 PTY 프로세스에서 실행**되고, Go 서버가 그 프로세스의 입출력을 WebSocket으로 xterm.js에 중계합니다. 서버가 프로세스를 계속 살려두기 때문에 브라우저를 닫아도 에이전트는 멈추지 않습니다 (**Detach is not Kill**). 재접속 시에는 스크롤백 링버퍼에 저장된 최근 출력이 재생됩니다.
+
+---
+
+## Session Engine
+
+PowerCodeDeck는 자체 내장 PTY 세션 엔진으로 동작합니다 (tmux 불필요).
+
+- 브라우저 연결을 끊어도 **viewer만 분리**되고, 실제 shell/Claude 프로세스는 계속 살아 있습니다.
+- **Kill / Restart / Delete** 를 눌렀을 때만 프로세스가 종료됩니다. ("Detach is not Kill")
+- 최근 출력은 크기 제한 스크롤백 링버퍼에 저장되어 재접속 시 재생됩니다.
+- 자세한 구조: [docs/session-engine.md](docs/session-engine.md)
 
 ---
 
@@ -144,7 +156,7 @@ bash install.sh
 
 설치 스크립트가 자동으로 처리하는 것:
 - Homebrew (macOS) / WSL·Ubuntu (Windows) 설치
-- tmux, Go, Node.js, pnpm 설치
+- Go, Node.js, pnpm 설치
 - 프로젝트 빌드
 - `~/.powercodedeck/`에 바이너리 설치
 - 바탕화면 바로가기 생성 (macOS: `.command` + `.app`, Windows: `.bat`)
@@ -177,7 +189,7 @@ bash install.sh
 
 ### 수동 설치
 
-필요 도구: `go 1.23+`, `pnpm`, `tmux`
+필요 도구: `go 1.23+`, `pnpm`
 
 ```bash
 git clone https://github.com/LeeSiWal/power-code-deck.git
@@ -356,7 +368,7 @@ PowerCodeDeck은 하나의 **Interactive Terminal**을 기본으로 사용합니
 ## Session Handoff
 
 데스크톱에서 실행 중인 터미널 또는 Claude 코딩 세션을 **모바일 / iPad로 그대로 이어받는** 기능입니다.
-QR 코드 한 번 스캔으로, 같은 tmux 세션에 그대로 붙어 이어서 작업할 수 있습니다.
+QR 코드 한 번 스캔으로, 같은 세션에 그대로 붙어 이어서 작업할 수 있습니다.
 
 1. 데스크톱에서 터미널 또는 Claude 세션을 엽니다.
 2. **Continue on Mobile**(모바일에서 이어하기) 버튼을 클릭합니다.
@@ -430,6 +442,7 @@ POWERCODEDECK_LAN_URL=http://192.168.0.25:33033
 | `POWERCODEDECK_JWT_SECRET` | (자동) | 인증 사용 시 JWT 서명 키 |
 | `POWERCODEDECK_PORT` | `33033` | 서버 포트 |
 | `POWERCODEDECK_DB_PATH` | `./powercodedeck.db` | SQLite 데이터베이스 경로 |
+| `POWERCODEDECK_SESSION_SCROLLBACK_BYTES` | `524288` | 세션별 스크롤백 링버퍼 크기(바이트, 재접속 시 재생) |
 | `POWERCODEDECK_CORS_ORIGINS` | `http://localhost:33033` | CORS 허용 origin |
 | `POWERCODEDECK_WORKSPACE_ROOT` | (빈 값) | 프로젝트 탐색 기본 루트 |
 | `POWERCODEDECK_BIND_HOST` | `127.0.0.1` | 서버 바인드 호스트. LAN 핸드오프에는 `0.0.0.0` 필요 |
@@ -486,8 +499,7 @@ CLI 토큰 저장 위치: macOS `~/Library/Application Support/powercodedeck/`, 
 - **Gorilla Mux** — HTTP 라우터
 - **Gorilla WebSocket** — 실시간 터미널 스트림
 - **SQLite** (mattn/go-sqlite3, WAL 모드) — 에이전트/프로젝트/로그/알림 저장
-- **creack/pty** — 터미널 PTY 관리
-- **tmux** — 에이전트 세션 관리 (외부 바이너리)
+- **creack/pty** — 터미널 PTY 관리 (내부 세션 엔진)
 - **fsnotify** — 파일 변경 감지
 - **golang-jwt/jwt v5** — 인증
 - **joho/godotenv** — `.env` 로드
@@ -532,9 +544,10 @@ power-code-deck/
 │   │   └── helpers.go     #   공통 응답 헬퍼
 │   ├── middleware/        # CORS, Helmet(CSP), Rate Limiter
 │   ├── services/          # 비즈니스 로직
-│   │   ├── agent.go       #   에이전트 생성/삭제/재시작 (tmux+pty 연동)
-│   │   ├── tmux.go        #   tmux 세션 관리
-│   │   ├── pty.go         #   PTY 읽기/쓰기 펌프
+│   │   ├── agent.go       #   에이전트 생성/삭제/재시작 (SessionEngine 경유)
+│   │   ├── session_engine.go          #   SessionEngine 인터페이스 + 타입
+│   │   ├── session_engine_internal.go #   내부 PTY 세션 엔진 (프로세스 소유, viewer 추적, Detach≠Kill)
+│   │   ├── ring_buffer.go #   스크롤백 링버퍼 (재접속 시 재생)
 │   │   ├── file.go        #   파일시스템 접근
 │   │   ├── watcher.go     #   fsnotify 파일 변경 감시
 │   │   ├── project.go     #   프로젝트/최근 목록
@@ -616,14 +629,14 @@ power-code-deck/
 │  └──────────┘    └──────┬───────┘    └──────────────────┘   │
 │                         │                                    │
 │  ┌──────────┐    ┌──────┴───────┐    ┌──────────────────┐   │
-│  │ SQLite   │    │ Tmux Service │    │ Git / PortScan / │   │
-│  │ (WAL)    │    │              │    │ Notify / Auth    │   │
+│  │ SQLite   │    │ SessionEngine│    │ Git / PortScan / │   │
+│  │ (WAL)    │    │ (내부 PTY)   │    │ Notify / Auth    │   │
 │  └──────────┘    └──────┬───────┘    └──────────────────┘   │
 └─────────────────────────┼───────────────────────────────────┘
                           │ PTY (pseudo-terminal)
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  tmux session                                                │
+│  PTY 세션 (pcd 서버가 소유)                                   │
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │  Claude Code / Gemini CLI / Codex CLI / Custom        │  │
 │  │  (alternate screen buffer + mouse tracking)           │  │
@@ -637,7 +650,7 @@ power-code-deck/
 ```
 Browser: TerminalInput/키보드 → agentDeckWS.send('terminal:input', data)
 Server:  hub.handleMessage() → ptySvc.Write(agentId, data)
-PTY:     session.Ptmx.Write() → tmux → Claude Code stdin
+PTY:     session.Ptmx.Write() → Claude Code stdin
 ```
 
 **출력 (에이전트 → 사용자):**
@@ -653,7 +666,7 @@ Browser: agentDeckWS.on('terminal:output') → xterm.write(data)
 
 | 테이블 | 주요 컬럼 | 용도 |
 |--------|-----------|------|
-| `agents` | id, preset, name, tmux_session, working_dir, command, args, status, color_hue, color_name | 에이전트 레코드 |
+| `agents` | id, preset, name, tmux_session *(legacy, 미사용)*, working_dir, command, args, status, color_hue, color_name | 에이전트 레코드 |
 | `recent_projects` | path, name, last_opened_at, last_agent_preset, open_count | 최근 프로젝트 이력 |
 | `logs` | agent_id, data, created_at | 터미널 출력 로그 (agent 삭제 시 CASCADE) |
 | `notifications` | agent_id, reason, message, read, created_at | 알림 (agent 삭제 시 CASCADE) |
