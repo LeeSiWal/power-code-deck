@@ -1,0 +1,162 @@
+package services
+
+import (
+	"bytes"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// captureHandler collects all output for a session so tests can assert on it.
+type captureHandler struct {
+	mu   sync.Mutex
+	data map[string][]byte
+}
+
+func newCapture() *captureHandler { return &captureHandler{data: map[string][]byte{}} }
+
+func (c *captureHandler) handle(sessionID string, data []byte) {
+	c.mu.Lock()
+	c.data[sessionID] = append(c.data[sessionID], data...)
+	c.mu.Unlock()
+}
+
+func (c *captureHandler) get(sessionID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return string(c.data[sessionID])
+}
+
+func newInternalSession(t *testing.T, e *InternalPtySessionEngine, id, command string, args ...string) {
+	t.Helper()
+	if _, err := e.Create(CreateSessionRequest{
+		ID: id, Type: "shell", Command: command, Args: args, Cwd: "/tmp", Cols: 80, Rows: 24,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !e.HasSession(id) {
+		t.Fatal("session should be running immediately after Create")
+	}
+}
+
+// Create → Write → output reaches the handler; Attach replays scrollback.
+func TestInternalWriteAndReplay(t *testing.T) {
+	cap := newCapture()
+	e := NewInternalPtySessionEngine(64 * 1024)
+	e.SetOutputHandler(cap.handle)
+
+	id := "int-io"
+	newInternalSession(t, e, id, "cat") // cat echoes stdin to stdout
+	defer e.Kill(id)
+
+	if err := e.Write(id, []byte("ping-123\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	// Wait for the pump to observe the echoed output.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(cap.get(id), "ping-123") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(cap.get(id), "ping-123") {
+		t.Fatalf("output handler never received input echo; got %q", cap.get(id))
+	}
+
+	// A fresh viewer should get the scrollback replayed.
+	res, err := e.Attach(id, "viewer-1")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if !bytes.Contains(res.Replay, []byte("ping-123")) {
+		t.Fatalf("Attach replay missing prior output; got %q", res.Replay)
+	}
+}
+
+// The core guarantee: detaching viewers never kills the process.
+func TestInternalDetachDoesNotKill(t *testing.T) {
+	e := NewInternalPtySessionEngine(0)
+	id := "int-detach"
+	newInternalSession(t, e, id, "sleep", "300")
+	defer e.Kill(id)
+
+	e.Attach(id, "viewer-A")
+	e.Attach(id, "viewer-B")
+
+	if err := e.Detach(id, "viewer-A"); err != nil {
+		t.Fatalf("Detach A: %v", err)
+	}
+	if !e.HasSession(id) {
+		t.Fatal("session must survive while viewer-B is attached")
+	}
+
+	// Last viewer leaves — process MUST still be alive.
+	if err := e.Detach(id, "viewer-B"); err != nil {
+		t.Fatalf("Detach B: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if !e.HasSession(id) {
+		t.Fatal("Detach must NOT kill the process, even for the last viewer")
+	}
+}
+
+// Kill ends the process; Restart brings up a fresh one.
+func TestInternalKillAndRestart(t *testing.T) {
+	e := NewInternalPtySessionEngine(0)
+	id := "int-kill"
+	newInternalSession(t, e, id, "sleep", "300")
+
+	if err := e.Kill(id); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if e.HasSession(id) {
+		t.Fatal("Kill must end the session")
+	}
+
+	// Recreate and restart.
+	newInternalSession(t, e, id, "sleep", "300")
+	defer e.Kill(id)
+	if err := e.Restart(id); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if !e.HasSession(id) {
+		t.Fatal("session should be running after Restart")
+	}
+}
+
+// A process that exits on its own is reported as exited (not killed).
+func TestInternalNaturalExit(t *testing.T) {
+	e := NewInternalPtySessionEngine(0)
+	id := "int-exit"
+	if _, err := e.Create(CreateSessionRequest{
+		ID: id, Command: "true", Cwd: "/tmp", Cols: 80, Rows: 24,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer e.Kill(id)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		info, err := e.Get(id)
+		if err == nil && info.Status == SessionExited {
+			return // success
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	info, _ := e.Get(id)
+	t.Fatalf("expected status %q after natural exit, got %+v", SessionExited, info)
+}
+
+func TestRingBufferCap(t *testing.T) {
+	r := NewRingBuffer(10)
+	r.Write([]byte("abcdef"))
+	r.Write([]byte("ghijkl")) // total 12 → keep last 10
+	got := string(r.Snapshot())
+	if got != "cdefghijkl" {
+		t.Fatalf("ring buffer cap wrong: got %q want %q", got, "cdefghijkl")
+	}
+	if r.Len() != 10 {
+		t.Fatalf("ring buffer len = %d, want 10", r.Len())
+	}
+}

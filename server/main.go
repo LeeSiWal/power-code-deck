@@ -38,9 +38,19 @@ func main() {
 	database := db.Init(cfg.DBPath)
 
 	// Services
-	// The SessionEngine hides tmux/PTY behind an interface; today it is the
-	// tmux-backed implementation. handlers/hub/agent never touch tmux directly.
-	sessionEngine := services.NewTmuxSessionEngine()
+	// The SessionEngine hides the session runtime behind an interface. Two
+	// implementations exist; POWERCODEDECK_SESSION_ENGINE selects one (default
+	// tmux). handlers/hub/agent never touch tmux/PTY directly.
+	var sessionEngine services.SessionEngine
+	switch cfg.SessionEngine {
+	case "internal":
+		sessionEngine = services.NewInternalPtySessionEngine(cfg.ScrollbackBytes)
+	case "tmux", "":
+		sessionEngine = services.NewTmuxSessionEngine()
+	default:
+		log.Fatalf("unknown POWERCODEDECK_SESSION_ENGINE %q (use tmux|internal)", cfg.SessionEngine)
+	}
+	log.Printf("Session engine: %s", cfg.SessionEngine)
 	agentSvc := services.NewAgentService(database, sessionEngine)
 	fileSvc := services.NewFileService()
 	watcherSvc := services.NewWatcherService()

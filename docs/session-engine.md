@@ -4,10 +4,16 @@
 
 PowerCodeDeck routes all terminal/agent session management through a single
 `SessionEngine` interface ([server/services/session_engine.go](../server/services/session_engine.go)).
-The current implementation, `TmuxSessionEngine`
-([server/services/session_engine_tmux.go](../server/services/session_engine_tmux.go)),
-still uses **tmux + a PTY** internally — but the web/API/WebSocket layers no
-longer depend on tmux directly.
+Two implementations exist; `POWERCODEDECK_SESSION_ENGINE` selects one (default
+`tmux`):
+
+| Engine | `POWERCODEDECK_SESSION_ENGINE` | What it does |
+|--------|-------------------------------|--------------|
+| **TmuxSessionEngine** ([code](../server/services/session_engine_tmux.go)) | `tmux` (default) | Stable path. Uses **tmux + PTY** under the hood. |
+| **InternalPtySessionEngine** ([code](../server/services/session_engine_internal.go)) | `internal` | Experimental. `pcd` owns the **PTY process directly (creack/pty), no tmux** — the mac/Linux-native path and the basis for future go-pty/ConPTY + pcd-sessiond. Keeps per-session scrollback in a [ring buffer](../server/services/ring_buffer.go). |
+
+Either way, the web/API/WebSocket layers depend only on `SessionEngine` — never
+on tmux directly.
 
 ```
 Browser / Mobile / iPad
@@ -82,13 +88,19 @@ The tmux engine currently maps these onto tmux-session existence
 in-process engine returns its ring-buffer snapshot here, which the hub sends to
 the newly-attached viewer before live output resumes.
 
-## Future phase: in-process PTY
+## In-process PTY engine (available, experimental)
 
-The next implementation, `InternalPtySessionEngine`, will drop tmux and own the
-child process + PTY directly (via `creack/pty` on Unix, `go-pty`/ConPTY on
-Windows), keeping a scrollback ring buffer. This makes PowerCodeDeck run
-**natively on Windows/macOS/Linux with no tmux and no WSL**. Because callers
-already talk only to `SessionEngine`, this is a drop-in replacement.
+`InternalPtySessionEngine` drops tmux and owns each child process + PTY directly
+via `creack/pty`, keeping a scrollback ring buffer per session. Enable it with:
+
+```env
+POWERCODEDECK_SESSION_ENGINE=internal
+POWERCODEDECK_SESSION_SCROLLBACK_BYTES=524288   # per-session replay buffer (512KB default)
+```
+
+On mac/Linux this already runs sessions **without tmux**. A later variant swaps
+`creack/pty` for `go-pty`/ConPTY to also run **natively on Windows** (no WSL) —
+callers change nothing because they only talk to `SessionEngine`.
 
 Trade-off (accepted): without a separate daemon, sessions do not survive a
 `pcd` **server restart** — they survive browser disconnects, which is what
@@ -110,11 +122,12 @@ Browser → pcd → pcd-sessiond → PTY/ConPTY → Claude / Shell
 
 Reached via a third `SessionEngine` implementation, `RemoteSessionEngineClient`.
 
-### Planned implementations
+### Implementations
 
-- `TmuxSessionEngine` — **current**
-- `InternalPtySessionEngine` — in-process PTY/ConPTY, no tmux
-- `RemoteSessionEngineClient` — talks to `pcd-sessiond`
+- `TmuxSessionEngine` — **current default** (tmux + PTY)
+- `InternalPtySessionEngine` — **available, experimental** — in-process PTY, no
+  tmux (mac/Linux today; go-pty/ConPTY for Windows later)
+- `RemoteSessionEngineClient` — **planned** — talks to `pcd-sessiond`
 
 ### Draft pcd-sessiond API
 
