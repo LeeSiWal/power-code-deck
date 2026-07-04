@@ -3,28 +3,28 @@ import { TERMINAL_KEYS } from './TerminalKeyBar';
 
 interface MobileToolbarProps {
   agentId: string;
-  /** Focus the terminal so the mobile keyboard opens for direct typing. */
-  onFocusTerminal: () => void;
+  /** Expand + focus the Prompt Bar for Korean / long text entry. */
+  onOpenPrompt: () => void;
 }
 
 // PTY control keys are shared with the desktop key bar (TERMINAL_KEYS) so both
 // surfaces expose the same navigation / choice / signal keys.
 const KEYS = TERMINAL_KEYS;
 
-export function MobileToolbar({ agentId, onFocusTerminal }: MobileToolbarProps) {
+export function MobileToolbar({ agentId, onOpenPrompt }: MobileToolbarProps) {
   const send = (data: string) => {
     agentDeckWS.send('terminal:input', { agentId, data });
   };
 
   return (
-    <div className="flex gap-2 px-3 py-2.5 overflow-x-auto scrollbar-hide safe-bottom bg-deck-surface border-t border-deck-border">
+    <div className="flex gap-2 px-3 py-2 overflow-x-auto scrollbar-hide safe-bottom bg-deck-surface border-t border-deck-border">
       <button
-        onTouchStart={(e) => { e.preventDefault(); onFocusTerminal(); }}
-        onMouseDown={(e) => { e.preventDefault(); onFocusTerminal(); }}
-        className="shrink-0 px-4 py-2.5 rounded-lg text-base select-none touch-manipulation active:opacity-70 bg-deck-accent/20 text-deck-accent"
-        title="키보드 열기 (터미널에 직접 입력)"
+        onTouchStart={(e) => { e.preventDefault(); onOpenPrompt(); }}
+        onMouseDown={(e) => { e.preventDefault(); onOpenPrompt(); }}
+        className="shrink-0 px-4 py-2.5 rounded-lg text-sm font-medium select-none touch-manipulation active:opacity-70 bg-deck-accent/20 text-deck-accent"
+        title="한글/긴 프롬프트 입력"
       >
-        ⌨
+        Prompt 입력
       </button>
       {KEYS.map((key) => (
         <button

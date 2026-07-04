@@ -23,16 +23,24 @@ interface TerminalViewProps {
   focusGuardRef?: React.MutableRefObject<boolean>;
   /** Fired when the user focuses the terminal directly (pointer down). */
   onFocusTerminal?: () => void;
+  /** Touch devices: fired when a Hangul char is typed straight into the terminal
+   * (bypassing the Prompt Bar), so the parent can nudge the user. */
+  onHangulDirect?: () => void;
 }
 
 export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(function TerminalView(
-  { agentId, fontSize, focusGuardRef, onFocusTerminal },
+  { agentId, fontSize, focusGuardRef, onFocusTerminal, onHangulDirect },
   ref,
 ) {
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const { isMobile, isTablet, isTouchDevice } = useDevice();
+
+  // Kept in a ref so the (heavy) terminal effect doesn't re-run when the prop
+  // identity changes.
+  const onHangulDirectRef = useRef(onHangulDirect);
+  onHangulDirectRef.current = onHangulDirect;
 
   useImperativeHandle(ref, () => ({
     focus: () => terminalRef.current?.focus(),
@@ -114,36 +122,14 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
-    // --- Korean / IME composition (mobile) ---
-    // On mobile soft keyboards xterm can forward decomposed jamo (ㅇㅏㄴ) instead
-    // of the composed syllable (안). On touch devices we drive text from native
-    // composition events: drop partial jamo while composing and send the final
-    // composed string on compositionend. Desktop is untouched — its xterm IME
-    // path already composes correctly.
-    let composing = false;
-    let lastComposed = '';
-    let imeTextarea: HTMLTextAreaElement | null = null;
-
-    const onCompositionStart = () => { composing = true; };
-    const onCompositionEnd = (e: CompositionEvent) => {
-      composing = false;
-      const data = e.data;
-      if (data) {
-        lastComposed = data;
-        agentDeckWS.send('terminal:input', { agentId, data });
-        // Clear the dedupe guard shortly after in case xterm also flushes it.
-        window.setTimeout(() => { if (lastComposed === data) lastComposed = ''; }, 50);
-      }
-    };
-
-    // All keystrokes typed into the terminal go straight to the PTY.
+    // All keystrokes typed into the terminal go straight to the PTY. Korean is
+    // entered via the Prompt Bar (mobile soft keyboards split jamo when typed
+    // directly into xterm); if a Hangul char arrives here on a touch device the
+    // user bypassed the Prompt Bar, so notify the parent to nudge them.
+    const HANGUL_RE = /[ᄀ-ᇿ㄰-㆏가-힣]/;
     const dataDisposable = terminal.onData((data) => {
-      if (isTouchDevice) {
-        if (composing) return;                 // drop partial jamo mid-composition
-        if (data && data === lastComposed) {   // dedupe xterm's own composed flush
-          lastComposed = '';
-          return;
-        }
+      if (isTouchDevice && onHangulDirectRef.current && HANGUL_RE.test(data)) {
+        onHangulDirectRef.current();
       }
       agentDeckWS.send('terminal:input', { agentId, data });
     });
@@ -307,16 +293,6 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       lastW = 0;
       lastH = 0;
 
-      // Route mobile IME composition through xterm's helper textarea so Korean
-      // syllables compose instead of arriving as separated jamo.
-      if (isTouchDevice && !imeTextarea) {
-        imeTextarea = container.querySelector('textarea.xterm-helper-textarea');
-        if (imeTextarea) {
-          imeTextarea.addEventListener('compositionstart', onCompositionStart);
-          imeTextarea.addEventListener('compositionend', onCompositionEnd);
-        }
-      }
-
       if (agentDeckWS.connected) {
         attachTerminal();
         scheduleViewportSettle(true);
@@ -418,10 +394,6 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       document.removeEventListener('visibilitychange', onVisibilityChange);
       vv?.removeEventListener('resize', onVVResize);
       container.removeEventListener('pointerdown', onPointerDown);
-      if (imeTextarea) {
-        imeTextarea.removeEventListener('compositionstart', onCompositionStart);
-        imeTextarea.removeEventListener('compositionend', onCompositionEnd);
-      }
       dataDisposable.dispose();
       terminal.dispose();
       terminalRef.current = null;

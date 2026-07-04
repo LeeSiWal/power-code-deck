@@ -1,0 +1,189 @@
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { agentDeckWS } from '../../lib/ws';
+
+/**
+ * How Prompt Bar text is delivered to the terminal. The server (ws/hub.go)
+ * performs the actual wrapping; the client only picks the mode.
+ *   bracketed-paste — ESC[200~ … ESC[201~  (default, keeps multi-line intact)
+ *   plain-paste     — raw text
+ */
+export type PromptSubmitMode = 'bracketed-paste' | 'plain-paste';
+
+const PROMPT_SUBMIT_MODE: PromptSubmitMode = 'bracketed-paste';
+
+interface PromptBarProps {
+  agentId: string;
+  /** Touch devices (mobile / iPad): the bar is mandatory — offer collapse, not close. */
+  forced: boolean;
+  /** Collapsed = only the expand affordance shows (forced mode only). */
+  collapsed: boolean;
+  /** Toggle collapse (forced mode). */
+  onToggleCollapse: () => void;
+  /** Desktop only: fully close the bar. */
+  onClose: () => void;
+  /** Move focus into the terminal (after Send / Paste / 터미널 조작). */
+  onFocusTerminal: () => void;
+  /** Fired when the textarea gains/loses focus so the terminal suspends auto-focus. */
+  onFocusChange?: (focused: boolean) => void;
+  /** Focus the textarea as soon as the bar mounts / expands. */
+  autoFocus?: boolean;
+}
+
+/**
+ * Prompt Bar — a plain textarea for Korean / long / multi-line prompts. Text is
+ * composed here (where the browser's native IME works correctly) and then
+ * pasted into the current terminal. It does NOT interpret Claude state, handle
+ * approvals, or replace terminal control keys — it only pastes text.
+ */
+export function PromptBar({
+  agentId,
+  forced,
+  collapsed,
+  onToggleCollapse,
+  onClose,
+  onFocusTerminal,
+  onFocusChange,
+  autoFocus,
+}: PromptBarProps) {
+  const [value, setValue] = useState('');
+  const [focused, setFocused] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Guards Enter-to-Send while a Korean/IME syllable is still composing.
+  const isComposingRef = useRef(false);
+
+  const lineCount = value.split('\n').length;
+
+  // Focus the textarea on mount / when expanded.
+  useEffect(() => {
+    if (collapsed) return;
+    if (autoFocus) textareaRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapsed]);
+
+  // Send text to the terminal. submit=true appends Enter, submit=false just pastes.
+  const dispatch = useCallback((submit: boolean) => {
+    const text = value;
+    if (!text) return;
+    agentDeckWS.send(submit ? 'terminal:pasteSubmit' : 'terminal:pasteOnly', {
+      agentId,
+      text,
+      mode: PROMPT_SUBMIT_MODE,
+    });
+    setValue('');
+    onFocusTerminal();
+  }, [value, agentId, onFocusTerminal]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Never treat Enter as Send while an IME syllable is composing.
+    if (e.nativeEvent.isComposing || isComposingRef.current) return;
+
+    // Cmd/Ctrl+Enter → Send, Enter → Send, Shift+Enter → newline.
+    if (e.key === 'Enter' && ((e.metaKey || e.ctrlKey) || !e.shiftKey)) {
+      e.preventDefault();
+      dispatch(true);
+      return;
+    }
+
+    // Esc → forced: collapse + focus terminal; desktop: close + focus terminal.
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (forced) onToggleCollapse();
+      else onClose();
+      onFocusTerminal();
+    }
+  }, [forced, dispatch, onToggleCollapse, onClose, onFocusTerminal]);
+
+  // Collapsed (forced mode): slim bar with just the expand affordance.
+  if (forced && collapsed) {
+    return (
+      <div className="flex items-center px-3 py-2 safe-bottom bg-deck-bg border-t border-deck-border/50">
+        <button
+          onMouseDown={(e) => { e.preventDefault(); onToggleCollapse(); }}
+          className="flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium touch-manipulation active:opacity-70 bg-deck-accent/20 text-deck-accent"
+        >
+          ⌨ 한글/프롬프트 입력 ▲
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-deck-bg border-t border-deck-border/50">
+      {/* Role label + collapse/close affordance */}
+      <div className="flex items-center gap-2 px-3 pt-1.5 pb-1">
+        <span className="text-[11px] font-medium text-deck-accent">Prompt Bar</span>
+        <span className="text-[11px] text-deck-text-dim truncate">— 한글/긴 프롬프트는 여기에 입력하세요</span>
+        <button
+          onMouseDown={(e) => { e.preventDefault(); if (forced) onToggleCollapse(); else onClose(); }}
+          className="ml-auto shrink-0 px-2 py-0.5 rounded text-xs touch-manipulation active:opacity-70 bg-deck-surface text-deck-text-dim"
+          title={forced ? '접기' : '닫기 (Esc)'}
+        >
+          {forced ? '접기 ▼' : '닫기 ✕'}
+        </button>
+      </div>
+
+      {/* Prompt input row */}
+      <div className="flex items-start gap-2 px-3 pb-2.5 md:gap-1.5 md:px-2 md:pb-1.5 safe-bottom">
+        <span className="text-sm shrink-0 font-mono mt-1.5 md:text-xs text-deck-accent">&gt;</span>
+
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onCompositionStart={() => { isComposingRef.current = true; }}
+          onCompositionEnd={() => { isComposingRef.current = false; }}
+          onFocus={() => { setFocused(true); onFocusChange?.(true); }}
+          onBlur={() => { setFocused(false); onFocusChange?.(false); }}
+          placeholder="한글이나 긴 프롬프트를 입력하세요. Shift+Enter로 줄바꿈"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          inputMode="text"
+          rows={focused || value ? Math.min(Math.max(lineCount, 1), 10) : 1}
+          className="flex-1 min-w-0 bg-transparent text-base outline-none font-mono resize-none text-deck-text md:text-sm"
+          style={{ caretColor: 'var(--deck-accent, #6366f1)' }}
+        />
+
+        <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+          <button
+            onMouseDown={(e) => { e.preventDefault(); setValue(''); textareaRef.current?.focus(); }}
+            disabled={!value}
+            className="px-2.5 py-2 rounded text-sm shrink-0 touch-manipulation active:opacity-70 disabled:opacity-40
+                       bg-deck-surface text-deck-text-dim md:px-2 md:py-1 md:text-xs"
+            title="입력 내용 지우기"
+          >
+            Clear
+          </button>
+          <button
+            onMouseDown={(e) => { e.preventDefault(); onFocusTerminal(); }}
+            className="px-2.5 py-2 rounded text-sm shrink-0 touch-manipulation active:opacity-70
+                       bg-deck-surface text-deck-text-dim md:px-2 md:py-1 md:text-xs"
+            title="터미널로 focus 이동 (방향키·승인 조작)"
+          >
+            터미널 조작
+          </button>
+          <button
+            onMouseDown={(e) => { e.preventDefault(); dispatch(false); }}
+            disabled={!value}
+            className="px-3 py-2 rounded text-sm font-medium shrink-0 touch-manipulation active:opacity-70 disabled:opacity-40
+                       bg-deck-surface text-deck-text-dim md:px-2.5 md:py-1 md:text-xs"
+            title="터미널에 붙여넣기 (Enter 없음)"
+          >
+            Paste
+          </button>
+          <button
+            onMouseDown={(e) => { e.preventDefault(); dispatch(true); }}
+            disabled={!value}
+            className="btn-primary px-4 py-2 rounded text-sm font-medium shrink-0 touch-manipulation active:opacity-70 disabled:opacity-40
+                       md:px-2.5 md:py-1 md:text-xs"
+            title="터미널에 붙여넣고 Enter 전송 (Cmd/Ctrl+Enter)"
+          >
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

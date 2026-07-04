@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { TerminalView, type TerminalHandle } from '../components/terminal/TerminalView';
 import { MobileToolbar } from '../components/terminal/MobileToolbar';
 import { TerminalKeyBar } from '../components/terminal/TerminalKeyBar';
+import { PromptBar } from '../components/terminal/PromptBar';
 import { FileExplorer } from '../components/file/FileExplorer';
 import { FilePreview } from '../components/file/FilePreview';
 import { FileEditor } from '../components/file/FileEditor';
@@ -24,16 +25,44 @@ type CenterTab = 'terminal' | 'editor';
 export function TerminalPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isMobile, isTablet } = useDevice();
+  const { isMobile, isTablet, isTouchDevice } = useDevice();
   const [agent, setAgent] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<CenterTab>('terminal');
 
-  // Single interactive terminal. Text (incl. Korean) is typed directly into
-  // xterm; `terminalApiRef` lets the key bar / mobile keyboard button return
-  // focus to the terminal. `promptFocusedRef` is retained as the terminal's
-  // focus guard (always false now that there is no separate prompt bar).
+  // Single interactive terminal + a device-aware Prompt Bar for Korean / long
+  // prompts. Touch devices (mobile / iPad) can't reliably compose Korean in
+  // xterm, so the Prompt Bar is mandatory there — it can only be collapsed, not
+  // closed. On desktop it is an optional overlay toggled by shortcut / button.
+  const forcePromptBar = isTouchDevice;
   const terminalApiRef = useRef<TerminalHandle | null>(null);
-  const promptFocusedRef = useRef(false);
+  const promptFocusedRef = useRef(false); // suspends terminal auto-focus while typing in the Prompt Bar
+  const [promptOpen, setPromptOpen] = useState(forcePromptBar);
+  const [promptCollapsed, setPromptCollapsed] = useState(false);
+  const [hangulHintShown, setHangulHintShown] = useState(false);
+  const [hangulToast, setHangulToast] = useState(false);
+
+  const focusTerminal = useCallback(() => {
+    promptFocusedRef.current = false;
+    terminalApiRef.current?.focus();
+  }, []);
+
+  // Expand + focus the Prompt Bar (Prompt button / shortcut).
+  const openPrompt = useCallback(() => {
+    promptFocusedRef.current = true;
+    setPromptOpen(true);
+    setPromptCollapsed(false);
+  }, []);
+
+  // A Hangul char typed directly into the terminal — nudge the user to the
+  // Prompt Bar once per session (touch devices only).
+  const handleHangulDirectInput = useCallback(() => {
+    setHangulHintShown((shown) => {
+      if (shown) return shown;
+      setHangulToast(true);
+      window.setTimeout(() => setHangulToast(false), 4000);
+      return true;
+    });
+  }, []);
 
   const { zoomedPanel, setZoomedPanel } = useAppStore();
 
@@ -102,17 +131,24 @@ export function TerminalPage() {
     return () => clearTimeout(timer);
   }, [agentId]);
 
-  // Cmd+Shift+Z: panel zoom toggle
+  // Cmd+Shift+Z: panel zoom toggle. Cmd/Ctrl+K or Cmd/Ctrl+P: open Prompt Bar.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'z') {
         e.preventDefault();
         setZoomedPanel(zoomedPanel ? null : 'terminal');
+        return;
+      }
+      // Cmd only (not Ctrl): Ctrl+K / Ctrl+P are readline kill-line / prev-history
+      // and must stay available to the terminal. Non-Mac uses the Prompt button.
+      if (e.metaKey && !e.ctrlKey && !e.shiftKey && (e.key === 'k' || e.key === 'p')) {
+        e.preventDefault();
+        openPrompt();
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [zoomedPanel, setZoomedPanel]);
+  }, [zoomedPanel, setZoomedPanel, openPrompt]);
 
   const handleOpenFile = useCallback((path: string) => {
     openFile(path);
@@ -243,6 +279,7 @@ export function TerminalPage() {
                 ref={terminalApiRef}
                 agentId={agentId}
                 focusGuardRef={promptFocusedRef}
+                onHangulDirect={handleHangulDirectInput}
               />
             ) : (
               <div className="h-full w-full" />
@@ -264,14 +301,29 @@ export function TerminalPage() {
           </div>
         )}
 
-        {/* Bottom controls — PTY control keys + a key to focus the terminal
-            (pops the mobile keyboard). Text, including Korean, is typed
-            directly into the terminal. */}
+        {/* Bottom input — mandatory Prompt Bar (한글/긴 프롬프트) + terminal
+            control keys. Korean is composed in the Prompt Bar's textarea and
+            pasted into the terminal; direct xterm typing would split jamo. */}
         {activeTab === 'terminal' && (
-          <MobileToolbar
-            agentId={agentId}
-            onFocusTerminal={() => terminalApiRef.current?.focus()}
-          />
+          <>
+            <PromptBar
+              agentId={agentId}
+              forced
+              collapsed={promptCollapsed}
+              onToggleCollapse={() => setPromptCollapsed((c) => !c)}
+              onClose={() => {}}
+              onFocusTerminal={focusTerminal}
+              onFocusChange={(f) => { promptFocusedRef.current = f; }}
+            />
+            <MobileToolbar agentId={agentId} onOpenPrompt={openPrompt} />
+          </>
+        )}
+
+        {/* Hangul-in-terminal hint (once per session) */}
+        {hangulToast && (
+          <div className="fixed left-1/2 -translate-x-1/2 bottom-32 z-50 px-4 py-2 rounded-lg text-xs text-center shadow-xl bg-deck-surface border border-deck-accent/40 text-deck-text max-w-[90%]">
+            한글 입력은 하단 <span className="text-deck-accent font-medium">Prompt Bar</span>를 사용하면 자모 분리를 피할 수 있습니다.
+          </div>
         )}
 
         {/* File bottom sheet */}
@@ -333,6 +385,18 @@ export function TerminalPage() {
         <span className="font-medium text-sm truncate">{agent.name}</span>
         <StatusBadge status={agent.status} />
         <span className="text-xs ml-auto truncate text-deck-text-dim">{agent.workingDir}</span>
+
+        {!forcePromptBar && (
+          <button
+            onClick={() => { if (promptOpen) { setPromptOpen(false); focusTerminal(); } else { openPrompt(); } }}
+            className={`text-xs px-2 py-0.5 rounded transition-colors ${
+              promptOpen ? 'bg-deck-accent/20 text-deck-accent' : 'bg-deck-bg text-deck-text-dim'
+            }`}
+            title="Prompt Bar (⌘K / ⌘P)"
+          >
+            Prompt
+          </button>
+        )}
 
         <button
           onClick={() => setLeftPanelOpen(!leftPanelOpen)}
@@ -430,6 +494,7 @@ export function TerminalPage() {
                   ref={terminalApiRef}
                   agentId={agentId}
                   focusGuardRef={promptFocusedRef}
+                  onHangulDirect={handleHangulDirectInput}
                 />
               ) : (
                 <div className="h-full w-full" />
@@ -451,13 +516,27 @@ export function TerminalPage() {
             </div>
           )}
 
-          {/* Bottom controls — PTY control keys (arrows / Enter / Esc / …).
-              Text (including Korean) is typed directly into the terminal. */}
+          {/* Bottom controls — optional Prompt Bar (desktop) / mandatory on
+              iPad + touch, plus PTY control keys (arrows / Enter / Esc / …). */}
           {activeTab === 'terminal' && (
-            <TerminalKeyBar
-              agentId={agentId}
-              onKeySent={() => terminalApiRef.current?.focus()}
-            />
+            <>
+              {(forcePromptBar || promptOpen) && (
+                <PromptBar
+                  agentId={agentId}
+                  forced={forcePromptBar}
+                  collapsed={promptCollapsed}
+                  onToggleCollapse={() => setPromptCollapsed((c) => !c)}
+                  onClose={() => { setPromptOpen(false); focusTerminal(); }}
+                  onFocusTerminal={focusTerminal}
+                  onFocusChange={(f) => { promptFocusedRef.current = f; }}
+                  autoFocus={!forcePromptBar}
+                />
+              )}
+              <TerminalKeyBar
+                agentId={agentId}
+                onKeySent={() => terminalApiRef.current?.focus()}
+              />
+            </>
           )}
         </div>
 
@@ -478,6 +557,13 @@ export function TerminalPage() {
           </>
         )}
       </div>
+
+      {/* Hangul-in-terminal hint (once per session) */}
+      {hangulToast && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-24 z-50 px-4 py-2 rounded-lg text-xs text-center shadow-xl bg-deck-surface border border-deck-accent/40 text-deck-text max-w-[90%]">
+          한글 입력은 하단 <span className="text-deck-accent font-medium">Prompt Bar</span>를 사용하면 자모 분리를 피할 수 있습니다.
+        </div>
+      )}
     </div>
   );
 }
