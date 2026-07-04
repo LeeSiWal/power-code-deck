@@ -140,14 +140,15 @@ bash install.sh
 
 > `bash install.sh` 는 실행 권한이 없어도 동작합니다. `./install.sh` 로 실행했을 때 `permission denied` 가 뜨면 `chmod +x install.sh` 후 다시 시도하세요.
 
-**Windows:**
-```
+**Windows (PowerShell):**
+```powershell
 git clone https://github.com/LeeSiWal/power-code-deck.git
 cd power-code-deck
-install.bat
+.\install.bat
 ```
 
-`install.bat` 을 더블클릭해도 됩니다. PowerShell에서 직접 실행하려면:
+> PowerShell 은 보안상 현재 폴더의 스크립트를 자동 실행하지 않으므로 반드시 `.\install.bat` 처럼 앞에 `.\` 를 붙여야 합니다. (`install.bat` 만 입력하면 "인식되지 않습니다" 오류가 납니다.)
+> `install.bat` 을 파일 탐색기에서 더블클릭해도 됩니다. `.ps1` 스크립트를 직접 실행하려면:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
