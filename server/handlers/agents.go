@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"agentdeck/services"
-	"agentdeck/ws"
+	"powercodedeck/services"
+	"powercodedeck/ws"
 
 	"github.com/gorilla/mux"
 )

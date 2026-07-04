@@ -65,7 +65,7 @@ export function useAgentNotification(agentId: string | null) {
         if (document.hidden && Notification.permission === 'granted') {
           const n = new Notification(`PowerCodeDeck: ${result.reason}`, {
             body: result.message,
-            tag: `agentdeck-${agentId}-${result.reason}`,
+            tag: `powercodedeck-${agentId}-${result.reason}`,
             requireInteraction: result.reason === 'permission_request',
           });
           n.onclick = () => { window.focus(); n.close(); };

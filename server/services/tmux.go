@@ -79,5 +79,5 @@ func (s *TmuxService) CapturePane(sessionName string) (string, error) {
 }
 
 func (s *TmuxService) GenerateSessionName(prefix string) string {
-	return fmt.Sprintf("agentdeck-%s", prefix)
+	return fmt.Sprintf("pcd-%s", prefix)
 }

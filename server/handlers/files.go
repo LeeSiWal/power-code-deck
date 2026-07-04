@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"agentdeck/services"
+	"powercodedeck/services"
 )
 
 func FileTree(fileSvc *services.FileService, agentSvc *services.AgentService) http.HandlerFunc {

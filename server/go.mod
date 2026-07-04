@@ -1,4 +1,4 @@
-module agentdeck
+module powercodedeck
 
 go 1.23
 

@@ -5,8 +5,7 @@ set -e
 #  PowerCodeDeck - One-Click Installer
 # ================================================
 
-# Data dir keeps the legacy name so existing .env / DB are preserved.
-INSTALL_DIR="$HOME/.agentdeck"
+INSTALL_DIR="$HOME/.powercodedeck"
 BIN_NAME="pcd"
 
 echo ""
@@ -134,7 +133,7 @@ cd ..
 
 echo "  ✓ Build complete"
 
-# ── 7. Install to ~/.agentdeck ──
+# ── 7. Install to ~/.powercodedeck ──
 echo ""
 echo "  Installing to $INSTALL_DIR ..."
 
@@ -155,7 +154,7 @@ if [ "$OS" = "Darwin" ]; then
     LAUNCHER="$HOME/Desktop/PowerCodeDeck.command"
     cat > "$LAUNCHER" << 'LAUNCHER_EOF'
 #!/bin/bash
-cd "$HOME/.agentdeck"
+cd "$HOME/.powercodedeck"
 ./pcd
 LAUNCHER_EOF
     chmod +x "$LAUNCHER"
@@ -166,7 +165,7 @@ LAUNCHER_EOF
     mkdir -p "$APP_DIR"
     cat > "$APP_DIR/PowerCodeDeck" << 'APP_EOF'
 #!/bin/bash
-cd "$HOME/.agentdeck"
+cd "$HOME/.powercodedeck"
 exec ./pcd
 APP_EOF
     chmod +x "$APP_DIR/PowerCodeDeck"

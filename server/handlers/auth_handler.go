@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"agentdeck/auth"
+	"powercodedeck/auth"
 )
 
 type loginRequest struct {

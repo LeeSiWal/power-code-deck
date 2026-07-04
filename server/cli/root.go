@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"agentdeck/version"
+	"powercodedeck/version"
 )
 
 var serverURL = resolveServerURL()
