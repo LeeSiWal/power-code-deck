@@ -39,7 +39,7 @@ Commercial licensing is available for:
 
 For commercial licensing inquiries:
 
-- GitHub: [LeeSiWal/AgentDeck](https://github.com/LeeSiWal/AgentDeck)
+- GitHub: [LeeSiWal/power-code-deck](https://github.com/LeeSiWal/power-code-deck)
 - Open an issue with the label `commercial-license`
 
 ---
