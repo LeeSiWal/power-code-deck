@@ -93,15 +93,17 @@ export function PromptBar({
     }
   }, [forced, dispatch, onToggleCollapse, onClose, onFocusTerminal]);
 
-  // Collapsed (forced mode): slim bar with just the expand affordance.
+  // Collapsed (forced mode): a full-width tap target to reopen the input.
   if (forced && collapsed) {
     return (
-      <div className="flex items-center px-3 py-2 safe-bottom bg-deck-bg border-t border-deck-border/50">
+      <div className="px-3 py-2 bg-deck-bg border-t border-deck-border/50">
         <button
           onMouseDown={(e) => { e.preventDefault(); onToggleCollapse(); }}
-          className="flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium touch-manipulation active:opacity-70 bg-deck-accent/20 text-deck-accent"
+          className="flex w-full items-center gap-2 px-4 py-3 rounded-xl text-sm font-medium touch-manipulation active:opacity-70 bg-deck-accent/15 text-deck-accent"
         >
-          ⌨ 한글/프롬프트 입력 ▲
+          <span className="text-base leading-none">⌨</span>
+          한글·프롬프트 입력
+          <span className="ml-auto text-xs opacity-70">펼치기 ▲</span>
         </button>
       </div>
     );
@@ -109,23 +111,22 @@ export function PromptBar({
 
   return (
     <div className="bg-deck-bg border-t border-deck-border/50">
-      {/* Role label + collapse/close affordance */}
-      <div className="flex items-center gap-2 px-3 pt-1.5 pb-1">
-        <span className="text-[11px] font-medium text-deck-accent">Prompt Bar</span>
-        <span className="text-[11px] text-deck-text-dim truncate">— 한글/긴 프롬프트는 여기에 입력하세요</span>
+      {/* Header: role label + collapse/close affordance */}
+      <div className="flex items-center gap-2 px-3 pt-2 pb-1.5">
+        <span className="text-xs font-semibold text-deck-accent">Prompt</span>
+        <span className="hidden md:inline text-[11px] text-deck-text-dim truncate">한글/긴 프롬프트를 입력하세요</span>
         <button
           onMouseDown={(e) => { e.preventDefault(); if (forced) onToggleCollapse(); else onClose(); }}
-          className="ml-auto shrink-0 px-2 py-0.5 rounded text-xs touch-manipulation active:opacity-70 bg-deck-surface text-deck-text-dim"
+          className="ml-auto shrink-0 px-2.5 py-1 rounded-md text-xs touch-manipulation active:opacity-70 bg-deck-surface text-deck-text-dim"
           title={forced ? '접기' : '닫기 (Esc)'}
         >
           {forced ? '접기 ▼' : '닫기 ✕'}
         </button>
       </div>
 
-      {/* Prompt input row */}
-      <div className="flex items-start gap-2 px-3 pb-2.5 md:gap-1.5 md:px-2 md:pb-1.5 safe-bottom">
-        <span className="text-sm shrink-0 font-mono mt-1.5 md:text-xs text-deck-accent">&gt;</span>
-
+      {/* Input — textarea full width, buttons stacked below on mobile and
+          inline on desktop. */}
+      <div className="flex flex-col gap-2 px-3 pb-3 md:flex-row md:items-end md:gap-2 md:pb-2">
         <textarea
           ref={textareaRef}
           value={value}
@@ -135,52 +136,56 @@ export function PromptBar({
           onCompositionEnd={() => { isComposingRef.current = false; }}
           onFocus={() => { setFocused(true); onFocusChange?.(true); }}
           onBlur={() => { setFocused(false); onFocusChange?.(false); }}
-          placeholder="한글이나 긴 프롬프트를 입력하세요. Shift+Enter로 줄바꿈"
+          placeholder={forced ? '메시지를 입력하세요' : '한글·긴 프롬프트 입력 (Shift+Enter 줄바꿈)'}
           autoComplete="off"
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}
           inputMode="text"
-          rows={focused || value ? Math.min(Math.max(lineCount, 1), 10) : 1}
-          className="flex-1 min-w-0 bg-transparent text-base outline-none font-mono resize-none text-deck-text md:text-sm"
+          rows={focused || value ? Math.min(Math.max(lineCount, 1), forced ? 5 : 10) : 1}
+          className="w-full md:flex-1 min-w-0 rounded-xl bg-deck-surface px-3.5 py-2.5 text-base outline-none resize-none
+                     text-deck-text placeholder:text-deck-text-dim/60 border border-deck-border/60
+                     focus:border-deck-accent/60 md:text-sm"
           style={{ caretColor: 'var(--deck-accent, #6366f1)' }}
         />
 
-        <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+        <div className="flex items-center gap-2 md:gap-1.5 md:shrink-0">
           <button
             onMouseDown={(e) => { e.preventDefault(); setValue(''); textareaRef.current?.focus(); }}
             disabled={!value}
-            className="px-2.5 py-2 rounded text-sm shrink-0 touch-manipulation active:opacity-70 disabled:opacity-40
-                       bg-deck-surface text-deck-text-dim md:px-2 md:py-1 md:text-xs"
+            className="px-3 py-2 rounded-lg text-sm shrink-0 touch-manipulation active:opacity-70 disabled:opacity-40
+                       bg-deck-surface text-deck-text-dim md:px-2 md:py-1.5 md:text-xs"
             title="입력 내용 지우기"
           >
-            Clear
+            지우기
           </button>
           <button
             onMouseDown={(e) => { e.preventDefault(); onFocusTerminal(); }}
-            className="px-2.5 py-2 rounded text-sm shrink-0 touch-manipulation active:opacity-70
-                       bg-deck-surface text-deck-text-dim md:px-2 md:py-1 md:text-xs"
+            className="px-3 py-2 rounded-lg text-sm shrink-0 touch-manipulation active:opacity-70
+                       bg-deck-surface text-deck-text-dim md:px-2 md:py-1.5 md:text-xs"
             title="터미널로 focus 이동 (방향키·승인 조작)"
           >
-            터미널 조작
+            터미널
           </button>
+          {/* Push the primary actions to the right on mobile. */}
+          <div className="flex-1 md:hidden" />
           <button
             onMouseDown={(e) => { e.preventDefault(); dispatch(false); }}
             disabled={!value}
-            className="px-3 py-2 rounded text-sm font-medium shrink-0 touch-manipulation active:opacity-70 disabled:opacity-40
-                       bg-deck-surface text-deck-text-dim md:px-2.5 md:py-1 md:text-xs"
+            className="px-3 py-2 rounded-lg text-sm font-medium shrink-0 touch-manipulation active:opacity-70 disabled:opacity-40
+                       bg-deck-surface text-deck-text-dim md:px-2.5 md:py-1.5 md:text-xs"
             title="터미널에 붙여넣기 (Enter 없음)"
           >
-            Paste
+            붙여넣기
           </button>
           <button
             onMouseDown={(e) => { e.preventDefault(); dispatch(true); }}
             disabled={!value}
-            className="btn-primary px-4 py-2 rounded text-sm font-medium shrink-0 touch-manipulation active:opacity-70 disabled:opacity-40
-                       md:px-2.5 md:py-1 md:text-xs"
-            title="터미널에 붙여넣고 Enter 전송 (Cmd/Ctrl+Enter)"
+            className="btn-primary px-5 py-2 rounded-lg text-sm font-semibold shrink-0 touch-manipulation active:opacity-70 disabled:opacity-40
+                       md:px-3 md:py-1.5 md:text-xs"
+            title="터미널에 붙여넣고 Enter 전송 (⌘/Ctrl+Enter)"
           >
-            Send
+            전송
           </button>
         </div>
       </div>
