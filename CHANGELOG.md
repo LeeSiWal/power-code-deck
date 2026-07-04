@@ -9,9 +9,11 @@ All notable changes to this project are documented here.
 - Introduced version management (`server/version`, startup banner, `pcd version`, `/api/auth/health`).
 - Changed first-run authentication setup. Authentication is now **optional and disabled by default**.
 - Added support for new `POWERCODEDECK_*` environment variables while keeping `AGENTDECK_*` compatibility.
-- Reworked the terminal input into a single Interactive Terminal + Prompt Bar (from the earlier CHAT/RAW dual mode).
+- Unified terminal input into a **single interactive terminal** (from the earlier CHAT/RAW dual mode). Text — including Korean (IME) — is typed directly into the terminal; the separate Prompt Bar was removed.
 
 ### Added
+- On-screen PTY control-key bar (arrows, Enter, Esc, Tab, ⇧Tab, y/n, Ctrl+C/D) on desktop and mobile, so interactive CLI menus work without a physical keyboard (mobile support).
+- Mobile keyboard button (⌨) that focuses the terminal for direct typing.
 - First-run authentication selection: **none**, **PIN**, or **password** (interactive wizard when run in a TTY).
 - Startup security warning when authentication is disabled.
 - `GET /api/health` (alias of `/api/auth/health`) exposing `appName`, `version`, `authEnabled`, `authMethod`.

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { TerminalView, type TerminalHandle } from '../components/terminal/TerminalView';
-import { PromptBar } from '../components/terminal/PromptBar';
 import { MobileToolbar } from '../components/terminal/MobileToolbar';
 import { TerminalKeyBar } from '../components/terminal/TerminalKeyBar';
 import { FileExplorer } from '../components/file/FileExplorer';
@@ -28,11 +27,11 @@ export function TerminalPage() {
   const { isMobile, isTablet } = useDevice();
   const [agent, setAgent] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<CenterTab>('terminal');
-  const [promptOpen, setPromptOpen] = useState(false);
 
-  // Single interactive terminal + Prompt Bar. `promptFocusedRef` tells the
-  // terminal to suspend auto-focus while the user types in the Prompt Bar;
-  // `terminalApiRef` returns focus to the terminal after Send.
+  // Single interactive terminal. Text (incl. Korean) is typed directly into
+  // xterm; `terminalApiRef` lets the key bar / mobile keyboard button return
+  // focus to the terminal. `promptFocusedRef` is retained as the terminal's
+  // focus guard (always false now that there is no separate prompt bar).
   const terminalApiRef = useRef<TerminalHandle | null>(null);
   const promptFocusedRef = useRef(false);
 
@@ -265,20 +264,14 @@ export function TerminalPage() {
           </div>
         )}
 
-        {/* Bottom input — interactive terminal with an optional Prompt Bar for Korean/long text */}
+        {/* Bottom controls — PTY control keys + a key to focus the terminal
+            (pops the mobile keyboard). Text, including Korean, is typed
+            directly into the terminal. */}
         {activeTab === 'terminal' && (
-          <>
-            {promptOpen && (
-              <PromptBar
-                agentId={agentId}
-                autoFocus
-                showClose
-                onFocusChange={(f) => { promptFocusedRef.current = f; }}
-                onDone={() => { promptFocusedRef.current = false; setPromptOpen(false); }}
-              />
-            )}
-            <MobileToolbar agentId={agentId} onOpenPrompt={() => setPromptOpen(true)} />
-          </>
+          <MobileToolbar
+            agentId={agentId}
+            onFocusTerminal={() => terminalApiRef.current?.focus()}
+          />
         )}
 
         {/* File bottom sheet */}
@@ -458,20 +451,13 @@ export function TerminalPage() {
             </div>
           )}
 
-          {/* Bottom controls — PTY control keys (arrows / Enter / Esc / …) plus
-              the Prompt Bar for Korean / long / multi-line text. */}
+          {/* Bottom controls — PTY control keys (arrows / Enter / Esc / …).
+              Text (including Korean) is typed directly into the terminal. */}
           {activeTab === 'terminal' && (
-            <>
-              <TerminalKeyBar
-                agentId={agentId}
-                onKeySent={() => terminalApiRef.current?.focus()}
-              />
-              <PromptBar
-                agentId={agentId}
-                onFocusChange={(f) => { promptFocusedRef.current = f; }}
-                onDone={() => { promptFocusedRef.current = false; terminalApiRef.current?.focus(); }}
-              />
-            </>
+            <TerminalKeyBar
+              agentId={agentId}
+              onKeySent={() => terminalApiRef.current?.focus()}
+            />
           )}
         </div>
 

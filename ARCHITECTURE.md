@@ -117,9 +117,9 @@ power-code-deck/                # 저장소 디렉터리
 │       │   │   ├── AgentLauncher.tsx    # 프리셋 선택 UI
 │       │   │   └── CreateAgentSheet.tsx # 에이전트 생성 바텀시트
 │       │   ├── terminal/
-│       │   │   ├── TerminalView.tsx     # xterm.js 래퍼(항상 interactive), safeFit 패턴 (ResizeObserver + pageshow + visualViewport + fonts.ready), 포커스 가드
-│       │   │   ├── PromptBar.tsx        # 한글/긴 프롬프트 보조 입력바 (슬래시 자동완성, Send=pasteSubmit / Paste=pasteOnly)
-│       │   │   └── MobileToolbar.tsx    # 모바일 키보드 컨트롤 (Prompt·Esc·Tab·y/n·방향키)
+│       │   │   ├── TerminalView.tsx     # xterm.js 래퍼(항상 interactive, 한글 직접 입력), safeFit 패턴 (ResizeObserver + pageshow + visualViewport + fonts.ready), 포커스 가드
+│       │   │   ├── TerminalKeyBar.tsx    # PTY 제어키 바 (방향키·Enter·Esc·Tab·⇧Tab·y/n·Ctrl+C/D) — 데스크톱·모바일 공용
+│       │   │   └── MobileToolbar.tsx    # 모바일 하단 툴바 (⌨ 터미널 포커스 + TerminalKeyBar 제어키)
 │       │   ├── file/
 │       │   │   ├── FileExplorer.tsx     # 트리뷰 + 검색 + 컨텍스트메뉴 (depth 10)
 │       │   │   ├── FilePreview.tsx      # 파일 미리보기 (마크다운: Raw/Preview 토글)
@@ -295,8 +295,7 @@ notifications (id, agent_id FK CASCADE, reason, message, read, created_at)
 ```
 [tmux 세션] → PTY → WS Hub → terminal:output → [xterm.js]
      ↑                                              ↓
- SendKeys ← terminal:input          ← [xterm 직접 입력]
-         ← terminal:pasteSubmit/Only ← [PromptBar] (서버가 bracketed paste 래핑)
+ SendKeys ← terminal:input          ← [xterm 직접 입력 / TerminalKeyBar 제어키]
 
 [fsnotify] → WatcherService → file:changed → [FileExplorer 갱신]
 
