@@ -1,16 +1,29 @@
 # ================================================================
-#  PowerCodeDeck — Windows one-line installer
+#  PowerCodeDeck - Windows one-line installer
 #
-#  Usage (run in an **Administrator** PowerShell):
+#  Usage (run in an Administrator PowerShell):
 #    iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-install.ps1 | iex
 #
-#  Sets up WSL + Ubuntu (no interactive account — runs as root) and
+#  Sets up WSL + Ubuntu (no interactive account - runs as root) and
 #  builds PowerCodeDeck inside it. If WSL was just enabled it offers to
-#  reboot and then resumes automatically after you log back in.
+#  reboot and resumes automatically after you log back in.
+#
+#  If CPU virtualization (VT-x/AMD-V) is off, WSL2 cannot start; this
+#  script then falls back to WSL1, which needs no virtualization.
+#
+#  Messages are intentionally ASCII/English so they never turn into "???"
+#  on a non-UTF-8 Windows console.
 # ================================================================
 
 $ErrorActionPreference = 'Stop'
 $RepoRaw = 'https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-install.ps1'
+
+# Make the console speak UTF-8 so localized wsl.exe output is not garbled.
+try {
+    cmd /c "chcp 65001 >nul" 2>$null | Out-Null
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch {}
 
 function Say($msg, $color = 'White') { Write-Host "  $msg" -ForegroundColor $color }
 
@@ -20,7 +33,7 @@ function Test-Admin {
 }
 
 # Schedule this installer to run once more after the next logon, so the
-# user only has to reboot — the setup picks up where it left off.
+# user only has to reboot - setup picks up where it left off.
 function Register-Resume {
     try {
         $cmd = "powershell -NoProfile -ExecutionPolicy Bypass -Command `"iwr -useb $RepoRaw | iex`""
@@ -34,22 +47,34 @@ function Offer-Reboot {
     $resumed = Register-Resume
     Write-Host ""
     if ($resumed) {
-        Say "재부팅하면 설치가 '자동으로 이어집니다'. (다시 붙여넣지 않아도 됩니다)" Green
+        Say "After you reboot, setup will CONTINUE AUTOMATICALLY (no need to paste again)." Green
     } else {
-        Say "재부팅 후 이 명령을 한 번 더 붙여넣어 주세요." Yellow
+        Say "After reboot, paste the same one-line command again." Yellow
     }
-    $ans = Read-Host "  지금 다시 시작(재부팅)할까요? [Y/n]"
-    if ($ans -match '^(n|no|N|No)$') {
+    $ans = Read-Host "  Reboot now? [Y/n]"
+    if ($ans -match '^(n|no)$') {
         Write-Host ""
-        Say "알겠습니다. 준비되면 직접 재부팅해 주세요." Yellow
-        if ($resumed) { Say "로그인하면 설치가 자동으로 이어집니다." Gray }
-        else { Say "재부팅 후 같은 명령을 다시 실행하면 됩니다." Gray }
+        Say "OK - reboot yourself when ready." Yellow
+        if ($resumed) { Say "Setup resumes automatically after you log back in." Gray }
     } else {
         Write-Host ""
-        Say "10초 후 재부팅합니다... (취소: Ctrl+C)" Yellow
+        Say "Rebooting in 10 seconds... (Ctrl+C to cancel)" Yellow
         Start-Sleep -Seconds 10
         Restart-Computer -Force
     }
+}
+
+function Get-Distros {
+    # `wsl -l -q` prints UTF-16 with null bytes; strip them for matching.
+    return (((wsl -l -q) 2>$null) -join "`n") -replace "`0", ""
+}
+
+# Can we actually launch the Ubuntu distro? (WSL2 fails when virtualization is off.)
+function Test-DistroRuns {
+    try {
+        $out = (wsl -d Ubuntu -u root -- echo pcd-ok) 2>$null
+        return ("$out" -match 'pcd-ok')
+    } catch { return $false }
 }
 
 Write-Host ""
@@ -58,7 +83,7 @@ Write-Host "     PowerCodeDeck  Windows Installer" -ForegroundColor Cyan
 Write-Host "  ================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── 1. Is WSL itself available? ──
+# -- 1. Is WSL itself available? --
 $wslReady = $false
 try {
     wsl --status *> $null
@@ -68,42 +93,58 @@ try {
 if (-not $wslReady) {
     # Enabling the WSL feature needs admin (only this step does).
     if (-not (Test-Admin)) {
-        Say "WSL 설치에는 관리자 권한이 필요합니다." Yellow
-        Say "시작 메뉴 > PowerShell > 마우스 오른쪽 > '관리자 권한으로 실행' 후" Gray
-        Say "이 명령을 다시 붙여넣어 주세요." Gray
+        Say "Installing WSL needs Administrator rights." Yellow
+        Say "Start menu > PowerShell > right-click > 'Run as administrator', then paste again." Gray
         return
     }
-    Say "WSL(Windows Subsystem for Linux)을 설치합니다..." Yellow
+    Say "Installing WSL (Windows Subsystem for Linux)..." Yellow
     try { wsl --install --no-launch } catch { wsl --install }
-    Say "✓ WSL 설치를 시작했습니다. 재부팅이 필요합니다." Green
+    Say "WSL install started. A reboot is required." Green
     Offer-Reboot
     return
 }
 
-# ── 2. Ensure the Ubuntu distro exists (no interactive account) ──
-function Get-Distros {
-    # `wsl -l -q` prints UTF-16 with null bytes; strip them for matching.
-    return (((wsl -l -q) 2>$null) -join "`n") -replace "`0", ""
-}
-
+# -- 2. Ensure the Ubuntu distro exists (no interactive account) --
 if ((Get-Distros) -notmatch 'Ubuntu') {
-    Say "Ubuntu 를 설치합니다... (몇 분 걸릴 수 있습니다)" Yellow
+    Say "Installing Ubuntu... (a few minutes)" Yellow
     try { wsl --install --no-launch -d Ubuntu } catch { wsl --install -d Ubuntu }
     Start-Sleep -Seconds 3
 }
 
 if ((Get-Distros) -notmatch 'Ubuntu') {
-    Say "Ubuntu 설치를 마치려면 재부팅이 필요할 수 있습니다." Yellow
+    Say "Ubuntu needs a reboot to finish installing." Yellow
     Offer-Reboot
     return
 }
 
-Say "✓ WSL / Ubuntu 준비됨" Green
+# -- 2b. Make sure the distro can actually run; fall back to WSL1 if not --
+if (-not (Test-DistroRuns)) {
+    Write-Host ""
+    Say "Ubuntu could not start under WSL2." Yellow
+    Say "This usually means CPU virtualization (VT-x / AMD-V) is disabled." Gray
+    Say "Falling back to WSL1 (no virtualization needed)..." Yellow
+    try { wsl --set-version Ubuntu 1 } catch {}
+    Start-Sleep -Seconds 2
 
-# ── 3. Build & install PowerCodeDeck inside Ubuntu (as root) ──
+    if (-not (Test-DistroRuns)) {
+        Write-Host ""
+        Say "Ubuntu still could not start. Two ways to fix it:" Red
+        Say "A) Enable virtualization in your BIOS/UEFI (Intel VT-x or AMD SVM)," Gray
+        Say "   save, reboot, then run this command again." Gray
+        Say "B) Force WSL1 manually, then re-run:" Gray
+        Say "     wsl --set-default-version 1" Cyan
+        Say "     wsl --install --no-launch -d Ubuntu" Cyan
+        return
+    }
+    Say "OK - running on WSL1." Green
+} else {
+    Say "OK - WSL / Ubuntu ready." Green
+}
+
+# -- 3. Build & install PowerCodeDeck inside Ubuntu (as root) --
 Write-Host ""
-Say "PowerCodeDeck 를 Ubuntu 안에서 빌드/설치합니다..." Yellow
-Say "(tmux · Go · Node.js · pnpm 설치 + 빌드 — 몇 분 걸립니다)" Gray
+Say "Building PowerCodeDeck inside Ubuntu..." Yellow
+Say "(installs tmux, Go, Node.js, pnpm + builds - a few minutes)" Gray
 Write-Host ""
 
 $linux = @'
@@ -126,18 +167,18 @@ $linux | wsl -d Ubuntu -u root -- bash -lc 'cat > /tmp/pcd-setup.sh && bash /tmp
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
-    Say "설치 중 문제가 발생했습니다. 위의 오류 메시지를 확인해 주세요." Red
+    Say "Something failed during install. Check the errors above." Red
     return
 }
 
-# ── 4. Done ──
+# -- 4. Done --
 Write-Host ""
 Write-Host "  ================================================" -ForegroundColor Green
-Say "설치 완료! 🎉" Green
+Say "Done! PowerCodeDeck is installed." Green
 Write-Host "  ================================================" -ForegroundColor Green
 Write-Host ""
-Say "지금 실행하려면 아래 한 줄을 붙여넣으세요:" White
+Say "Start it with:" White
 Write-Host '    wsl -d Ubuntu -u root -- bash -lc "cd ~/.powercodedeck && ./pcd"' -ForegroundColor Cyan
 Write-Host ""
-Say "그다음 브라우저에서:  http://localhost:33033" White
+Say "Then open in your browser:  http://localhost:33033" White
 Write-Host ""
