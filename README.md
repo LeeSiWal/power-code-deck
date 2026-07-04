@@ -136,11 +136,18 @@ cd power-code-deck
 ./install.sh
 ```
 
-**Windows (PowerShell):**
-```powershell
+> `permission denied: ./install.sh` 가 뜨면 실행 권한이 없는 것입니다. `bash install.sh` 로 실행하거나 `chmod +x install.sh` 후 다시 시도하세요.
+
+**Windows:**
+```
 git clone https://github.com/LeeSiWal/power-code-deck.git
 cd power-code-deck
-.\install.ps1
+install.bat
+```
+
+`install.bat` 을 더블클릭해도 됩니다. PowerShell에서 직접 실행하려면:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 설치 스크립트가 자동으로 처리하는 것:
@@ -478,7 +485,8 @@ power-code-deck/
 │       ├── lib/           # api.ts, ws.ts, soundManager, subAgentSounds, paletteGenerator
 │       ├── stores/        # appStore.ts (Zustand)
 │       └── styles/        # 전역 스타일
-├── install.sh / install.ps1  # 설치 스크립트 (macOS·Linux / Windows)
+├── install.sh                # 설치 스크립트 (macOS·Linux)
+├── install.ps1 / install.bat # 설치 스크립트 (Windows)
 ├── Makefile               # 빌드 커맨드
 ├── ecosystem.config.js    # PM2 설정
 ├── ARCHITECTURE.md        # 상세 설계 문서
