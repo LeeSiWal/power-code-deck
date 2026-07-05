@@ -81,7 +81,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
     const terminal = new Terminal({
       fontSize: resolvedFontSize,
-      fontFamily: "'JetBrains Mono', 'D2Coding', 'Noto Sans KR', monospace",
+      // Use monospace CJK fallbacks only. 'Noto Sans KR' is proportional and made
+      // Korean render at uneven widths in the terminal; D2Coding / NanumGothicCoding
+      // / Noto Sans Mono CJK are fixed-width and align to the terminal grid.
+      fontFamily: "'JetBrains Mono', 'D2Coding', 'NanumGothicCoding', 'Noto Sans Mono CJK KR', 'Sarasa Mono K', monospace",
       theme: {
         background: '#0a0a0f',
         foreground: '#e2e8f0',

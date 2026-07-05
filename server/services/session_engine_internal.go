@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aymanbagabas/go-pty"
 )
@@ -161,20 +162,56 @@ func (e *InternalPtySessionEngine) waitProc(s *internalPtySession) {
 // an error/EOF the process has ended; unless it was Killed we mark it exited.
 func (e *InternalPtySessionEngine) readPump(s *internalPtySession) {
 	buf := make([]byte, 4096)
+	// carry holds the trailing bytes of an incomplete UTF-8 sequence (e.g. a
+	// Korean char split across two PTY reads). We hold them until the next read
+	// completes the character — otherwise `string(data)` + JSON marshalling
+	// would replace the broken bytes with U+FFFD (visible as mojibake).
+	var carry []byte
+	emit := func(b []byte) {
+		if len(b) == 0 {
+			return
+		}
+		data := make([]byte, len(b))
+		copy(data, b)
+		s.buffer.Write(data)
+		if h := e.outputHandler(); h != nil {
+			h(s.info.ID, data)
+		}
+	}
 	for {
 		n, err := s.pty.Read(buf)
 		if n > 0 {
-			data := make([]byte, n)
-			copy(data, buf[:n])
-			s.buffer.Write(data)
-			if h := e.outputHandler(); h != nil {
-				h(s.info.ID, data)
-			}
+			chunk := make([]byte, 0, len(carry)+n)
+			chunk = append(chunk, carry...)
+			chunk = append(chunk, buf[:n]...)
+			head, tail := splitIncompleteUTF8(chunk)
+			carry = append(carry[:0], tail...)
+			emit(head)
 		}
 		if err != nil {
+			emit(carry) // flush leftovers on exit (don't drop bytes)
 			return
 		}
 	}
+}
+
+// splitIncompleteUTF8 splits b into a head that ends on a UTF-8 rune boundary and
+// a tail that is the start of an incomplete multi-byte rune (to be completed by
+// the next read). If b ends cleanly, tail is empty.
+func splitIncompleteUTF8(b []byte) (head, tail []byte) {
+	if len(b) == 0 {
+		return b, nil
+	}
+	// Walk back over at most the max UTF-8 rune length to find the last lead byte.
+	for i := len(b) - 1; i >= 0 && i > len(b)-utf8.UTFMax; i-- {
+		if utf8.RuneStart(b[i]) {
+			if utf8.FullRune(b[i:]) {
+				return b, nil // last rune is complete
+			}
+			return b[:i], b[i:] // hold the incomplete trailing bytes
+		}
+	}
+	return b, nil
 }
 
 // Attach registers a viewer and returns the scrollback to replay. It NEVER
