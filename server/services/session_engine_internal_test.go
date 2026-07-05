@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -146,6 +147,29 @@ func TestInternalNaturalExit(t *testing.T) {
 	}
 	info, _ := e.Get(id)
 	t.Fatalf("expected status %q after natural exit, got %+v", SessionExited, info)
+}
+
+// A missing agent CLI is turned into an install-then-run bootstrap command.
+func TestBootstrapInstallCommand(t *testing.T) {
+	shell, args := bootstrapInstallCommand("claude", nil, "@anthropic-ai/claude-code")
+	if runtime.GOOS == "windows" {
+		if len(args) != 2 || args[0] != "/c" {
+			t.Fatalf("windows args = %v", args)
+		}
+	} else {
+		if !strings.HasSuffix(shell, "bash") {
+			t.Fatalf("shell = %q, want bash", shell)
+		}
+		if len(args) != 2 || args[0] != "-lc" {
+			t.Fatalf("args = %v", args)
+		}
+		if !strings.Contains(args[1], "npm install -g @anthropic-ai/claude-code") {
+			t.Fatalf("missing npm install in %q", args[1])
+		}
+		if !strings.Contains(args[1], "exec claude") {
+			t.Fatalf("missing exec claude in %q", args[1])
+		}
+	}
 }
 
 func TestRingBufferCap(t *testing.T) {

@@ -94,13 +94,7 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 	// Resize is best-effort; the client sends a real size on attach.
 	_ = p.Resize(cols, rows)
 
-	command, cmdArgs := windowsShim(req.Command, req.Args)
-	// Resolve the executable against PATH ourselves. go-pty looks a bare command
-	// name up relative to the working directory (Dir), not PATH, so we pass an
-	// absolute path to avoid "not found in <workingDir>".
-	if resolved, lookErr := exec.LookPath(command); lookErr == nil {
-		command = resolved
-	}
+	command, cmdArgs := resolveLaunchCommand(req.Command, req.Args)
 	cmd := p.Command(command, cmdArgs...)
 	cmd.Dir = req.Cwd
 	cmd.Env = append(os.Environ(),
@@ -322,6 +316,60 @@ func (e *InternalPtySessionEngine) List() ([]SessionInfo, error) {
 		out = append(out, s.snapshotInfo())
 	}
 	return out, nil
+}
+
+// npmCLIPackages maps a launcher command to the npm package that provides it, so
+// a missing agent CLI can be auto-installed on first launch.
+var npmCLIPackages = map[string]string{
+	"claude": "@anthropic-ai/claude-code",
+	"gemini": "@google/gemini-cli",
+	"codex":  "@openai/codex",
+}
+
+// resolveLaunchCommand decides what to actually spawn for a requested command:
+//   - if it's already on PATH, run it (with the Windows .cmd shim + absolute path);
+//   - if it's a known agent CLI that isn't installed, install it via npm first and
+//     then exec it, all inside the session so the user sees the progress;
+//   - otherwise run it as-is (it will fail with "not found", as before).
+func resolveLaunchCommand(command string, args []string) (string, []string) {
+	if _, err := exec.LookPath(command); err == nil {
+		return normalizeCommand(command, args)
+	}
+	if pkg, ok := npmCLIPackages[command]; ok {
+		return bootstrapInstallCommand(command, args, pkg)
+	}
+	return normalizeCommand(command, args)
+}
+
+// normalizeCommand applies the Windows .cmd shim and resolves the executable
+// against PATH (go-pty looks bare names up relative to the working dir, not PATH).
+func normalizeCommand(command string, args []string) (string, []string) {
+	command, args = windowsShim(command, args)
+	if resolved, err := exec.LookPath(command); err == nil {
+		command = resolved
+	}
+	return command, args
+}
+
+// bootstrapInstallCommand builds a command that installs the CLI (npm -g) and then
+// runs it, so the npm output streams into the terminal and the CLI starts once
+// installed. Requires Node/npm to be available.
+func bootstrapInstallCommand(command string, args []string, pkg string) (string, []string) {
+	run := strings.TrimSpace(command + " " + strings.Join(args, " "))
+	if runtime.GOOS == "windows" {
+		line := "echo Installing " + command + " (first run)... && npm install -g " + pkg + " && " + run
+		shell := "cmd"
+		if resolved, err := exec.LookPath("cmd"); err == nil {
+			shell = resolved
+		}
+		return shell, []string{"/c", line}
+	}
+	line := "echo 'Installing " + command + " (first run)...'; npm install -g " + pkg + " && exec " + run
+	shell := "bash"
+	if resolved, err := exec.LookPath("bash"); err == nil {
+		shell = resolved
+	}
+	return shell, []string{"-lc", line}
 }
 
 // windowsShim adapts a command for Windows ConPTY. Windows CreateProcess (used
