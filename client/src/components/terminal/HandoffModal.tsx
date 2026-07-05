@@ -75,6 +75,8 @@ export function HandoffModal({ agentId, agentName, onClose }: HandoffModalProps)
 
   const activeUrl = useLocal ? data?.localUrl : data?.publicUrl;
   const expired = data != null && remaining <= 0;
+  // localhost/127.0.0.1 only works on this same machine — useless for a phone.
+  const isLocalhostOnly = !!activeUrl && /:\/\/(localhost|127\.0\.0\.1)\b/.test(activeUrl);
 
   const qrSvg = useMemo(() => {
     if (!activeUrl || expired) return '';
@@ -179,6 +181,14 @@ export function HandoffModal({ agentId, agentName, onClose }: HandoffModalProps)
           {activeUrl && (
             <div className="w-full text-[11px] break-all text-center text-deck-text-dim bg-deck-bg rounded-lg px-3 py-2 border border-deck-border/60">
               {activeUrl}
+            </div>
+          )}
+
+          {/* localhost is not reachable from another device */}
+          {isLocalhostOnly && (
+            <div className="w-full text-[11px] leading-relaxed text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+              ⚠ 이 주소(<b>localhost</b>)는 이 PC에서만 열립니다. 폰 등 다른 기기에서 열려면 같은 Wi-Fi의 <b>LAN 주소</b>가 필요합니다 →
+              서버에 <code>POWERCODEDECK_LAN_URL=http://&lt;PC의 LAN IP&gt;:33033</code> (또는 <code>POWERCODEDECK_PUBLIC_URL</code>)을 설정하세요.
             </div>
           )}
 

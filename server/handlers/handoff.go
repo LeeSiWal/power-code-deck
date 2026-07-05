@@ -51,11 +51,12 @@ func CreateHandoff(handoffSvc *services.HandoffService, agentSvc *services.Agent
 		}
 		publicURL := publicBase + "/handoff/" + rawToken
 
+		// Always offer a LAN URL when we can derive one (explicit LAN_URL, else an
+		// auto-detected private IPv4) — a localhost-only QR is useless for handoff
+		// to another device, which is the whole point.
 		var localURL string
-		if cfg.LanHandoffEnabled {
-			if base := lanBaseURL(cfg); base != "" {
-				localURL = base + "/handoff/" + rawToken
-			}
+		if base := lanBaseURL(cfg); base != "" {
+			localURL = base + "/handoff/" + rawToken
 		}
 
 		// Never log the raw token.
@@ -63,8 +64,8 @@ func CreateHandoff(handoffSvc *services.HandoffService, agentSvc *services.Agent
 			sessionID, rec.ExpiresAt.Format(time.RFC3339), ip)
 
 		warning := ""
-		if !cfg.AuthEnabled && cfg.LanHandoffEnabled {
-			warning = "PowerCodeDeck authentication is disabled and LAN handoff is enabled. " +
+		if !cfg.AuthEnabled && localURL != "" {
+			warning = "PowerCodeDeck authentication is disabled and a LAN address is exposed. " +
 				"Anyone on the same network who can reach this URL may attempt to open handoff links. " +
 				"Use one-time tokens, enable PIN/password auth, or keep the service behind VPN/Tailscale."
 		}
