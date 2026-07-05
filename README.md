@@ -9,7 +9,7 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 > **새 소식 (v0.2.2)**
 > - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
 > - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
-> - 🪟 **Windows 네이티브 설치** — PowerShell에 한 줄 붙여넣으면 네이티브 `pcd.exe`를 받아 바로 실행 ([Windows 설치 (네이티브)](#windows-설치-네이티브))
+> - 🪟 **Windows 네이티브 (WSL 불필요)** — 내 PC에서 `pcd.exe`를 빌드해 바로 실행 ([소스 빌드](#windows-설치-소스-빌드))
 > - ⚙️ **cgo 없는 네이티브 빌드** — 순수 Go SQLite + go-pty로 전환. gcc/build-essential 불필요, `make build-windows`로 **네이티브 `pcd.exe`** 크로스컴파일 가능
 >
 > 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
@@ -158,7 +158,13 @@ bash install.sh
 
 > `bash install.sh` 는 실행 권한이 없어도 동작합니다. `./install.sh` 로 실행했을 때 `permission denied` 가 뜨면 `chmod +x install.sh` 후 다시 시도하세요.
 
-**Windows:** 두 가지 방법이 있습니다 — 바로 실행하는 [네이티브 설치](#windows-설치-네이티브) (권장), 또는 [WSL 설치](#windows-설치-wsl).
+**Windows:** 세 가지 방법이 있습니다.
+
+- **[소스 빌드](#windows-설치-소스-빌드)** — **권장.** 내 PC에서 직접 `pcd.exe`를 빌드 → SmartScreen 차단을 피합니다.
+- **[프리빌트 다운로드](#windows-설치-프리빌트)** — 가장 빠름. 단, 서명 안 된 다운로드라 SmartScreen/Smart App Control에 막힐 수 있습니다.
+- **[WSL 설치](#windows-설치-wsl)** — 가장 오래 검증된 방식.
+
+> 어느 방식이든 실행하려는 CLI(`claude`/`gemini`/`codex`)는 [사전 요구사항](#사전-요구사항)처럼 미리 설치돼 있어야 합니다.
 
 설치 스크립트가 자동으로 처리하는 것 (macOS/Linux · WSL):
 - Homebrew (macOS) / WSL·Ubuntu (Windows) 설치
@@ -167,24 +173,37 @@ bash install.sh
 - `~/.powercodedeck/`에 바이너리 설치
 - 바탕화면 바로가기 생성 (macOS: `.command` + `.app`, Windows: `.bat`)
 
-### Windows 설치 (네이티브)
+### Windows 설치 (소스 빌드)
 
-**가상화·툴체인·별도 런타임 없이** 바로 실행되는 단일 실행 파일입니다. 미리 빌드된 네이티브 `pcd.exe`(go-pty의 ConPTY + 순수 Go SQLite, cgo 없음)를 내려받아 실행합니다.
+**가장 권장하는 Windows 방법.** WSL 없이, 내 PC에서 `pcd.exe`(go-pty의 ConPTY + 순수 Go SQLite, cgo 없음)를 직접 빌드합니다. 다운로드한 exe가 아니라 **로컬 빌드라 SmartScreen "알 수 없는 앱" 차단을 피합니다.**
 
-1. **PowerShell**을 엽니다. (관리자 권한 불필요)
+1. **PowerShell**을 엽니다.
 2. 아래 **한 줄**을 붙여넣고 Enter:
 
    ```powershell
-   iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-install.ps1 | iex
+   iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-build.ps1 | iex
    ```
 
-3. 자동으로 `pcd.exe`가 `%USERPROFILE%\.powercodedeck\`에 설치되고 실행됩니다.
-4. 브라우저에서 **<http://localhost:33033>** 접속. 끝. (바탕화면에 **PowerCodeDeck** 바로가기도 생깁니다.)
+3. Git/Go/Node가 없으면 **winget으로 자동 설치**(UAC 뜨면 "예"), 소스를 받아 빌드하고 `%USERPROFILE%\.powercodedeck\pcd.exe`로 설치·실행합니다. (몇 분 소요)
+4. 브라우저에서 **<http://localhost:33033>** 접속. 끝. (바탕화면 바로가기 생성)
 
-> - **SmartScreen 경고**가 뜨면 "추가 정보 → 실행"을 누르세요 (서명 안 된 본인 빌드라서 그렇습니다).
-> - **동작 확인됨:** 실제 Windows에서 네이티브 ConPTY 세션으로 Claude Code 실행을 확인했습니다. (아직 새로운 경로이니 문제가 있으면 알려주세요.) 더 오래 검증된 대안은 아래 WSL 방식입니다.
-> - CLI(`claude`/`gemini`/`codex`)는 미리 설치돼 있어야 합니다: `npm install -g @anthropic-ai/claude-code` 등. 설치 후 pcd를 다시 실행하세요.
-> - 직접 소스에서 빌드하려면: Go + Node를 설치하고 `make build-windows` → `pcd.exe`.
+> - Go/Node를 방금 설치해 빌드가 못 찾으면: **PowerShell을 닫았다 다시 열고** 같은 한 줄을 재실행하세요 (이미 깐 건 건너뜁니다).
+> - **업데이트:** 같은 한 줄을 다시 실행하면 최신 소스로 재빌드합니다.
+> - **동작 확인됨:** 실제 Windows에서 네이티브 ConPTY 세션으로 Claude Code 실행을 확인했습니다.
+
+### Windows 설치 (프리빌트)
+
+미리 빌드된 `pcd.exe`를 내려받아 실행하는 **가장 빠른** 방법입니다.
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-install.ps1 | iex
+```
+
+`pcd.exe`가 `%USERPROFILE%\.powercodedeck\`에 설치·실행됩니다.
+
+> - **차단될 수 있음:** 서명 안 된 다운로드 exe라 Windows가 실행을 막을 수 있습니다.
+>   - **SmartScreen**이면: `pcd.exe` 우클릭 → 속성 → **"차단 해제"** 체크 → 확인 후 실행. (또는 `Unblock-File "$env:USERPROFILE\.powercodedeck\pcd.exe"`)
+>   - **"Smart App Control"** 이면 `Unblock-File`로도 안 풀립니다 → 위 [소스 빌드](#windows-설치-소스-빌드) 방식을 쓰거나 아래 WSL을 쓰세요.
 
 ### Windows 설치 (WSL)
 
