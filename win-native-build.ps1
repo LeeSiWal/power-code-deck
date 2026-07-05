@@ -34,7 +34,7 @@ function Update-SessionPath {
 function Have($cmd) { return [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
 
 function Ensure-Tool($cmd, $wingetId, $name) {
-    if (Have $cmd) { Say "✓ $name found"; return }
+    if (Have $cmd) { Say "OK - $name found" Green; return }
     Say "Installing $name ..." Yellow
     winget install -e --id $wingetId --accept-source-agreements --accept-package-agreements --silent
     Update-SessionPath
@@ -121,15 +121,35 @@ try {
 
 # 7. Run
 Write-Host ""
-Say "✓ Built and installed to $exe" Green
+Say "OK - built and installed to $exe" Green
 Say "Starting PowerCodeDeck..." Yellow
-Start-Process -FilePath $exe -WorkingDirectory $dir
-
-Write-Host ""
-Write-Host "  ================================================" -ForegroundColor Green
-Say "Done! Open in your browser:  http://localhost:33033" Green
-Write-Host "  ================================================" -ForegroundColor Green
-Write-Host ""
-Say "Next time, double-click the 'PowerCodeDeck' desktop shortcut." Gray
-Say "To update later, run this one-liner again (it rebuilds from latest source)." Gray
-Write-Host ""
+try {
+    Start-Process -FilePath $exe -WorkingDirectory $dir
+    Write-Host ""
+    Write-Host "  ================================================" -ForegroundColor Green
+    Say "Done! Open in your browser:  http://localhost:33033" Green
+    Write-Host "  ================================================" -ForegroundColor Green
+    Write-Host ""
+    Say "Next time, double-click the 'PowerCodeDeck' desktop shortcut." Gray
+    Say "To update later, run this one-liner again (rebuilds from latest source)." Gray
+    Write-Host ""
+} catch {
+    Write-Host ""
+    Say "Windows blocked the app from starting:" Red
+    Say "  $($_.Exception.Message)" Gray
+    Write-Host ""
+    Say "This is 'Smart App Control', which blocks ALL unsigned apps —" Yellow
+    Say "even ones built locally. It has no 'run anyway' option. Two choices:" Yellow
+    Write-Host ""
+    Say "  1) Turn Smart App Control OFF (then pcd.exe runs):" White
+    Say "     Settings > Privacy & security > Windows Security >" Gray
+    Say "     App & browser control > Smart App Control > Off." Gray
+    Say "     (Note: once Off, re-enabling needs a Windows reset.)" Gray
+    Say "     Then run:  $exe" Cyan
+    Write-Host ""
+    Say "  2) Use the WSL install instead (not affected by Smart App Control):" White
+    Say "     iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-install.ps1 | iex" Cyan
+    Write-Host ""
+    Say "Your built binary is here if you want it:  $exe" Gray
+    Write-Host ""
+}
