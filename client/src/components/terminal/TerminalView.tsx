@@ -21,6 +21,49 @@ function openTerminalLink(uri: string) {
   }
 }
 
+/**
+ * Copy text to the clipboard. Uses the async Clipboard API when available and
+ * falls back to a hidden-textarea execCommand('copy') for non-secure contexts
+ * (e.g. LAN handoff over plain http, where navigator.clipboard is undefined).
+ */
+async function writeClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through to legacy path */
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Read text from the clipboard, or '' when unavailable/denied. */
+async function readClipboard(): Promise<string> {
+  try {
+    if (navigator.clipboard?.readText) return await navigator.clipboard.readText();
+  } catch {
+    /* denied / non-secure context */
+  }
+  return '';
+}
+
 interface TerminalViewProps {
   agentId: string;
   fontSize?: number;
@@ -56,11 +99,26 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   }), []);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [hasOutput, setHasOutput] = useState(false);
+  const [hasSelection, setHasSelection] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const statusRef = useRef(status);
   statusRef.current = status;
   const hasOutputRef = useRef(hasOutput);
   hasOutputRef.current = hasOutput;
+
+  // Copy the current terminal selection (used by the floating 복사 button and,
+  // via the same helper, the Cmd+C / Ctrl+Shift+C key handler).
+  const copySelection = useCallback(() => {
+    const term = terminalRef.current;
+    const sel = term?.getSelection();
+    if (!sel) return;
+    writeClipboard(sel).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    });
+  }, []);
 
   const resolvedFontSize = fontSize ?? (isMobile ? 12 : isTablet ? 13 : 14);
 
@@ -152,6 +210,52 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         onHangulDirectRef.current();
       }
       agentDeckWS.send('terminal:input', { agentId, data });
+    });
+
+    // --- Copy / paste ---
+    // xterm renders to a canvas, so its selection is NOT a DOM selection and the
+    // browser's native Cmd+C copies nothing. Wire clipboard explicitly:
+    //   • Copy  — Cmd+C (macOS) or Ctrl+Shift+C, only when there is a selection
+    //             (so a bare Ctrl+C still sends SIGINT to the shell).
+    //   • Paste — Cmd+V is handled natively by xterm's textarea; Ctrl+Shift+V
+    //             (Linux/Windows terminal convention) is wired here.
+    const copyTerminalSelection = () => {
+      const sel = terminal.getSelection();
+      if (!sel) return;
+      writeClipboard(sel).then((ok) => {
+        if (!ok) return;
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      });
+    };
+    const pasteToTerminal = async () => {
+      const text = await readClipboard();
+      if (text) agentDeckWS.send('terminal:pasteOnly', { agentId, text, mode: 'bracketed-paste' });
+    };
+    terminal.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown') return true;
+      const isCopy =
+        (e.metaKey && !e.shiftKey && !e.ctrlKey && e.code === 'KeyC') ||
+        (e.ctrlKey && e.shiftKey && e.code === 'KeyC');
+      if (isCopy) {
+        if (terminal.hasSelection()) {
+          // preventDefault so the browser's native (empty) copy doesn't clobber
+          // the clipboard text we write ourselves.
+          e.preventDefault();
+          copyTerminalSelection();
+          return false;
+        }
+        return true; // no selection → let Ctrl+C pass through as SIGINT
+      }
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') {
+        e.preventDefault();
+        pasteToTerminal();
+        return false;
+      }
+      return true;
+    });
+    const selectionDisposable = terminal.onSelectionChange(() => {
+      setHasSelection(terminal.hasSelection());
     });
 
     // Auto-focus that must yield to the Prompt Bar and never pop the mobile
@@ -415,6 +519,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       vv?.removeEventListener('resize', onVVResize);
       container.removeEventListener('pointerdown', onPointerDown);
       dataDisposable.dispose();
+      selectionDisposable.dispose();
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -454,6 +559,20 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         onClick={handleClick}
         className="w-full h-full cursor-text"
       />
+
+      {/* Copy button — appears while text is selected. mousedown/touchstart with
+          preventDefault so clicking it doesn't clear the terminal selection. */}
+      {hasSelection && (
+        <button
+          onMouseDown={(e) => { e.preventDefault(); copySelection(); }}
+          onTouchStart={(e) => { e.preventDefault(); copySelection(); }}
+          className="absolute bottom-2 right-2 z-20 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-lg
+                     touch-manipulation active:opacity-70 bg-deck-accent text-white"
+          title="선택 영역 복사 (⌘C / Ctrl+Shift+C)"
+        >
+          {copied ? '복사됨 ✓' : '복사'}
+        </button>
+      )}
     </div>
   );
 });

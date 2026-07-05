@@ -13,6 +13,7 @@ All notable changes to this project are documented here.
 - `install.sh` no longer installs `build-essential`; it only needs `git`, `curl`, `ca-certificates`. Builds use `CGO_ENABLED=0`.
 
 ### Added
+- **Terminal copy / paste.** xterm renders to a canvas, so its selection isn't a DOM selection and native Cmd+C copied nothing. Copy is now wired to **Cmd+C** (macOS) / **Ctrl+Shift+C**, with a floating **복사** button that appears while text is selected (also works on touch); paste to **Cmd+V** (native) / **Ctrl+Shift+V**. A bare Ctrl+C still sends SIGINT. Includes an execCommand fallback for non-secure contexts (LAN handoff over http).
 - **Native Windows binary** — `make build-windows` produces `pcd.exe` (`GOOS=windows CGO_ENABLED=0`), a real PE32+ executable with no WSL and no cgo. The WSL installer remains the tested/recommended path until the native `.exe` is validated on Windows hardware.
 - `Makefile` targets build with `CGO_ENABLED=0`; `make build-windows` for the native `.exe`.
 

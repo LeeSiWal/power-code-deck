@@ -400,6 +400,7 @@ PowerCodeDeck은 하나의 **Interactive Terminal**을 기본으로 사용합니
 **Terminal (직접 입력)**
 - 명령어 실행, Claude의 선택지·승인(y/n)·방향키·Tab·Esc·Ctrl+C 등 조작을 담당합니다.
 - 하단 **방향키/제어키 툴바**로 `↑ ↓ ← → Enter Esc Tab ⇧Tab y n Ctrl+C Ctrl+D`를 전송할 수 있습니다. 물리 키보드가 없는 모바일에서 대화형 메뉴 조작에 특히 유용합니다.
+- **복사/붙여넣기**: 드래그로 선택하면 나타나는 **복사** 버튼, 또는 `⌘C`(macOS)·`Ctrl+Shift+C`로 복사합니다. 붙여넣기는 `⌘V`·`Ctrl+Shift+V`. (선택이 없을 때 `Ctrl+C`는 그대로 SIGINT로 전달됩니다.)
 
 **Prompt Bar (한글/긴 프롬프트)**
 - textarea에서 IME 조합이 정상 동작하므로 **한글이 자모 분리 없이** 입력됩니다. 완성된 문자열만 터미널로 붙여넣습니다.

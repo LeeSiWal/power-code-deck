@@ -126,7 +126,7 @@ power-code-deck/                # 저장소 디렉터리
 │       │   │   ├── AgentLauncher.tsx    # 프리셋 선택 UI
 │       │   │   └── CreateAgentSheet.tsx # 에이전트 생성 바텀시트
 │       │   ├── terminal/
-│       │   │   ├── TerminalView.tsx     # xterm.js 래퍼(항상 interactive), safeFit 패턴 (ResizeObserver + pageshow + visualViewport + fonts.ready), 포커스 가드, 터치 한글 직접입력 감지
+│       │   │   ├── TerminalView.tsx     # xterm.js 래퍼(항상 interactive), safeFit 패턴 (ResizeObserver + pageshow + visualViewport + fonts.ready), 포커스 가드, 터치 한글 직접입력 감지, 복사/붙여넣기(⌘C·Ctrl+Shift+C / Ctrl+Shift+V + 복사 버튼)
 │       │   │   ├── PromptBar.tsx        # 한글/긴 프롬프트 입력바 (IME 조합 처리, Send=pasteSubmit / Paste=pasteOnly / Clear / 터미널 조작) — 데스크톱 선택·모바일/iPad 필수
 │       │   │   ├── TerminalKeyBar.tsx    # PTY 제어키 바 (방향키·Enter·Esc·Tab·⇧Tab·y/n·Ctrl+C/D) — 데스크톱·모바일 공용
 │       │   │   └── MobileToolbar.tsx    # 모바일 하단 툴바 (Prompt 입력 버튼 + TerminalKeyBar 제어키)
