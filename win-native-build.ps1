@@ -9,7 +9,7 @@
 #  (not downloaded), Windows SmartScreen "unrecognized app" blocks generally
 #  don't apply. No WSL, no cgo.
 #
-#  A winget install may pop a UAC prompt — click Yes. If Go/Node were just
+#  A winget install may pop a UAC prompt - click Yes. If Go/Node were just
 #  installed and the build can't find them, close PowerShell, reopen it, and
 #  run this one-liner again (it will skip what's already installed).
 # ================================================================
@@ -80,7 +80,7 @@ if (Test-Path (Join-Path $src '.git')) {
 }
 
 # 3. Build the frontend
-Say "Building the web UI (npm install + build — a few minutes)..." Yellow
+Say "Building the web UI (npm install + build - a few minutes)..." Yellow
 Push-Location (Join-Path $src 'client')
 try {
     npm install --no-audit --no-fund
@@ -100,7 +100,7 @@ try {
     $env:CGO_ENABLED = '0'
     go build -o $exeSrc .
 } finally { Pop-Location }
-if (-not (Test-Path $exeSrc)) { Say "Build failed — pcd.exe was not produced." Red; return }
+if (-not (Test-Path $exeSrc)) { Say "Build failed - pcd.exe was not produced." Red; return }
 
 # 6. Install to %USERPROFILE%\.powercodedeck
 $dir = Join-Path $env:USERPROFILE '.powercodedeck'
@@ -138,7 +138,7 @@ try {
     Say "Windows blocked the app from starting:" Red
     Say "  $($_.Exception.Message)" Gray
     Write-Host ""
-    Say "This is 'Smart App Control', which blocks ALL unsigned apps —" Yellow
+    Say "This is 'Smart App Control', which blocks ALL unsigned apps -" Yellow
     Say "even ones built locally. It has no 'run anyway' option. Two choices:" Yellow
     Write-Host ""
     Say "  1) Turn Smart App Control OFF (then pcd.exe runs):" White

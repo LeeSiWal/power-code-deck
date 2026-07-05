@@ -1,11 +1,11 @@
 # ================================================================
 #  PowerCodeDeck - Native Windows installer
 #
-#  Usage (normal PowerShell — admin not required):
+#  Usage (normal PowerShell - admin not required):
 #    iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-install.ps1 | iex
 #
 #  Downloads a prebuilt native pcd.exe (built with go-pty/ConPTY + pure-Go
-#  SQLite — no cgo, no WSL) and runs it. No Go/Node/build required.
+#  SQLite - no cgo, no WSL) and runs it. No Go/Node/build required.
 #
 #  EXPERIMENTAL: the native Windows build compiles and launches, but the
 #  ConPTY session runtime hasn't been validated on Windows hardware yet.
@@ -37,7 +37,7 @@ Write-Host ""
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
-# Stop any running instance — Windows can't overwrite a running .exe.
+# Stop any running instance - Windows can't overwrite a running .exe.
 $running = Get-Process pcd -ErrorAction SilentlyContinue
 if ($running) {
     Say "Closing the running PowerCodeDeck to update it..." Yellow
