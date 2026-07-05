@@ -97,6 +97,6 @@ Say "       wsl -d Ubuntu -u root -- bash -lc `"cd ~/.powercodedeck && ./pcd`"" 
 Say "  2) Open a session, click 'Continue on Mobile', pick the Local Wi-Fi URL," Gray
 Say "     and scan the QR with your phone." Gray
 Write-Host ""
-Say "Note: the WSL IP changes on every Windows reboot — re-run this script after" Yellow
+Say "Note: the WSL IP changes on every Windows reboot - re-run this script after" Yellow
 Say "a reboot if mobile access stops working." Gray
 Write-Host ""
