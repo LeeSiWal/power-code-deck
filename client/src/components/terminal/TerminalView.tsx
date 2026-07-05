@@ -178,6 +178,13 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       disableStdin: false,
       allowProposedApi: true,
       scrollOnUserInput: false,
+      // TUIs like Claude Code enable mouse reporting, so a plain drag is sent to
+      // the app as mouse events instead of selecting text — making copy
+      // impossible. Let the user force a local text selection by holding a
+      // modifier while dragging: Option(⌥) on macOS, Shift elsewhere (xterm's
+      // built-in default). rightClickSelectsWord adds a quick word grab.
+      macOptionClickForcesSelection: true,
+      rightClickSelectsWord: true,
       // Make OSC 8 hyperlinks (e.g. Claude Code's login link) clickable — open
       // them in a new tab. Without this, xterm renders the link but clicks do
       // nothing. Plain-text URLs are handled by WebLinksAddon below.
@@ -568,7 +575,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
           onTouchStart={(e) => { e.preventDefault(); copySelection(); }}
           className="absolute bottom-2 right-2 z-20 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-lg
                      touch-manipulation active:opacity-70 bg-deck-accent text-white"
-          title="선택 영역 복사 (⌘C / Ctrl+Shift+C)"
+          title="선택 영역 복사 (⌘C / Ctrl+Shift+C). TUI에서는 ⌥(Option)·Shift 누른 채 드래그하면 선택됩니다."
         >
           {copied ? '복사됨 ✓' : '복사'}
         </button>
