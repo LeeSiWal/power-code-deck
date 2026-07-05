@@ -6,8 +6,8 @@ package version
 const (
 	// Version is the current release. v0.1.0 = original AgentDeck MVP,
 	// v0.2.0 = PowerCodeDeck renewal, v0.2.1 = Session Handoff,
-	// v0.3.0 = Control Room (planned).
-	Version = "0.2.1"
+	// v0.2.2 = tmux-free internal session engine, v0.3.0 = Control Room (planned).
+	Version = "0.2.2"
 
 	// AppName is the product name shown to users.
 	AppName = "PowerCodeDeck"

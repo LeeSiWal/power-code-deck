@@ -1,14 +1,19 @@
 # PowerCodeDeck
 
-**PowerCodeDeck v0.2.0** — 브라우저에서 서버 프로젝트를 열고, 터미널과 AI 코딩 에이전트를 실행하는 개인용 웹 콘솔입니다.
+**PowerCodeDeck v0.2.2** — 브라우저에서 서버 프로젝트를 열고, 터미널과 AI 코딩 에이전트를 실행하는 개인용 웹 콘솔입니다.
 *PowerCodeDeck is a self-hosted web console for project terminals and AI coding agents.*
 
 Claude Code, Gemini CLI, Codex CLI 등 AI 코딩 에이전트를 한 화면에서 실행하고 모니터링합니다.
 Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 
-> **v0.1.0 (AgentDeck) → v0.2.0 (PowerCodeDeck) 리브랜딩 버전입니다.** 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
+> **새 소식 (v0.2.2)**
+> - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
+> - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
+> - 🪟 **원클릭 Windows 설치** — 관리자 PowerShell에 한 줄 붙여넣기 + (필요 시) 재부팅이면 끝 ([Windows 설치](#windows-설치-복사-붙여넣기))
+>
+> 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
 
-![Version](https://img.shields.io/badge/version-0.2.0-6366f1)
+![Version](https://img.shields.io/badge/version-0.2.2-6366f1)
 ![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![SQLite](https://img.shields.io/badge/SQLite-embedded-003B57?logo=sqlite&logoColor=white)

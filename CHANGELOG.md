@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased — Session engine
+## v0.2.2 — tmux-free session engine + easy Windows install
 
 ### Changed
 - **Session engine refactor** — terminal/agent sessions now go through a single `SessionEngine` interface. The web/API/WebSocket layers no longer touch the session runtime directly. The invariant **"Detach is not Kill"** is enforced: a browser disconnect only detaches the viewer; the shell/Claude process keeps running. Only Kill / Restart / Delete end the process.
@@ -10,8 +10,10 @@ All notable changes to this project are documented here.
 - `POWERCODEDECK_SESSION_ENGINE` is **deprecated** — the internal engine is always used; a set value logs a warning and is otherwise ignored.
 
 ### Added
+- **One-line Windows installer** — `iwr -useb .../win-install.ps1 | iex` sets up WSL + Ubuntu (no interactive account — runs as root), reboots with confirmation and **auto-resumes after login**, then builds PowerCodeDeck. Falls back to **WSL1 when CPU virtualization is off**, and prints ASCII/English so consoles don't show `???`.
 - `POWERCODEDECK_SESSION_SCROLLBACK_BYTES` (default `524288`) — per-session replay buffer size.
 - `docs/session-engine.md` documenting the engine, the Detach≠Kill rule, server-restart behavior, and the future `pcd-sessiond` split.
+- Beginner-friendly Windows install guidance in the README.
 
 ### Notes
 - If the `pcd` **server process** restarts, live sessions may stop (session lifetime is tied to the server for now); agents are not auto-respawned — press Restart. The legacy `tmux_session` DB column is kept but unused.

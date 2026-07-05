@@ -144,7 +144,7 @@ if (-not (Test-DistroRuns)) {
 # -- 3. Build & install PowerCodeDeck inside Ubuntu (as root) --
 Write-Host ""
 Say "Building PowerCodeDeck inside Ubuntu..." Yellow
-Say "(installs tmux, Go, Node.js, pnpm + builds - a few minutes)" Gray
+Say "(installs Go, Node.js, pnpm + builds - a few minutes; no tmux needed)" Gray
 Write-Host ""
 
 $linux = @'
