@@ -22,36 +22,54 @@ function openTerminalLink(uri: string) {
 }
 
 /**
- * Copy text to the clipboard. Uses the async Clipboard API when available and
- * falls back to a hidden-textarea execCommand('copy') for non-secure contexts
- * (e.g. LAN handoff over plain http, where navigator.clipboard is undefined).
+ * Synchronous clipboard copy via a hidden textarea + execCommand. Works within
+ * a user gesture even in non-secure (http) contexts — e.g. a LAN / home-server
+ * URL like http://192.168.x.x:33033 — where navigator.clipboard is unavailable
+ * or rejects. Must run synchronously inside the gesture (no preceding await).
  */
-async function writeClipboard(text: string): Promise<boolean> {
-  if (!text) return false;
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    /* fall through to legacy path */
-  }
+function legacyCopy(text: string): boolean {
   try {
     const ta = document.createElement('textarea');
     ta.value = text;
+    ta.setAttribute('readonly', ''); // avoid popping the mobile keyboard
     ta.style.position = 'fixed';
     ta.style.top = '0';
     ta.style.left = '0';
+    ta.style.width = '1px';
+    ta.style.height = '1px';
+    ta.style.padding = '0';
+    ta.style.border = 'none';
     ta.style.opacity = '0';
     document.body.appendChild(ta);
     ta.focus();
     ta.select();
+    ta.setSelectionRange(0, text.length); // iOS Safari needs an explicit range
     const ok = document.execCommand('copy');
     document.body.removeChild(ta);
     return ok;
   } catch {
     return false;
   }
+}
+
+/**
+ * Copy text to the clipboard. In a secure context (https / localhost) it uses
+ * the async Clipboard API (no focus steal). In a non-secure context (LAN http)
+ * navigator.clipboard is missing or rejects, so it goes STRAIGHT to the
+ * synchronous execCommand path — awaiting the rejecting promise first would
+ * spend the user gesture and make the fallback fail too.
+ */
+async function writeClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* fall through to the synchronous path */
+    }
+  }
+  return legacyCopy(text);
 }
 
 /** Read text from the clipboard, or '' when unavailable/denied. */

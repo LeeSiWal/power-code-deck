@@ -402,6 +402,7 @@ PowerCodeDeck은 하나의 **Interactive Terminal**을 기본으로 사용합니
 - 하단 **방향키/제어키 툴바**로 `↑ ↓ ← → Enter Esc Tab ⇧Tab y n Ctrl+C Ctrl+D`를 전송할 수 있습니다. 물리 키보드가 없는 모바일에서 대화형 메뉴 조작에 특히 유용합니다.
 - **복사/붙여넣기**: 드래그로 선택하면 나타나는 **복사** 버튼, 또는 `⌘C`(macOS)·`Ctrl+Shift+C`로 복사합니다. 붙여넣기는 `⌘V`·`Ctrl+Shift+V`. (선택이 없을 때 `Ctrl+C`는 그대로 SIGINT로 전달됩니다.)
   - Claude Code 같은 TUI는 마우스 모드를 켜서 일반 드래그가 앱으로 전달됩니다. 이때는 **⌥(Option, macOS)·Shift(그 외)를 누른 채 드래그**하면 텍스트가 선택됩니다.
+  - `http://<IP>:33033`(집 서버·LAN) 같은 **비보안 접속**에서는 브라우저 클립보드 API가 막혀, 복사는 내부 `execCommand` 폴백으로 처리합니다. 붙여넣기는 `⌘V`(네이티브)를 쓰세요. 완전한 클립보드 지원이 필요하면 `localhost`·`https`·Tailscale 등 **보안 컨텍스트**로 접속하세요.
 
 **Prompt Bar (한글/긴 프롬프트)**
 - textarea에서 IME 조합이 정상 동작하므로 **한글이 자모 분리 없이** 입력됩니다. 완성된 문자열만 터미널로 붙여넣습니다.
