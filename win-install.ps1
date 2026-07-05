@@ -22,7 +22,9 @@ $RepoRaw = 'https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-
 try {
     cmd /c "chcp 65001 >nul" 2>$null | Out-Null
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    $OutputEncoding = [System.Text.Encoding]::UTF8
+    # UTF-8 WITHOUT BOM for piping to wsl/bash — a BOM would break the first
+    # line of the piped shell script ("set: command not found").
+    $OutputEncoding = New-Object System.Text.UTF8Encoding $false
 } catch {}
 
 function Say($msg, $color = 'White') { Write-Host "  $msg" -ForegroundColor $color }
@@ -167,7 +169,9 @@ bash install.sh </dev/null
 '@
 
 # Pipe the script over stdin so Windows/Linux quoting stays simple.
-$linux | wsl -d Ubuntu -u root -- bash -lc 'cat > /tmp/pcd-setup.sh && bash /tmp/pcd-setup.sh'
+# Strip CR (PowerShell adds CRLF per line) and a leading UTF-8 BOM before running,
+# so the piped script isn't broken by "\r" or a BOM on the first line.
+$linux | wsl -d Ubuntu -u root -- bash -lc 'tr -d "\r" | sed "1s/^\xEF\xBB\xBF//" > /tmp/pcd-setup.sh; bash /tmp/pcd-setup.sh'
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
