@@ -58,6 +58,9 @@ try {
 $sizeMB = [math]::Round((Get-Item $Exe).Length / 1MB, 1)
 Say "Saved to $Exe ($sizeMB MB)" Green
 
+# Strip the "Mark of the Web" so SmartScreen doesn't block the downloaded exe.
+try { Unblock-File -Path $Exe -ErrorAction SilentlyContinue } catch {}
+
 # Desktop shortcut (best-effort).
 try {
     $ws = New-Object -ComObject WScript.Shell
@@ -71,16 +74,26 @@ try {
 Write-Host ""
 Say "Starting PowerCodeDeck..." Yellow
 # Run detached in its own window; pcd opens the browser itself.
-Start-Process -FilePath $Exe -WorkingDirectory $InstallDir
-
-Write-Host ""
-Write-Host "  ================================================" -ForegroundColor Green
-Say "Done! Open in your browser:  http://localhost:33033" Green
-Write-Host "  ================================================" -ForegroundColor Green
-Write-Host ""
-Say "Next time, just double-click the 'PowerCodeDeck' desktop shortcut" Gray
-Say "or run:  $Exe" Gray
-Write-Host ""
-Say "Note: Windows SmartScreen may warn about an unrecognized app." Yellow
-Say "  Click 'More info' > 'Run anyway' (the file is your own build)." Gray
-Write-Host ""
+try {
+    Start-Process -FilePath $Exe -WorkingDirectory $InstallDir
+    Write-Host ""
+    Write-Host "  ================================================" -ForegroundColor Green
+    Say "Done! Open in your browser:  http://localhost:33033" Green
+    Write-Host "  ================================================" -ForegroundColor Green
+    Write-Host ""
+    Say "Next time, double-click the 'PowerCodeDeck' desktop shortcut." Gray
+} catch {
+    Write-Host ""
+    Say "Windows blocked the app from starting:" Red
+    Say "  $($_.Exception.Message)" Gray
+    Write-Host ""
+    Say "This is a Windows security policy blocking an unsigned downloaded app." Yellow
+    Say "Try one of these:" White
+    Say "  1) Right-click $Exe > Properties > check 'Unblock' > OK, then run it." Gray
+    Say "  2) If it says 'Smart App Control': Settings > Privacy & security >" Gray
+    Say "     Windows Security > App & browser control > Smart App Control >" Gray
+    Say "     turn it Off, then run pcd.exe again." Gray
+    Say "  3) Or use the WSL install (not affected by this policy):" Gray
+    Say "     iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-install.ps1 | iex" Cyan
+    Write-Host ""
+}
