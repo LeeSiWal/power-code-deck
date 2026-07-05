@@ -9,7 +9,7 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 > **새 소식 (v0.2.2)**
 > - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
 > - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
-> - 🪟 **Windows 네이티브 (WSL 불필요)** — 내 PC에서 `pcd.exe`를 빌드해 바로 실행 ([소스 빌드](#windows-설치-소스-빌드))
+> - 🪟 **Windows 네이티브** — 내 PC에서 `pcd.exe`를 빌드해 바로 실행 ([소스 빌드](#windows-설치-소스-빌드))
 > - ⚙️ **cgo 없는 네이티브 빌드** — 순수 Go SQLite + go-pty로 전환. gcc/build-essential 불필요, `make build-windows`로 **네이티브 `pcd.exe`** 크로스컴파일 가능
 >
 > 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
@@ -175,7 +175,7 @@ bash install.sh
 
 ### Windows 설치 (소스 빌드)
 
-**가장 권장하는 Windows 방법.** WSL 없이, 내 PC에서 `pcd.exe`(go-pty의 ConPTY + 순수 Go SQLite, cgo 없음)를 직접 빌드합니다. 다운로드한 exe가 아니라 **로컬 빌드라 SmartScreen "알 수 없는 앱" 차단을 피합니다.**
+**가장 권장하는 Windows 방법.** 내 PC에서 `pcd.exe`(go-pty의 ConPTY + 순수 Go SQLite, cgo 없음)를 직접 빌드합니다. 다운로드한 exe가 아니라 **로컬 빌드라 SmartScreen "알 수 없는 앱" 차단을 피합니다.**
 
 1. **PowerShell**을 엽니다.
 2. 아래 **한 줄**을 붙여넣고 Enter:
