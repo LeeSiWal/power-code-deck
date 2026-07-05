@@ -273,10 +273,15 @@ echo ""
 echo "  ================================================"
 echo ""
 
-# Ask to launch now
-read -p "  Launch PowerCodeDeck now? [Y/n] " -n 1 -r
-echo ""
-if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-    cd "$INSTALL_DIR"
-    ./$BIN_NAME
+# Ask to launch now — only when interactive. In a non-interactive/piped install
+# (e.g. the WSL installer runs this with stdin </dev/null) `read` gets EOF and
+# returns non-zero, which under `set -e` would abort with a false "failed"; skip
+# the prompt entirely in that case so the install reports success.
+if [ -t 0 ]; then
+    read -p "  Launch PowerCodeDeck now? [Y/n] " -n 1 -r REPLY || true
+    echo ""
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        cd "$INSTALL_DIR"
+        exec ./"$BIN_NAME"
+    fi
 fi
