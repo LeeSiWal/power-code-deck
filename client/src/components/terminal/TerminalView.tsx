@@ -124,12 +124,15 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   statusRef.current = status;
   const hasOutputRef = useRef(hasOutput);
   hasOutputRef.current = hasOutput;
+  // Last non-empty selection text. A live TUI (Claude Code) redraws constantly
+  // and xterm clears the selection on each write, so we snapshot the selected
+  // text the moment it exists and copy that even after the highlight is gone.
+  const selectionTextRef = useRef('');
 
-  // Copy the current terminal selection (used by the floating 복사 button and,
-  // via the same helper, the Cmd+C / Ctrl+Shift+C key handler).
+  // Copy the current (or last-captured) terminal selection. Used by the floating
+  // 복사 button and, via copyTerminalSelection, the Cmd+C / Ctrl+Shift+C handler.
   const copySelection = useCallback(() => {
-    const term = terminalRef.current;
-    const sel = term?.getSelection();
+    const sel = terminalRef.current?.getSelection() || selectionTextRef.current;
     if (!sel) return;
     writeClipboard(sel).then((ok) => {
       if (!ok) return;
@@ -245,7 +248,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     //   • Paste — Cmd+V is handled natively by xterm's textarea; Ctrl+Shift+V
     //             (Linux/Windows terminal convention) is wired here.
     const copyTerminalSelection = () => {
-      const sel = terminal.getSelection();
+      const sel = terminal.getSelection() || selectionTextRef.current;
       if (!sel) return;
       writeClipboard(sel).then((ok) => {
         if (!ok) return;
@@ -263,7 +266,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         (e.metaKey && !e.shiftKey && !e.ctrlKey && e.code === 'KeyC') ||
         (e.ctrlKey && e.shiftKey && e.code === 'KeyC');
       if (isCopy) {
-        if (terminal.hasSelection()) {
+        // Also honor a just-captured selection that a redraw already cleared.
+        if (terminal.hasSelection() || selectionTextRef.current) {
           // preventDefault so the browser's native (empty) copy doesn't clobber
           // the clipboard text we write ourselves.
           e.preventDefault();
@@ -279,8 +283,23 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       }
       return true;
     });
+    // Snapshot the selection as soon as it exists. A live TUI wipes it on the
+    // next redraw, so keep the captured text + copy button alive for a grace
+    // period after the highlight disappears.
+    let selHideTimer = 0;
     const selectionDisposable = terminal.onSelectionChange(() => {
-      setHasSelection(terminal.hasSelection());
+      const sel = terminal.getSelection();
+      if (sel) {
+        selectionTextRef.current = sel;
+        clearTimeout(selHideTimer);
+        setHasSelection(true);
+      } else {
+        clearTimeout(selHideTimer);
+        selHideTimer = window.setTimeout(() => {
+          selectionTextRef.current = '';
+          setHasSelection(false);
+        }, 5000);
+      }
     });
 
     // Auto-focus that must yield to the Prompt Bar and never pop the mobile
@@ -543,6 +562,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       document.removeEventListener('visibilitychange', onVisibilityChange);
       vv?.removeEventListener('resize', onVVResize);
       container.removeEventListener('pointerdown', onPointerDown);
+      clearTimeout(selHideTimer);
       dataDisposable.dispose();
       selectionDisposable.dispose();
       terminal.dispose();
