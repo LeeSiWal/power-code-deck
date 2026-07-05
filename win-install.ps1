@@ -169,9 +169,12 @@ bash install.sh </dev/null
 '@
 
 # Pipe the script over stdin so Windows/Linux quoting stays simple.
-# Strip CR (PowerShell adds CRLF per line) and a leading UTF-8 BOM before running,
-# so the piped script isn't broken by "\r" or a BOM on the first line.
-$linux | wsl -d Ubuntu -u root -- bash -lc 'tr -d "\r" | sed "1s/^\xEF\xBB\xBF//" > /tmp/pcd-setup.sh; bash /tmp/pcd-setup.sh'
+# Pass the script as base64 (pure ASCII) and decode inside WSL. This is immune to
+# PowerShell's native-arg quoting/encoding mangling (which otherwise turned "\r"
+# into "r" and left a BOM), and to CRLF/BOM issues. Normalize to LF first.
+$scriptLF = $linux -replace "`r`n", "`n"
+$b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($scriptLF))
+wsl -d Ubuntu -u root -- bash -lc "echo $b64 | base64 -d > /tmp/pcd-setup.sh && bash /tmp/pcd-setup.sh"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
