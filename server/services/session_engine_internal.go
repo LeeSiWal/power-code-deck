@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
@@ -94,6 +95,12 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 	_ = p.Resize(cols, rows)
 
 	command, cmdArgs := windowsShim(req.Command, req.Args)
+	// Resolve the executable against PATH ourselves. go-pty looks a bare command
+	// name up relative to the working directory (Dir), not PATH, so we pass an
+	// absolute path to avoid "not found in <workingDir>".
+	if resolved, lookErr := exec.LookPath(command); lookErr == nil {
+		command = resolved
+	}
 	cmd := p.Command(command, cmdArgs...)
 	cmd.Dir = req.Cwd
 	cmd.Env = append(os.Environ(),
