@@ -121,13 +121,33 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo ""
 echo "  Building PowerCodeDeck..."
 
+# Build the frontend. Try pnpm; fall back to npm (which ships with Node) if
+# pnpm fails. NOT using `A && B` here — that hides a failing install from
+# `set -e` and leaves client/dist missing.
+cd "$SCRIPT_DIR/client"
+BUILT=0
+if command -v pnpm &>/dev/null; then
+    echo "  Installing client dependencies (pnpm)..."
+    if pnpm install --no-frozen-lockfile && pnpm build; then
+        BUILT=1
+    fi
+fi
+if [ "$BUILT" != "1" ]; then
+    echo "  Building client with npm..."
+    npm install
+    npm run build
+fi
+
 cd "$SCRIPT_DIR"
-cd client && pnpm install --silent && pnpm build
-cd ..
+if [ ! -d client/dist ]; then
+    echo "  ❌ Client build failed — client/dist was not produced. See errors above."
+    exit 1
+fi
+
 rm -rf server/static
 cp -r client/dist server/static
-cd server && CGO_ENABLED=0 go build -o "../$BIN_NAME" .
-cd ..
+cd "$SCRIPT_DIR/server" && CGO_ENABLED=0 go build -o "../$BIN_NAME" .
+cd "$SCRIPT_DIR"
 
 echo "  ✓ Build complete"
 
