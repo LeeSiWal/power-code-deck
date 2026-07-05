@@ -9,7 +9,7 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 > **새 소식 (v0.2.3)**
 > - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
 > - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
-> - 🪟 **Windows 네이티브** — 내 PC에서 `pcd.exe`를 빌드해 바로 실행 ([소스 빌드](#windows-설치-소스-빌드))
+> - 🪟 **Windows 지원** — WSL 한 줄 설치가 기본. cgo 없는 네이티브 `pcd.exe` 빌드도 지원(Smart App Control이 꺼져 있어야 실행) ([Windows 설치](#windows-설치-wsl-권장))
 > - ⚙️ **cgo 없는 네이티브 빌드** — 순수 Go SQLite + go-pty로 전환. gcc/build-essential 불필요, `make build-windows`로 **네이티브 `pcd.exe`** 크로스컴파일 가능
 >
 > 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
@@ -33,16 +33,17 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 git clone https://github.com/LeeSiWal/power-code-deck.git && cd power-code-deck && bash install.sh
 ```
 
-**Windows** — PowerShell에 붙여넣기:
+**Windows** — **관리자** PowerShell에 붙여넣기:
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-build.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-install.ps1 | iex
 ```
 
 설치가 끝나면 브라우저에서 **<http://localhost:33033>** 이 열립니다. 끝.
 
 > - 실행하려는 CLI(`claude` / `gemini` / `codex`)는 **미리 설치**돼 있어야 합니다 → [사전 요구사항](#사전-요구사항)
-> - Windows 다른 방법(프리빌트 다운로드·WSL), 문제 해결, 상세 설명은 아래 [설치](#설치)를 참고하세요.
+> - Windows는 WSL(리눅스) 위에서 실행합니다. 처음이면 재부팅이 한 번 필요할 수 있어요(스크립트가 안내·자동 재개).
+> - 네이티브 `pcd.exe`로 쓰고 싶다면(Smart App Control 필요) 아래 [설치](#설치)의 Windows 항목을 참고하세요.
 
 ---
 
@@ -182,9 +183,9 @@ bash install.sh
 
 **Windows:** 세 가지 방법이 있습니다.
 
-- **[소스 빌드](#windows-설치-소스-빌드)** — **권장.** 내 PC에서 직접 `pcd.exe`를 빌드 → SmartScreen 차단을 피합니다.
-- **[프리빌트 다운로드](#windows-설치-프리빌트)** — 가장 빠름. 단, 서명 안 된 다운로드라 SmartScreen/Smart App Control에 막힐 수 있습니다.
-- **[WSL 설치](#windows-설치-wsl)** — 가장 오래 검증된 방식.
+- **[WSL 설치](#windows-설치-wsl-권장)** — **권장·기본.** WSL(리눅스) 위에서 `pcd`를 실행합니다. Windows 보안 정책(Smart App Control) 영향을 받지 않아 **가장 확실히 동작**합니다.
+- **[네이티브 (소스 빌드)](#windows-설치-네이티브-소스-빌드)** — 내 PC에서 `pcd.exe`를 직접 빌드. 단, **Smart App Control이 켜져 있으면 실행이 차단**됩니다(꺼야 함).
+- **[네이티브 (프리빌트)](#windows-설치-네이티브-프리빌트)** — 미리 빌드된 `pcd.exe` 다운로드. 가장 빠르지만 서명 안 된 exe라 SmartScreen/Smart App Control에 막힐 수 있습니다.
 
 > 어느 방식이든 실행하려는 CLI(`claude`/`gemini`/`codex`)는 [사전 요구사항](#사전-요구사항)처럼 미리 설치돼 있어야 합니다.
 
@@ -197,41 +198,9 @@ bash install.sh
 
 > Windows 네이티브 설치(소스 빌드/프리빌트)는 위 스크립트가 아니라 각 전용 설치기가 처리하며, 바탕화면에 `PowerCodeDeck.lnk` 바로가기를 만듭니다. WSL 설치는 실행용 한 줄 명령을 안내합니다.
 
-### Windows 설치 (소스 빌드)
+### Windows 설치 (WSL, 권장)
 
-**가장 권장하는 Windows 방법.** 내 PC에서 `pcd.exe`(go-pty의 ConPTY + 순수 Go SQLite, cgo 없음)를 직접 빌드합니다. 다운로드한 exe가 아니라 **로컬 빌드라 SmartScreen "알 수 없는 앱" 차단을 피합니다.**
-
-1. **PowerShell**을 엽니다.
-2. 아래 **한 줄**을 붙여넣고 Enter:
-
-   ```powershell
-   iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-build.ps1 | iex
-   ```
-
-3. Git/Go/Node가 없으면 **winget으로 자동 설치**(UAC 뜨면 "예"), 소스를 받아 빌드하고 `%USERPROFILE%\.powercodedeck\pcd.exe`로 설치·실행합니다. (몇 분 소요)
-4. 브라우저에서 **<http://localhost:33033>** 접속. 끝. (바탕화면 바로가기 생성)
-
-> - Go/Node를 방금 설치해 빌드가 못 찾으면: **PowerShell을 닫았다 다시 열고** 같은 한 줄을 재실행하세요 (이미 깐 건 건너뜁니다).
-> - **업데이트:** 같은 한 줄을 다시 실행하면 최신 소스로 재빌드합니다.
-> - **동작 확인됨:** 실제 Windows에서 네이티브 ConPTY 세션으로 Claude Code 실행을 확인했습니다.
-
-### Windows 설치 (프리빌트)
-
-미리 빌드된 `pcd.exe`를 내려받아 실행하는 **가장 빠른** 방법입니다.
-
-```powershell
-iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-install.ps1 | iex
-```
-
-`pcd.exe`가 `%USERPROFILE%\.powercodedeck\`에 설치·실행됩니다.
-
-> - **차단될 수 있음:** 서명 안 된 다운로드 exe라 Windows가 실행을 막을 수 있습니다.
->   - **SmartScreen**이면: `pcd.exe` 우클릭 → 속성 → **"차단 해제"** 체크 → 확인 후 실행. (또는 `Unblock-File "$env:USERPROFILE\.powercodedeck\pcd.exe"`)
->   - **"Smart App Control"** 이면 `Unblock-File`로도 안 풀립니다 → 위 [소스 빌드](#windows-설치-소스-빌드) 방식을 쓰거나 아래 WSL을 쓰세요.
-
-### Windows 설치 (WSL)
-
-> **언제 이 방식?** 네이티브 설치가 안 되거나, 완전히 검증된 안정 경로를 원할 때. 내부적으로 WSL의 Ubuntu에서 `pcd`를 실행합니다.
+**가장 확실히 동작하는 기본 경로.** WSL(Windows의 리눅스)에서 `pcd`를 실행하므로 Windows 보안 정책(Smart App Control·서명)에 막히지 않습니다.
 
 개발 경험이 없어도 됩니다. **복사-붙여넣기 + (필요하면) 재부팅 한 번**이면 끝납니다.
 
@@ -242,9 +211,8 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-na
    iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-install.ps1 | iex
    ```
 
-3. WSL 설치가 처음이라 **재부팅이 필요하면**, 스크립트가 `Reboot now? [Y/n]` 라고 물어봅니다 → **`Y` (Enter)**.
-   재부팅 후 로그인하면 **설치가 자동으로 이어집니다.** (다시 붙여넣지 않아도 됩니다.)
-4. `Done!` 이 뜨면, 실행은 아래 한 줄:
+3. WSL 설치가 처음이라 **재부팅이 필요하면**, 스크립트가 `Reboot now? [Y/n]` 라고 물어봅니다 → **`Y` (Enter)**. 재부팅 후 로그인하면 **설치가 자동으로 이어집니다.**
+4. `Done!` 이 뜨면 실행은 아래 한 줄:
 
    ```powershell
    wsl -d Ubuntu -u root -- bash -lc "cd ~/.powercodedeck && ./pcd"
@@ -252,10 +220,36 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-na
 
 5. 브라우저에서 **<http://localhost:33033>** 접속. 끝.
 
-> - 이 방식은 WSL/Ubuntu를 자동으로 준비하고 **root 계정으로 실행**하므로, 우분투 사용자 이름·비밀번호를 따로 만들 필요가 없습니다.
+> - WSL/Ubuntu를 자동으로 준비하고 **root 계정으로 실행**하므로, 우분투 사용자 이름·비밀번호를 따로 만들 필요가 없습니다.
 > - 스크립트 안내 문구는 콘솔 깨짐(`???`)을 막기 위해 **영어**로 표시됩니다.
-> - **CPU 가상화(VT-x/AMD-V)가 꺼져 있어 WSL2가 안 뜨는 PC**는, 스크립트가 자동으로 **WSL1**(가상화 불필요)로 전환해 설치를 계속합니다. 그래도 안 되면 BIOS/UEFI에서 가상화를 켜고 재부팅한 뒤 다시 실행하세요.
-> - 직접 단계별로 하고 싶다면 아래 [수동 설치](#수동-설치)를 참고하세요.
+> - **CPU 가상화(VT-x/AMD-V)가 꺼진 PC**는 스크립트가 자동으로 **WSL1**(가상화 불필요)로 전환합니다. 그래도 안 되면 BIOS/UEFI에서 가상화를 켜고 재부팅 후 재실행.
+
+### Windows 설치 (네이티브, 소스 빌드)
+
+WSL 없이 내 PC에서 `pcd.exe`(go-pty의 ConPTY + 순수 Go SQLite, cgo 없음)를 직접 빌드합니다.
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-build.ps1 | iex
+```
+
+Git/Go/Node가 없으면 winget으로 자동 설치(UAC "예") 후 빌드해 `%USERPROFILE%\.powercodedeck\pcd.exe`로 설치·실행합니다.
+
+> - ⚠️ **Smart App Control 주의:** SAC이 켜져 있으면 **서명 안 된 exe는 로컬 빌드라도 실행이 차단**됩니다 (`An Application Control policy has blocked this file`). 이 경우:
+>   - 네이티브로 쓰려면 **설정 → 개인정보 및 보안 → Windows 보안 → 앱 및 브라우저 컨트롤 → Smart App Control → 끄기** (한 번 끄면 Windows 재설정 전까지 다시 못 켬), 그다음 `pcd.exe` 실행.
+>   - 끄기 싫으면 위 **[WSL 방식](#windows-설치-wsl-권장)** 을 쓰세요 (SAC 영향 없음).
+> - SAC 상태 확인: `Get-MpComputerStatus | Select-Object SmartAppControlState` (`On`이면 차단됨).
+> - Go/Node를 방금 설치해 빌드가 못 찾으면 PowerShell을 닫았다 다시 열고 재실행하세요.
+
+### Windows 설치 (네이티브, 프리빌트)
+
+미리 빌드된 `pcd.exe`를 내려받아 실행하는 가장 빠른 방법입니다.
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-install.ps1 | iex
+```
+
+> 소스 빌드와 마찬가지로 **Smart App Control이 켜져 있으면 차단**됩니다. 단순 SmartScreen(다운로드 표식)이면 `pcd.exe` 우클릭 → 속성 → **"차단 해제"** 로 풀리지만, Smart App Control이면 SAC를 끄거나 [WSL](#windows-설치-wsl-권장)을 쓰세요.
+> 직접 단계별로 하고 싶다면 아래 [수동 설치](#수동-설치)를 참고하세요.
 
 ### 수동 설치
 
