@@ -6,7 +6,7 @@
 Claude Code, Gemini CLI, Codex CLI 등 AI 코딩 에이전트를 한 화면에서 실행하고 모니터링합니다.
 Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 
-> **새 소식 (v0.2.2)**
+> **새 소식 (v0.2.3)**
 > - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
 > - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
 > - 🪟 **Windows 네이티브** — 내 PC에서 `pcd.exe`를 빌드해 바로 실행 ([소스 빌드](#windows-설치-소스-빌드))
@@ -25,8 +25,30 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 
 ---
 
+## 빠른 시작
+
+**macOS / Linux** — 터미널에 붙여넣기:
+
+```bash
+git clone https://github.com/LeeSiWal/power-code-deck.git && cd power-code-deck && bash install.sh
+```
+
+**Windows** — PowerShell에 붙여넣기:
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-build.ps1 | iex
+```
+
+설치가 끝나면 브라우저에서 **<http://localhost:33033>** 이 열립니다. 끝.
+
+> - 실행하려는 CLI(`claude` / `gemini` / `codex`)는 **미리 설치**돼 있어야 합니다 → [사전 요구사항](#사전-요구사항)
+> - Windows 다른 방법(프리빌트 다운로드·WSL), 문제 해결, 상세 설명은 아래 [설치](#설치)를 참고하세요.
+
+---
+
 ## 목차
 
+- [빠른 시작](#빠른-시작)
 - [주요 기능](#주요-기능)
 - [기능 상태 (Stable / Experimental / Roadmap)](#기능-상태-stable--experimental--roadmap)
 - [한눈에 보는 구조](#한눈에-보는-구조)
@@ -121,7 +143,7 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 
 ## Session Engine
 
-PowerCodeDeck는 자체 내장 PTY 세션 엔진으로 동작합니다 (tmux 불필요).
+PowerCodeDeck는 자체 내장 PTY 세션 엔진(go-pty — mac/Linux는 Unix PTY, Windows는 ConPTY)으로 동작합니다.
 
 - 브라우저 연결을 끊어도 **viewer만 분리**되고, 실제 shell/Claude 프로세스는 계속 살아 있습니다.
 - **Kill / Restart / Delete** 를 눌렀을 때만 프로세스가 종료됩니다. ("Detach is not Kill")
@@ -171,7 +193,9 @@ bash install.sh
 - Go, Node.js, pnpm 설치
 - 프로젝트 빌드
 - `~/.powercodedeck/`에 바이너리 설치
-- 바탕화면 바로가기 생성 (macOS: `.command` + `.app`, Windows: `.bat`)
+- 바탕화면/앱 바로가기 생성 (macOS: `.command` + `.app`, Linux: `.desktop`)
+
+> Windows 네이티브 설치(소스 빌드/프리빌트)는 위 스크립트가 아니라 각 전용 설치기가 처리하며, 바탕화면에 `PowerCodeDeck.lnk` 바로가기를 만듭니다. WSL 설치는 실행용 한 줄 명령을 안내합니다.
 
 ### Windows 설치 (소스 빌드)
 
@@ -531,7 +555,7 @@ pcd status [id]        # 상태 확인
 pcd delete <id>        # 에이전트 삭제
 pcd open               # 브라우저 열기
 pcd ping               # 서버 상태 확인
-pcd version            # 버전 (pcd v0.2.0)
+pcd version            # 버전 (pcd v0.2.3)
 pcd help               # 도움말
 ```
 
@@ -575,7 +599,7 @@ power-code-deck/
 │   ├── main.go            # 엔트리포인트: 서비스 조립, 라우터, static 임베드, 배너
 │   ├── cli/               # 서브커맨드 CLI (root, agents, auth)
 │   ├── auth/              # JWT 발급/검증, HTTP·WS 인증 미들웨어
-│   ├── version/           # 제품명/버전 상수 (PowerCodeDeck v0.2.0)
+│   ├── version/           # 제품명/버전 상수 (PowerCodeDeck v0.2.3)
 │   ├── config/            # 이중 prefix env 로드 + 최초 실행 인증 마법사
 │   ├── db/                # SQLite 초기화 + 마이그레이션
 │   ├── handlers/          # HTTP 핸들러
@@ -804,7 +828,7 @@ server/*.go + server/static/ ──(go build + embed.FS)──▶ ./pcd
 ### v0.3.0 — Control Room
 
 PowerCodeDeck의 다음 주요 기능은 **멀티 에이전트 관제실(Control Room)**입니다.
-(이번 v0.2.0에서는 구현하지 않고 로드맵으로만 정의합니다.)
+(이번 v0.2.3에서는 구현하지 않고 로드맵으로만 정의합니다.)
 
 목표:
 - 여러 에이전트 세션을 한 화면에서 관리
@@ -815,7 +839,7 @@ PowerCodeDeck의 다음 주요 기능은 **멀티 에이전트 관제실(Control
 - 세션 종료 / 재시작 / 로그 보기
 - 승인 대기나 장시간 무응답 같은 주의 상태 표시
 
-v0.2.0에서는 기존 멀티 에이전트 대시보드를 크게 수정하지 않고(Experimental로 분류), Control Room은 다음 버전 작업으로 남깁니다. 상세 로드맵은 [ROADMAP.md](ROADMAP.md) 참고.
+v0.2.3에서는 기존 멀티 에이전트 대시보드를 크게 수정하지 않고(Experimental로 분류), Control Room은 다음 버전 작업으로 남깁니다. 상세 로드맵은 [ROADMAP.md](ROADMAP.md) 참고.
 
 ---
 
