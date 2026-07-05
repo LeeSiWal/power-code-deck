@@ -12,6 +12,15 @@ export interface TerminalHandle {
   focus: () => void;
 }
 
+/** Open a URL from the terminal in a new tab (login links, docs, localhost, …). */
+function openTerminalLink(uri: string) {
+  try {
+    window.open(uri, '_blank', 'noopener,noreferrer');
+  } catch {
+    /* popup blocked — ignore */
+  }
+}
+
 interface TerminalViewProps {
   agentId: string;
   fontSize?: number;
@@ -108,11 +117,19 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       disableStdin: false,
       allowProposedApi: true,
       scrollOnUserInput: false,
+      // Make OSC 8 hyperlinks (e.g. Claude Code's login link) clickable — open
+      // them in a new tab. Without this, xterm renders the link but clicks do
+      // nothing. Plain-text URLs are handled by WebLinksAddon below.
+      linkHandler: {
+        activate: (_event, uri) => openTerminalLink(uri),
+      },
     });
 
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-    terminal.loadAddon(new WebLinksAddon());
+    // Plain-text http(s) URLs (works across soft-wrapped lines, so a long login
+    // URL that wraps is still one clickable link).
+    terminal.loadAddon(new WebLinksAddon((_event, uri) => openTerminalLink(uri)));
     try {
       const unicodeAddon = new Unicode11Addon();
       terminal.loadAddon(unicodeAddon);
