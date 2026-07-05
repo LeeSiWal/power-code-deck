@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## v0.2.3 — cgo-free, natively cross-compilable (incl. Windows .exe)
+
+### Changed
+- **No more cgo / C toolchain.** SQLite driver switched from `mattn/go-sqlite3` (cgo) to **`modernc.org/sqlite`** (pure Go), and the PTY layer from `creack/pty` (Unix-only) to **`aymanbagabas/go-pty`** (Unix PTY on mac/Linux, **ConPTY on Windows**). `pcd` now builds with `CGO_ENABLED=0` — no gcc/build-essential required.
+- `install.sh` no longer installs `build-essential`; it only needs `git`, `curl`, `ca-certificates`. Builds use `CGO_ENABLED=0`.
+
+### Added
+- **Native Windows binary** — `make build-windows` produces `pcd.exe` (`GOOS=windows CGO_ENABLED=0`), a real PE32+ executable with no WSL and no cgo. The WSL installer remains the tested/recommended path until the native `.exe` is validated on Windows hardware.
+- `Makefile` targets build with `CGO_ENABLED=0`; `make build-windows` for the native `.exe`.
+
 ## v0.2.2 — tmux-free session engine + easy Windows install
 
 ### Changed

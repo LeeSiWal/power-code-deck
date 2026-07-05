@@ -6,7 +6,7 @@ PowerCodeDeck routes all terminal/agent session management through a single
 `SessionEngine` interface ([server/services/session_engine.go](../server/services/session_engine.go)).
 There is **one implementation**: `InternalPtySessionEngine`
 ([code](../server/services/session_engine_internal.go)). `pcd` owns each
-session's process + PTY directly (creack/pty) and keeps per-session scrollback in
+session's process + PTY directly (go-pty) and keeps per-session scrollback in
 a bounded [ring buffer](../server/services/ring_buffer.go). **tmux is no longer
 used or required** anywhere.
 
@@ -109,11 +109,21 @@ sessions survive a `pcd` restart.
 Browser disconnects are unaffected — those are viewer detaches, and the process
 keeps running.
 
-## Native Windows (future)
+## Native builds (no cgo, no WSL)
 
-The internal engine uses `creack/pty` (Unix). A later variant swaps it for
-`go-pty`/ConPTY so `pcd` runs **natively on Windows with no WSL** — callers
-change nothing because they only talk to `SessionEngine`.
+The internal engine uses **go-pty** (Unix PTY on mac/Linux, **ConPTY on
+Windows**) and the DB uses **pure-Go SQLite** (`modernc.org/sqlite`). There is no
+cgo and no C toolchain requirement, so `pcd` cross-compiles to a native binary
+on all three platforms:
+
+```
+make build            # host binary (pcd)
+make build-windows    # native pcd.exe (no WSL, no cgo)
+```
+
+`GOOS=windows CGO_ENABLED=0 go build` produces a real `pcd.exe`. (The WSL-based
+installer remains the tested/recommended path on Windows until the native `.exe`
+is validated on Windows hardware.)
 
 ## Future phase: pcd-sessiond
 

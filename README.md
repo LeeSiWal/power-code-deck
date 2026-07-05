@@ -1,6 +1,6 @@
 # PowerCodeDeck
 
-**PowerCodeDeck v0.2.2** — 브라우저에서 서버 프로젝트를 열고, 터미널과 AI 코딩 에이전트를 실행하는 개인용 웹 콘솔입니다.
+**PowerCodeDeck v0.2.3** — 브라우저에서 서버 프로젝트를 열고, 터미널과 AI 코딩 에이전트를 실행하는 개인용 웹 콘솔입니다.
 *PowerCodeDeck is a self-hosted web console for project terminals and AI coding agents.*
 
 Claude Code, Gemini CLI, Codex CLI 등 AI 코딩 에이전트를 한 화면에서 실행하고 모니터링합니다.
@@ -10,10 +10,11 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 > - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
 > - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
 > - 🪟 **원클릭 Windows 설치** — 관리자 PowerShell에 한 줄 붙여넣기 + (필요 시) 재부팅이면 끝 ([Windows 설치](#windows-설치-복사-붙여넣기))
+> - ⚙️ **cgo 없는 네이티브 빌드** — 순수 Go SQLite + go-pty로 전환. gcc/build-essential 불필요, `make build-windows`로 **네이티브 `pcd.exe`** 크로스컴파일 가능
 >
 > 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
 
-![Version](https://img.shields.io/badge/version-0.2.2-6366f1)
+![Version](https://img.shields.io/badge/version-0.2.3-6366f1)
 ![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![SQLite](https://img.shields.io/badge/SQLite-embedded-003B57?logo=sqlite&logoColor=white)
@@ -167,6 +168,8 @@ bash install.sh
 - 바탕화면 바로가기 생성 (macOS: `.command` + `.app`, Windows: `.bat`)
 
 ### Windows 설치 (복사-붙여넣기)
+
+> **왜 WSL을 쓰나요?** PowerCodeDeck은 이제 cgo 없이 **네이티브 `pcd.exe`로 크로스컴파일**됩니다(`make build-windows`, go-pty의 ConPTY + 순수 Go SQLite). 다만 이 네이티브 실행 파일은 아직 실제 Windows에서 충분히 검증하지 않았기 때문에, **현재 권장·검증된 설치 경로는 WSL**입니다. 아래 한 줄 방식이 가장 안정적입니다.
 
 개발 경험이 없어도 됩니다. **복사-붙여넣기 + (필요하면) 재부팅 한 번**이면 끝납니다.
 
@@ -503,8 +506,8 @@ CLI 토큰 저장 위치: macOS `~/Library/Application Support/powercodedeck/`, 
 ### 서버 (Go 1.23)
 - **Gorilla Mux** — HTTP 라우터
 - **Gorilla WebSocket** — 실시간 터미널 스트림
-- **SQLite** (mattn/go-sqlite3, WAL 모드) — 에이전트/프로젝트/로그/알림 저장
-- **creack/pty** — 터미널 PTY 관리 (내부 세션 엔진)
+- **SQLite** (modernc.org/sqlite, 순수 Go·cgo 불필요, WAL 모드) — 에이전트/프로젝트/로그/알림 저장
+- **go-pty** — 터미널 PTY 관리 (내부 세션 엔진; mac/Linux는 Unix PTY, Windows는 ConPTY)
 - **fsnotify** — 파일 변경 감지
 - **golang-jwt/jwt v5** — 인증
 - **joho/godotenv** — `.env` 로드
@@ -630,7 +633,7 @@ power-code-deck/
 │                         │                                    │
 │  ┌──────────┐    ┌──────┴───────┐    ┌──────────────────┐   │
 │  │ Agent    │    │ PTY Service  │    │ Watcher Service  │   │
-│  │ Service  │    │ (creack/pty) │    │ (fsnotify)       │   │
+│  │ Service  │    │  (go-pty)    │    │ (fsnotify)       │   │
 │  └──────────┘    └──────┬───────┘    └──────────────────┘   │
 │                         │                                    │
 │  ┌──────────┐    ┌──────┴───────┐    ┌──────────────────┐   │

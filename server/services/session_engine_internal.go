@@ -3,11 +3,10 @@ package services
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
+	"github.com/aymanbagabas/go-pty"
 )
 
 // InternalPtySessionEngine is a SessionEngine that owns each session's process
@@ -15,9 +14,9 @@ import (
 // independently of any viewer, buffers output in a per-session ring buffer, and
 // fans that output out through the OutputHandler.
 //
-// This is the mac/Linux-native path (creack/pty). A later variant can swap
-// creack/pty for go-pty/ConPTY to run natively on Windows, and the same design
-// can move into a separate pcd-sessiond daemon — with no caller change.
+// It uses go-pty, which maps to a Unix PTY on mac/Linux and a ConPTY on
+// Windows, so pcd runs natively on all three with no tmux. The same design can
+// later move into a separate pcd-sessiond daemon — with no caller change.
 //
 // The core invariant:
 //
@@ -31,14 +30,24 @@ type InternalPtySessionEngine struct {
 }
 
 type internalPtySession struct {
-	mu      sync.RWMutex
-	info    SessionInfo
-	req     CreateSessionRequest
-	ptmx    *os.File
-	cmd     *exec.Cmd
-	buffer  *RingBuffer
-	viewers map[string]struct{}
-	status  string
+	mu        sync.RWMutex
+	info      SessionInfo
+	req       CreateSessionRequest
+	pty       pty.Pty
+	cmd       *pty.Cmd
+	buffer    *RingBuffer
+	viewers   map[string]struct{}
+	status    string
+	closeOnce sync.Once
+}
+
+// closePty closes the PTY exactly once (idempotent), unblocking the read pump.
+func (s *internalPtySession) closePty() {
+	s.closeOnce.Do(func() {
+		if s.pty != nil {
+			s.pty.Close()
+		}
+	})
 }
 
 // NewInternalPtySessionEngine builds the engine. scrollbackBytes bounds each
@@ -75,16 +84,22 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 		rows = 24
 	}
 
-	cmd := exec.Command(req.Command, req.Args...)
+	p, err := pty.New()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open pty: %w", err)
+	}
+	// Resize is best-effort; the client sends a real size on attach.
+	_ = p.Resize(cols, rows)
+
+	cmd := p.Command(req.Command, req.Args...)
 	cmd.Dir = req.Cwd
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
 		"LANG=ko_KR.UTF-8",
 		"LC_ALL=ko_KR.UTF-8",
 	)
-
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
-	if err != nil {
+	if err := cmd.Start(); err != nil {
+		p.Close()
 		return nil, fmt.Errorf("failed to start process: %w", err)
 	}
 
@@ -101,7 +116,7 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 			UpdatedAt: now,
 		},
 		req:     req,
-		ptmx:    ptmx,
+		pty:     p,
 		cmd:     cmd,
 		buffer:  NewRingBuffer(e.scrollbackBytes),
 		viewers: make(map[string]struct{}),
@@ -112,11 +127,29 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 	e.sessions[req.ID] = s
 	e.mu.Unlock()
 
-	// Exactly one read pump per session (never one per viewer).
+	// Exactly one read pump per session (never one per viewer), plus a waiter
+	// that detects natural process exit.
 	go e.readPump(s)
+	go e.waitProc(s)
 
 	info := s.snapshotInfo()
 	return &info, nil
+}
+
+// waitProc blocks until the process exits, marks the session exited (unless it
+// was explicitly killed), and closes the PTY to unblock the read pump.
+func (e *InternalPtySessionEngine) waitProc(s *internalPtySession) {
+	if s.cmd != nil {
+		_ = s.cmd.Wait()
+	}
+	s.mu.Lock()
+	if s.status != SessionKilled {
+		s.status = SessionExited
+		s.info.Status = SessionExited
+		s.info.UpdatedAt = time.Now().UTC()
+	}
+	s.mu.Unlock()
+	s.closePty()
 }
 
 // readPump is the single goroutine draining a session's PTY: it appends output
@@ -125,7 +158,7 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 func (e *InternalPtySessionEngine) readPump(s *internalPtySession) {
 	buf := make([]byte, 4096)
 	for {
-		n, err := s.ptmx.Read(buf)
+		n, err := s.pty.Read(buf)
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
@@ -135,18 +168,9 @@ func (e *InternalPtySessionEngine) readPump(s *internalPtySession) {
 			}
 		}
 		if err != nil {
-			break
+			return
 		}
 	}
-
-	s.mu.Lock()
-	if s.status != SessionKilled {
-		s.status = SessionExited
-		s.info.Status = SessionExited
-		s.info.UpdatedAt = time.Now().UTC()
-	}
-	s.mu.Unlock()
-	s.ptmx.Close()
 }
 
 // Attach registers a viewer and returns the scrollback to replay. It NEVER
@@ -190,12 +214,12 @@ func (e *InternalPtySessionEngine) Write(sessionID string, data []byte) error {
 	}
 	s.mu.RLock()
 	running := s.status == SessionRunning
-	ptmx := s.ptmx
+	p := s.pty
 	s.mu.RUnlock()
-	if !running || ptmx == nil {
+	if !running || p == nil {
 		return fmt.Errorf("session %s is not running", sessionID)
 	}
-	_, err := ptmx.Write(data)
+	_, err := p.Write(data)
 	return err
 }
 
@@ -207,12 +231,12 @@ func (e *InternalPtySessionEngine) Resize(sessionID string, cols, rows int) erro
 		return nil
 	}
 	s.mu.RLock()
-	ptmx := s.ptmx
+	p := s.pty
 	s.mu.RUnlock()
-	if ptmx == nil {
+	if p == nil {
 		return nil
 	}
-	return pty.Setsize(ptmx, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
+	return p.Resize(cols, rows)
 }
 
 // Kill terminates the process and PTY. This is the ONLY path that ends a session.
@@ -229,16 +253,13 @@ func (e *InternalPtySessionEngine) Kill(sessionID string) error {
 	s.status = SessionKilled
 	s.info.Status = SessionKilled
 	s.info.UpdatedAt = time.Now().UTC()
-	ptmx := s.ptmx
 	cmd := s.cmd
 	s.mu.Unlock()
 
-	if ptmx != nil {
-		ptmx.Close()
-	}
 	if cmd != nil && cmd.Process != nil {
 		cmd.Process.Kill()
 	}
+	s.closePty()
 	return nil
 }
 

@@ -4,11 +4,13 @@ import (
 	"database/sql"
 	"log"
 
-	_ "github.com/mattn/go-sqlite3"
+	// Pure-Go SQLite driver (no cgo) — lets pcd build without a C toolchain and
+	// cross-compile to native Windows.
+	_ "modernc.org/sqlite"
 )
 
 func Init(dbPath string) *sql.DB {
-	db, err := sql.Open("sqlite3", dbPath+"?_journal=WAL&_foreign_keys=on&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}

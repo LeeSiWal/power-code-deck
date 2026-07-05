@@ -16,10 +16,10 @@ import "time"
 //	           explicit user action) may do this.
 //
 // The concrete implementation is [InternalPtySessionEngine]: `pcd` owns each
-// session's process + PTY directly (creack/pty), with no tmux. The interface is
-// shaped so it can later be swapped for a go-pty/ConPTY variant (native Windows)
-// or a RemoteSessionEngine client that talks to a separate `pcd-sessiond`
-// daemon — with no change to the callers. See docs/session-engine.md.
+// session's process + PTY directly (go-pty: Unix PTY on mac/Linux, ConPTY on
+// Windows), with no tmux. The interface is shaped so it can later be swapped for
+// a RemoteSessionEngine client that talks to a separate `pcd-sessiond` daemon —
+// with no change to the callers. See docs/session-engine.md.
 type SessionEngine interface {
 	// Create starts a new session's underlying process and registers it.
 	Create(req CreateSessionRequest) (*SessionInfo, error)

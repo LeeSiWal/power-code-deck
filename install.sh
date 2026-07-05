@@ -61,13 +61,13 @@ if [ "$OS" = "Darwin" ]; then
 fi
 
 # ── 3. Install base dependencies (Linux) ──
-# git + curl + ca-certificates are needed by this installer, and build-essential
-# provides the C compiler for the CGO SQLite build (go-sqlite3).
-# tmux is NOT installed — PowerCodeDeck uses its internal PTY session engine.
+# git + curl + ca-certificates are all this installer needs. PowerCodeDeck now
+# builds with pure-Go SQLite (modernc) and go-pty, so there is NO cgo / C
+# compiler requirement, and tmux is not used.
 if [ "$OS" = "Linux" ] && command -v apt-get &>/dev/null; then
-    echo "  Installing base dependencies (git, curl, ca-certificates, build tools)..."
+    echo "  Installing base dependencies (git, curl, ca-certificates)..."
     sudo apt-get update -qq
-    sudo apt-get install -y -qq git curl ca-certificates build-essential
+    sudo apt-get install -y -qq git curl ca-certificates
     echo "  ✓ Base dependencies installed"
 fi
 
@@ -126,7 +126,7 @@ cd client && pnpm install --silent && pnpm build
 cd ..
 rm -rf server/static
 cp -r client/dist server/static
-cd server && CGO_ENABLED=1 go build -o "../$BIN_NAME" .
+cd server && CGO_ENABLED=0 go build -o "../$BIN_NAME" .
 cd ..
 
 echo "  ✓ Build complete"

@@ -414,7 +414,7 @@ make build-server   # Go 빌드만 (static/ 임베드)
 
 ## 의존성
 
-**Go:** gorilla/mux, gorilla/websocket, creack/pty, fsnotify, go-sqlite3, golang-jwt, godotenv
+**Go:** gorilla/mux, gorilla/websocket, aymanbagabas/go-pty (PTY/ConPTY), modernc.org/sqlite (pure-Go, no cgo), fsnotify, golang-jwt, godotenv
 
 **Node:** react 18, react-router-dom 6, zustand 4, @xterm/xterm 5, @xterm/addon-fit, react-markdown, remark-gfm, tailwindcss 3, vite 6, typescript 5, eruda (dev)
 
