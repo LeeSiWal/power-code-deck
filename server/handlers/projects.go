@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 
@@ -55,6 +54,9 @@ func DeleteRecentProject(projectSvc *services.ProjectService) http.HandlerFunc {
 func BrowseDir(projectSvc *services.ProjectService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dirPath := r.URL.Query().Get("path")
+		if dirPath == "" {
+			dirPath = projectSvc.DefaultRoot() // e.g. POWERCODEDECK_WORKSPACE_ROOT
+		}
 		entries, err := projectSvc.BrowseDir(dirPath)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -96,8 +98,8 @@ func SearchProjects(projectSvc *services.ProjectService) http.HandlerFunc {
 			return
 		}
 
-		home, _ := os.UserHomeDir()
-		baseDirs := []string{home + "/code", home + "/projects", home + "/Documents"}
+		root := projectSvc.DefaultRoot()
+		baseDirs := []string{root, root + "/code", root + "/projects", root + "/Documents"}
 
 		// Also search custom dirs from query param
 		if extra := r.URL.Query().Get("dirs"); extra != "" {

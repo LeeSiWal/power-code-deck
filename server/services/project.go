@@ -9,7 +9,8 @@ import (
 )
 
 type ProjectService struct {
-	db *sql.DB
+	db            *sql.DB
+	workspaceRoot string // default root for the project browser (optional)
 }
 
 type RecentProject struct {
@@ -36,6 +37,21 @@ type ProjectInfo struct {
 
 func NewProjectService(db *sql.DB) *ProjectService {
 	return &ProjectService{db: db}
+}
+
+// SetWorkspaceRoot sets the default directory the project browser opens at.
+func (s *ProjectService) SetWorkspaceRoot(path string) { s.workspaceRoot = path }
+
+// DefaultRoot returns the configured workspace root, falling back to the user's
+// home directory.
+func (s *ProjectService) DefaultRoot() string {
+	if s.workspaceRoot != "" {
+		return s.workspaceRoot
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
+	}
+	return "/"
 }
 
 func (s *ProjectService) GetRecent(limit int) ([]RecentProject, error) {
@@ -81,11 +97,7 @@ func (s *ProjectService) DeleteRecent(id int) error {
 
 func (s *ProjectService) BrowseDir(dirPath string) ([]DirEntry, error) {
 	if dirPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		dirPath = home
+		dirPath = s.DefaultRoot()
 	}
 
 	entries, err := os.ReadDir(dirPath)

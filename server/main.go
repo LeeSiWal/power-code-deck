@@ -50,6 +50,7 @@ func main() {
 	fileSvc := services.NewFileService()
 	watcherSvc := services.NewWatcherService()
 	projectSvc := services.NewProjectService(database)
+	projectSvc.SetWorkspaceRoot(cfg.WorkspaceRoot) // default project-browser root
 	authSvc := auth.NewAuthService(cfg.AuthEnabled, cfg.AuthMethod, cfg.Pin, cfg.PasswordHash, cfg.JWTSecret)
 	gitSvc := services.NewGitService()
 	portScanner := services.NewPortScanner()
