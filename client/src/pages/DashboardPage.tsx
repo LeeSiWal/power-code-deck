@@ -38,8 +38,9 @@ export function DashboardPage() {
       if (agent?.id) {
         navigate(`/agents/${agent.id}`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to create agent:', err);
+      alert(`에이전트 실행 실패 / Failed to launch agent:\n${err?.message || err}`);
     }
   };
 

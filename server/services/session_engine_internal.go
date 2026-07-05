@@ -3,6 +3,8 @@ package services
 import (
 	"fmt"
 	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,7 +93,8 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 	// Resize is best-effort; the client sends a real size on attach.
 	_ = p.Resize(cols, rows)
 
-	cmd := p.Command(req.Command, req.Args...)
+	command, cmdArgs := windowsShim(req.Command, req.Args)
+	cmd := p.Command(command, cmdArgs...)
 	cmd.Dir = req.Cwd
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
@@ -312,6 +315,22 @@ func (e *InternalPtySessionEngine) List() ([]SessionInfo, error) {
 		out = append(out, s.snapshotInfo())
 	}
 	return out, nil
+}
+
+// windowsShim adapts a command for Windows ConPTY. Windows CreateProcess (used
+// by go-pty's ConPTY) cannot launch batch/script shims like `.cmd`/`.bat`/`.ps1`
+// directly — and npm-installed CLIs (claude, gemini, codex) are `.cmd` shims. So
+// on Windows, unless the command is already an `.exe`, run it through `cmd.exe /c`
+// (which resolves the shim via PATHEXT). No-op on macOS/Linux.
+func windowsShim(command string, args []string) (string, []string) {
+	if runtime.GOOS != "windows" {
+		return command, args
+	}
+	if strings.HasSuffix(strings.ToLower(command), ".exe") {
+		return command, args
+	}
+	shimArgs := append([]string{"/c", command}, args...)
+	return "cmd", shimArgs
 }
 
 func (s *internalPtySession) snapshotInfo() SessionInfo {

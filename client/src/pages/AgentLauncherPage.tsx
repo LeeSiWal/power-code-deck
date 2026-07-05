@@ -11,7 +11,11 @@ export function AgentLauncherPage() {
   const workingDir = decodeURIComponent(encodedPath || '');
 
   const handleLaunch = async (preset: string, name: string, command: string, args: string[]) => {
-    await launchAgent(preset, name, workingDir, command, args);
+    try {
+      await launchAgent(preset, name, workingDir, command, args);
+    } catch (err: any) {
+      alert(`에이전트 실행 실패 / Failed to launch agent:\n${err?.message || err}`);
+    }
   };
 
   return (

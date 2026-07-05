@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## v0.2.3 — cgo-free, natively cross-compilable (incl. Windows .exe)
 
+### Fixed
+- **Native Windows: agents now launch.** Windows `CreateProcess` (used by ConPTY) can't run `.cmd`/`.bat`/`.ps1` shims directly, and npm-installed CLIs (`claude`, `gemini`, `codex`) are `.cmd` shims — so clicking Launch Agent silently did nothing. On Windows the engine now routes non-`.exe` commands through `cmd.exe /c`.
+- Agent-launch failures are now surfaced to the user (alert) instead of only logged to the console, so a failed launch is no longer a silent "no-op".
+
 ### Changed
 - **No more cgo / C toolchain.** SQLite driver switched from `mattn/go-sqlite3` (cgo) to **`modernc.org/sqlite`** (pure Go), and the PTY layer from `creack/pty` (Unix-only) to **`aymanbagabas/go-pty`** (Unix PTY on mac/Linux, **ConPTY on Windows**). `pcd` now builds with `CGO_ENABLED=0` — no gcc/build-essential required.
 - `install.sh` no longer installs `build-essential`; it only needs `git`, `curl`, `ca-certificates`. Builds use `CGO_ENABLED=0`.
