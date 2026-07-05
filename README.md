@@ -9,7 +9,7 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 > **새 소식 (v0.2.2)**
 > - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
 > - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
-> - 🪟 **원클릭 Windows 설치** — 관리자 PowerShell에 한 줄 붙여넣기 + (필요 시) 재부팅이면 끝 ([Windows 설치](#windows-설치-복사-붙여넣기))
+> - 🪟 **Windows 네이티브 설치 (WSL 없이)** — PowerShell에 한 줄 붙여넣으면 네이티브 `pcd.exe`를 받아 바로 실행 ([Windows 네이티브 설치](#windows-네이티브-설치-wsl-없이))
 > - ⚙️ **cgo 없는 네이티브 빌드** — 순수 Go SQLite + go-pty로 전환. gcc/build-essential 불필요, `make build-windows`로 **네이티브 `pcd.exe`** 크로스컴파일 가능
 >
 > 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
@@ -158,18 +158,36 @@ bash install.sh
 
 > `bash install.sh` 는 실행 권한이 없어도 동작합니다. `./install.sh` 로 실행했을 때 `permission denied` 가 뜨면 `chmod +x install.sh` 후 다시 시도하세요.
 
-**Windows:** 아래 [Windows 설치 (복사-붙여넣기)](#windows-설치-복사-붙여넣기) 한 줄이면 됩니다.
+**Windows:** 두 가지 방법이 있습니다 — WSL 없이 바로 실행하는 [네이티브 설치](#windows-네이티브-설치-wsl-없이) (권장, 실험적), 또는 [WSL 설치](#windows-설치-wsl).
 
-설치 스크립트가 자동으로 처리하는 것:
+설치 스크립트가 자동으로 처리하는 것 (macOS/Linux · WSL):
 - Homebrew (macOS) / WSL·Ubuntu (Windows) 설치
 - Go, Node.js, pnpm 설치
 - 프로젝트 빌드
 - `~/.powercodedeck/`에 바이너리 설치
 - 바탕화면 바로가기 생성 (macOS: `.command` + `.app`, Windows: `.bat`)
 
-### Windows 설치 (복사-붙여넣기)
+### Windows 네이티브 설치 (WSL 없이)
 
-> **왜 WSL을 쓰나요?** PowerCodeDeck은 이제 cgo 없이 **네이티브 `pcd.exe`로 크로스컴파일**됩니다(`make build-windows`, go-pty의 ConPTY + 순수 Go SQLite). 다만 이 네이티브 실행 파일은 아직 실제 Windows에서 충분히 검증하지 않았기 때문에, **현재 권장·검증된 설치 경로는 WSL**입니다. 아래 한 줄 방식이 가장 안정적입니다.
+**WSL·가상화·툴체인 전혀 필요 없습니다.** 미리 빌드된 네이티브 `pcd.exe`(go-pty의 ConPTY + 순수 Go SQLite, cgo 없음)를 내려받아 실행합니다.
+
+1. **PowerShell**을 엽니다. (관리자 권한 불필요)
+2. 아래 **한 줄**을 붙여넣고 Enter:
+
+   ```powershell
+   iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-install.ps1 | iex
+   ```
+
+3. 자동으로 `pcd.exe`가 `%USERPROFILE%\.powercodedeck\`에 설치되고 실행됩니다.
+4. 브라우저에서 **<http://localhost:33033>** 접속. 끝. (바탕화면에 **PowerCodeDeck** 바로가기도 생깁니다.)
+
+> - **SmartScreen 경고**가 뜨면 "추가 정보 → 실행"을 누르세요 (서명 안 된 본인 빌드라서 그렇습니다).
+> - ⚠️ **실험적:** 네이티브 빌드는 컴파일·실행은 되지만 ConPTY 세션 런타임을 실제 Windows에서 아직 완전히 검증하지 못했습니다. 터미널 세션이 안 열리면 알려주세요 — 바로 고치겠습니다. 완전히 검증된 경로는 아래 WSL 방식입니다.
+> - 직접 소스에서 빌드하려면: Go + Node를 설치하고 `make build-windows` → `pcd.exe`.
+
+### Windows 설치 (WSL)
+
+> **언제 이 방식?** 네이티브 설치가 안 되거나, 완전히 검증된 안정 경로를 원할 때. 내부적으로 WSL의 Ubuntu에서 `pcd`를 실행합니다.
 
 개발 경험이 없어도 됩니다. **복사-붙여넣기 + (필요하면) 재부팅 한 번**이면 끝납니다.
 
