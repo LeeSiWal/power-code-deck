@@ -128,12 +128,16 @@ if (-not (Test-DistroRuns)) {
 
     if (-not (Test-DistroRuns)) {
         Write-Host ""
-        Say "Ubuntu still could not start. Two ways to fix it:" Red
-        Say "A) Enable virtualization in your BIOS/UEFI (Intel VT-x or AMD SVM)," Gray
-        Say "   save, reboot, then run this command again." Gray
-        Say "B) Force WSL1 manually, then re-run:" Gray
-        Say "     wsl --set-default-version 1" Cyan
-        Say "     wsl --install --no-launch -d Ubuntu" Cyan
+        Say "WSL2 installation failed." Red
+        Say "This is usually because virtualization is disabled in BIOS/UEFI." Yellow
+        Write-Host ""
+        Say "Please enable virtualization:" White
+        Say "  - Intel: Intel VT-x / Virtualization Technology" Gray
+        Say "  - AMD:   SVM Mode / AMD-V" Gray
+        Say "Then reboot Windows and run this installer again." White
+        Write-Host ""
+        Say "(Check current state: Task Manager > Performance > CPU > Virtualization.)" Gray
+        Say "More help: https://github.com/LeeSiWal/power-code-deck/blob/main/docs/windows.md" Gray
         return
     }
     Say "OK - running on WSL1." Green
