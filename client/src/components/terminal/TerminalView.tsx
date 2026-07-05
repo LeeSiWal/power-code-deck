@@ -82,6 +82,17 @@ async function readClipboard(): Promise<string> {
   return '';
 }
 
+/** Decode a base64 payload as UTF-8 (so Korean in an OSC 52 sequence survives). */
+function decodeBase64Utf8(b64: string): string {
+  try {
+    const bin = atob(b64.trim());
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return '';
+  }
+}
+
 interface TerminalViewProps {
   agentId: string;
   fontSize?: number;
@@ -260,6 +271,25 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       const text = await readClipboard();
       if (text) agentDeckWS.send('terminal:pasteOnly', { agentId, text, mode: 'bracketed-paste' });
     };
+
+    // OSC 52 — apps like Claude Code copy the mouse selection to the system
+    // clipboard by emitting an OSC 52 sequence ("sent N chars via OSC 52").
+    // xterm ignores it by default, so a plain drag never reached the clipboard.
+    // Handle it here → a normal drag copies without needing Option/Shift.
+    terminal.parser.registerOscHandler(52, (data) => {
+      const semi = data.indexOf(';');           // "c;<base64>" → payload after ';'
+      const payload = semi === -1 ? data : data.slice(semi + 1);
+      if (!payload || payload === '?') return true; // query, not a set — ignore
+      const text = decodeBase64Utf8(payload);
+      if (text) {
+        writeClipboard(text).then((ok) => {
+          if (!ok) return;
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1200);
+        });
+      }
+      return true; // handled
+    });
     terminal.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
       const isCopy =
@@ -613,10 +643,19 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
           onTouchStart={(e) => { e.preventDefault(); copySelection(); }}
           className="absolute bottom-2 right-2 z-20 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-lg
                      touch-manipulation active:opacity-70 bg-deck-accent text-white"
-          title="선택 영역 복사 (⌘C / Ctrl+Shift+C). TUI에서는 ⌥(Option)·Shift 누른 채 드래그하면 선택됩니다."
+          title="선택 영역 복사 (⌘C / Ctrl+Shift+C). TUI에서는 그냥 드래그해도 복사됩니다."
         >
           {copied ? '복사됨 ✓' : '복사'}
         </button>
+      )}
+
+      {/* OSC 52 copy feedback — a plain drag in a TUI copies with no xterm
+          selection, so show a transient confirmation instead of the button. */}
+      {copied && !hasSelection && (
+        <div className="absolute bottom-2 right-2 z-20 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-lg
+                        pointer-events-none bg-deck-accent text-white">
+          복사됨 ✓
+        </div>
       )}
     </div>
   );
