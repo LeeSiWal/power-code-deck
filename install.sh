@@ -121,22 +121,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo ""
 echo "  Building PowerCodeDeck..."
 
-# Build the frontend. Try pnpm; fall back to npm (which ships with Node) if
-# pnpm fails. NOT using `A && B` here — that hides a failing install from
-# `set -e` and leaves client/dist missing.
+# Build the frontend with npm from a clean node_modules. We deliberately avoid
+# pnpm here: pnpm 10 blocks dependency build scripts by default
+# (ERR_PNPM_IGNORED_BUILDS), so esbuild's native binary never gets set up and
+# vite build fails. npm runs those build scripts normally. Starting clean also
+# avoids npm choking on a pnpm-created node_modules.
 cd "$SCRIPT_DIR/client"
-BUILT=0
-if command -v pnpm &>/dev/null; then
-    echo "  Installing client dependencies (pnpm)..."
-    if pnpm install --no-frozen-lockfile && pnpm build; then
-        BUILT=1
-    fi
-fi
-if [ "$BUILT" != "1" ]; then
-    echo "  Building client with npm..."
-    npm install
-    npm run build
-fi
+echo "  Installing client dependencies + building (npm)..."
+rm -rf node_modules
+npm install --no-audit --no-fund
+npm run build
 
 cd "$SCRIPT_DIR"
 if [ ! -d client/dist ]; then
