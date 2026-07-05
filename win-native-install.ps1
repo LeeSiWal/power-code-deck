@@ -1,5 +1,5 @@
 # ================================================================
-#  PowerCodeDeck - Native Windows installer (NO WSL)
+#  PowerCodeDeck - Native Windows installer
 #
 #  Usage (normal PowerShell — admin not required):
 #    iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-native-install.ps1 | iex
@@ -32,7 +32,6 @@ $Exe = Join-Path $InstallDir 'pcd.exe'
 Write-Host ""
 Write-Host "  ================================================" -ForegroundColor Cyan
 Write-Host "     PowerCodeDeck  Native Windows Installer" -ForegroundColor Cyan
-Write-Host "     (no WSL)" -ForegroundColor Cyan
 Write-Host "  ================================================" -ForegroundColor Cyan
 Write-Host ""
 

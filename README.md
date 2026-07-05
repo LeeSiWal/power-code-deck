@@ -9,7 +9,7 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 > **새 소식 (v0.2.2)**
 > - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
 > - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
-> - 🪟 **Windows 네이티브 설치 (WSL 없이)** — PowerShell에 한 줄 붙여넣으면 네이티브 `pcd.exe`를 받아 바로 실행 ([Windows 네이티브 설치](#windows-네이티브-설치-wsl-없이))
+> - 🪟 **Windows 네이티브 설치** — PowerShell에 한 줄 붙여넣으면 네이티브 `pcd.exe`를 받아 바로 실행 ([Windows 설치 (네이티브)](#windows-설치-네이티브))
 > - ⚙️ **cgo 없는 네이티브 빌드** — 순수 Go SQLite + go-pty로 전환. gcc/build-essential 불필요, `make build-windows`로 **네이티브 `pcd.exe`** 크로스컴파일 가능
 >
 > 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
@@ -158,7 +158,7 @@ bash install.sh
 
 > `bash install.sh` 는 실행 권한이 없어도 동작합니다. `./install.sh` 로 실행했을 때 `permission denied` 가 뜨면 `chmod +x install.sh` 후 다시 시도하세요.
 
-**Windows:** 두 가지 방법이 있습니다 — WSL 없이 바로 실행하는 [네이티브 설치](#windows-네이티브-설치-wsl-없이) (권장, 실험적), 또는 [WSL 설치](#windows-설치-wsl).
+**Windows:** 두 가지 방법이 있습니다 — 바로 실행하는 [네이티브 설치](#windows-설치-네이티브) (권장, 실험적), 또는 [WSL 설치](#windows-설치-wsl).
 
 설치 스크립트가 자동으로 처리하는 것 (macOS/Linux · WSL):
 - Homebrew (macOS) / WSL·Ubuntu (Windows) 설치
@@ -167,9 +167,9 @@ bash install.sh
 - `~/.powercodedeck/`에 바이너리 설치
 - 바탕화면 바로가기 생성 (macOS: `.command` + `.app`, Windows: `.bat`)
 
-### Windows 네이티브 설치 (WSL 없이)
+### Windows 설치 (네이티브)
 
-**WSL·가상화·툴체인 전혀 필요 없습니다.** 미리 빌드된 네이티브 `pcd.exe`(go-pty의 ConPTY + 순수 Go SQLite, cgo 없음)를 내려받아 실행합니다.
+**가상화·툴체인·별도 런타임 없이** 바로 실행되는 단일 실행 파일입니다. 미리 빌드된 네이티브 `pcd.exe`(go-pty의 ConPTY + 순수 Go SQLite, cgo 없음)를 내려받아 실행합니다.
 
 1. **PowerShell**을 엽니다. (관리자 권한 불필요)
 2. 아래 **한 줄**을 붙여넣고 Enter:
