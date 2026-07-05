@@ -22,7 +22,7 @@ $RepoRaw = 'https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-
 try {
     cmd /c "chcp 65001 >nul" 2>$null | Out-Null
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    # UTF-8 WITHOUT BOM for piping to wsl/bash — a BOM would break the first
+    # UTF-8 WITHOUT BOM for piping to wsl/bash - a BOM would break the first
     # line of the piped shell script ("set: command not found").
     $OutputEncoding = New-Object System.Text.UTF8Encoding $false
 } catch {}
@@ -77,6 +77,52 @@ function Test-DistroRuns {
         $out = (wsl -d Ubuntu -u root -- echo pcd-ok) 2>$null
         return ("$out" -match 'pcd-ok')
     } catch { return $false }
+}
+
+# Set up same-Wi-Fi mobile handoff: detect the Windows LAN IP + WSL IP, write
+# BIND_HOST/LAN_URL into the WSL .env, and forward the port + open the firewall.
+function Setup-LanHandoff {
+    $port = 33033
+    $lanIp = $null
+    try {
+        $lanIp = (Get-NetIPConfiguration | Where-Object {
+                $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' -and
+                $_.InterfaceAlias -notmatch 'WSL|Loopback|vEthernet'
+            } | Select-Object -First 1).IPv4Address.IPAddress
+    } catch {}
+    if (-not $lanIp) { Say "LAN handoff: no LAN IP detected; skipping." Yellow; return }
+    $wslIp = ((wsl hostname -I) -split '\s+' | Where-Object { $_ }) | Select-Object -First 1
+    if (-not $wslIp) { return }
+    $lanUrl = "http://${lanIp}:$port"
+
+    $bash = @"
+mkdir -p ~/.powercodedeck; cd ~/.powercodedeck; touch .env
+grep -v '^POWERCODEDECK_BIND_HOST=' .env 2>/dev/null | grep -v '^POWERCODEDECK_LAN_URL=' > .env.tmp || true
+mv .env.tmp .env
+printf 'POWERCODEDECK_BIND_HOST=0.0.0.0\n' >> .env
+printf 'POWERCODEDECK_LAN_URL=$lanUrl\n' >> .env
+"@
+    $b = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($bash -replace "`r`n", "`n")))
+    wsl -d Ubuntu -u root -- bash -lc "echo $b | base64 -d | bash"
+
+    netsh interface portproxy delete v4tov4 listenport=$port listenaddress=0.0.0.0 2>$null | Out-Null
+    netsh interface portproxy add v4tov4 listenport=$port listenaddress=0.0.0.0 connectport=$port connectaddress=$wslIp | Out-Null
+    netsh advfirewall firewall delete rule name="PowerCodeDeck $port" 2>$null | Out-Null
+    netsh advfirewall firewall add rule name="PowerCodeDeck $port" dir=in action=allow protocol=TCP localport=$port | Out-Null
+    Say "LAN handoff ready - phones on this Wi-Fi can open:  $lanUrl" Green
+    Say "(WSL IP changes on reboot - re-run to refresh mobile access.)" Gray
+}
+
+# Ensure we run as Administrator. WSL feature install, port forwarding and the
+# firewall rule all need it - relaunch elevated (UAC) if we aren't.
+if (-not (Test-Admin)) {
+    Write-Host "  Requesting administrator rights (UAC)..." -ForegroundColor Yellow
+    try {
+        Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-Command', "iwr -useb $RepoRaw | iex"
+    } catch {
+        Write-Host "  Elevation cancelled. Right-click PowerShell > 'Run as administrator', then retry." -ForegroundColor Red
+    }
+    return
 }
 
 Write-Host ""
@@ -182,7 +228,12 @@ if ($LASTEXITCODE -ne 0) {
     return
 }
 
-# -- 4. Done --
+# -- 4. LAN handoff (same Wi-Fi mobile access) --
+Write-Host ""
+Say "Setting up LAN handoff (mobile on same Wi-Fi)..." Yellow
+Setup-LanHandoff
+
+# -- 5. Done --
 Write-Host ""
 Write-Host "  ================================================" -ForegroundColor Green
 Say "Done! PowerCodeDeck is installed." Green
