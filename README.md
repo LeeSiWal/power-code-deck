@@ -27,23 +27,43 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 
 ## 빠른 시작
 
-**macOS / Linux** — 터미널에 붙여넣기:
+### macOS / Linux
+
+**① 설치** — 터미널에 붙여넣기:
 
 ```bash
 git clone https://github.com/LeeSiWal/power-code-deck.git && cd power-code-deck && bash install.sh
 ```
 
-**Windows** — **관리자** PowerShell에 붙여넣기:
+**② 실행** — 설치 마지막에 `Launch now? [Y/n]`이 나오면 **Y**. 나중에 다시 켜려면:
+
+```bash
+~/.powercodedeck/pcd
+```
+
+**③ 접속** — 브라우저가 자동으로 열립니다. 안 열리면 **<http://localhost:33033>** 로 접속.
+
+### Windows (WSL)
+
+**① 설치** — **관리자** PowerShell에 붙여넣기:
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-install.ps1 | iex
 ```
 
-설치가 끝나면 브라우저에서 **<http://localhost:33033>** 이 열립니다. 끝.
+> 처음이면 WSL 설치로 **재부팅이 한 번** 필요할 수 있어요 → `Reboot now? [Y/n]`에 **Y**. 재부팅 후 로그인하면 설치가 자동으로 이어집니다.
+
+**② 실행** — `Done!` 이 뜨면 PowerShell에 붙여넣기:
+
+```powershell
+wsl -d Ubuntu -u root -- bash -lc "cd ~/.powercodedeck && ./pcd"
+```
+
+**③ 접속** — 브라우저가 자동으로 열립니다. 안 열리면 **<http://localhost:33033>** 로 접속. (끄려면 그 창에서 **Ctrl+C**)
 
 > - 실행하려는 CLI(`claude` / `gemini` / `codex`)는 **미리 설치**돼 있어야 합니다 → [사전 요구사항](#사전-요구사항)
-> - Windows는 WSL(리눅스) 위에서 실행합니다. 처음이면 재부팅이 한 번 필요할 수 있어요(스크립트가 안내·자동 재개).
-> - 네이티브 `pcd.exe`로 쓰고 싶다면(Smart App Control 필요) 아래 [설치](#설치)의 Windows 항목을 참고하세요.
+> - WSL2는 BIOS에서 **가상화가 켜져 있어야** 합니다. 실패 시 [가상화 설정](#가상화-설정이-필요한-경우) 참고.
+> - 네이티브 `pcd.exe`로 쓰고 싶다면(Smart App Control 해제 필요) 아래 [설치](#설치)의 Windows 항목을 참고하세요.
 
 ---
 
