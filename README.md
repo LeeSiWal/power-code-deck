@@ -158,7 +158,7 @@ bash install.sh
 
 > `bash install.sh` 는 실행 권한이 없어도 동작합니다. `./install.sh` 로 실행했을 때 `permission denied` 가 뜨면 `chmod +x install.sh` 후 다시 시도하세요.
 
-**Windows:** 두 가지 방법이 있습니다 — 바로 실행하는 [네이티브 설치](#windows-설치-네이티브) (권장, 실험적), 또는 [WSL 설치](#windows-설치-wsl).
+**Windows:** 두 가지 방법이 있습니다 — 바로 실행하는 [네이티브 설치](#windows-설치-네이티브) (권장), 또는 [WSL 설치](#windows-설치-wsl).
 
 설치 스크립트가 자동으로 처리하는 것 (macOS/Linux · WSL):
 - Homebrew (macOS) / WSL·Ubuntu (Windows) 설치
@@ -182,7 +182,8 @@ bash install.sh
 4. 브라우저에서 **<http://localhost:33033>** 접속. 끝. (바탕화면에 **PowerCodeDeck** 바로가기도 생깁니다.)
 
 > - **SmartScreen 경고**가 뜨면 "추가 정보 → 실행"을 누르세요 (서명 안 된 본인 빌드라서 그렇습니다).
-> - ⚠️ **실험적:** 네이티브 빌드는 컴파일·실행은 되지만 ConPTY 세션 런타임을 실제 Windows에서 아직 완전히 검증하지 못했습니다. 터미널 세션이 안 열리면 알려주세요 — 바로 고치겠습니다. 완전히 검증된 경로는 아래 WSL 방식입니다.
+> - **동작 확인됨:** 실제 Windows에서 네이티브 ConPTY 세션으로 Claude Code 실행을 확인했습니다. (아직 새로운 경로이니 문제가 있으면 알려주세요.) 더 오래 검증된 대안은 아래 WSL 방식입니다.
+> - CLI(`claude`/`gemini`/`codex`)는 미리 설치돼 있어야 합니다: `npm install -g @anthropic-ai/claude-code` 등. 설치 후 pcd를 다시 실행하세요.
 > - 직접 소스에서 빌드하려면: Go + Node를 설치하고 `make build-windows` → `pcd.exe`.
 
 ### Windows 설치 (WSL)

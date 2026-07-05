@@ -37,12 +37,22 @@ Write-Host ""
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
+# Stop any running instance — Windows can't overwrite a running .exe.
+$running = Get-Process pcd -ErrorAction SilentlyContinue
+if ($running) {
+    Say "Closing the running PowerCodeDeck to update it..." Yellow
+    $running | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 700
+}
+
 Say "Downloading pcd.exe ..." Yellow
+# Cache-buster query so a CDN doesn't serve a stale build.
+$url = "$RepoRaw`?nc=$(Get-Random)"
 try {
-    Invoke-WebRequest -UseBasicParsing -Uri $RepoRaw -OutFile $Exe
+    Invoke-WebRequest -UseBasicParsing -Uri $url -Headers @{ 'Cache-Control' = 'no-cache' } -OutFile $Exe
 } catch {
     Say "Download failed: $($_.Exception.Message)" Red
-    Say "Check your internet connection and try again." Gray
+    Say "Close any running pcd.exe (Task Manager) and try again." Gray
     return
 }
 $sizeMB = [math]::Round((Get-Item $Exe).Length / 1MB, 1)
