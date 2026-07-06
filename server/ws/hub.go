@@ -196,7 +196,17 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return
 		}
-		h.watcherSvc.Watch(payload.AgentID, payload.Path)
+		// The client only knows the agent id; resolve its working dir here so it
+		// need not track the (server-side) project path.
+		path := payload.Path
+		if path == "" && h.agentSvc != nil {
+			if wd, err := h.agentSvc.GetWorkingDir(payload.AgentID); err == nil {
+				path = wd
+			}
+		}
+		if path != "" {
+			h.watcherSvc.Watch(payload.AgentID, path)
+		}
 
 	case EventFileUnwatch:
 		var payload FileWatchPayload

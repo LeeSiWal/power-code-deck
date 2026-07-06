@@ -36,19 +36,36 @@ export function useFileExplorer(agentId: string | null) {
     fetchTree();
   }, [fetchTree]);
 
-  // Watch for file changes
+  // Ask the server to watch this agent's project dir (recursively) and re-arm
+  // on reconnect. Without this the file tree only reflects client-initiated
+  // changes — files an agent (or anything else) creates never appear live.
   useEffect(() => {
     if (!agentId) return;
+    const start = () => agentDeckWS.send('file:watch', { agentId });
+    start();
+    const unsubOpen = agentDeckWS.on('open', start);
+    return () => {
+      agentDeckWS.send('file:unwatch', { agentId });
+      unsubOpen();
+    };
+  }, [agentId]);
 
+  // Refresh the tree on file changes. Debounce so a burst (e.g. a code-gen or
+  // many files at once) coalesces into a single refetch.
+  useEffect(() => {
+    if (!agentId) return;
+    let timer: number | undefined;
     const unsub = agentDeckWS.on('file:changed', (change: any) => {
       setChangedFiles((prev) => new Set([...prev, change.path]));
-      // Auto-refresh tree on create/remove
-      if (change.operation === 'create' || change.operation === 'remove') {
-        fetchTree();
+      if (change.operation === 'create' || change.operation === 'remove' || change.operation === 'rename') {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => fetchTree(), 300);
       }
     });
-
-    return unsub;
+    return () => {
+      window.clearTimeout(timer);
+      unsub();
+    };
   }, [agentId, fetchTree]);
 
   const openFile = useCallback(
