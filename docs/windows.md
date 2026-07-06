@@ -33,14 +33,14 @@ automatically after you log back in. When it prints `Done!`, double-click the
 
 ### Windows desktop shortcuts
 
-After installation, PowerCodeDeck creates three desktop shortcuts so you never
-have to type a WSL path:
+After installation, a **`PowerCodeDeck` folder** appears on your Desktop with
+three shortcuts inside, so you never have to type a WSL path:
 
 | Shortcut | Description |
 |---|---|
-| **PowerCodeDeck 실행** | Starts PowerCodeDeck and opens the web UI |
-| **PowerCodeDeck 작업폴더** | Opens the WSL project folder in Windows Explorer |
-| **PowerCodeDeck VSCode로 열기** | Opens the workspace using VS Code Remote WSL |
+| **실행** (Run) | Starts PowerCodeDeck and opens the web UI |
+| **작업폴더** (Workspace) | Opens the WSL project folder in Windows Explorer |
+| **VSCode로 열기** (VS Code) | Opens the workspace using VS Code Remote WSL |
 
 PowerCodeDeck runs as a **normal Linux user** (not root — derived from your
 Windows username, or `pcduser`) and stores projects **inside WSL** for

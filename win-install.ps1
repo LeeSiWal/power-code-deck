@@ -355,35 +355,43 @@ if ("`$has".Trim() -eq 'yes') {
     # Build the Korean labels from Unicode code points. Raw Korean string
     # literals can arrive as "?" through `iwr | iex` (source-encoding loss), and
     # "?" is an illegal filename char that makes .Save() fail. Code points are
-    # pure ASCII in the source, so they survive any download encoding.
-    $lblRun  = 'PowerCodeDeck ' + (-join ([char[]](0xC2E4,0xD589)))               # 실행
-    $lblWork = 'PowerCodeDeck ' + (-join ([char[]](0xC791,0xC5C5,0xD3F4,0xB354))) # 작업폴더
-    $lblCode = 'PowerCodeDeck VSCode' + [char]0xB85C + ' ' + (-join ([char[]](0xC5F4,0xAE30)))  # VSCode로 열기
-    $lblOld  = 'PowerCodeDeck ' + (-join ([char[]](0xB370,0xC774,0xD130,0x20,0xD3F4,0xB354)))   # 데이터 폴더
+    # pure ASCII in the source, so they survive any download encoding. Short
+    # names — the containing "PowerCodeDeck" folder already provides the brand.
+    $lblRun  = -join ([char[]](0xC2E4,0xD589))                             # 실행
+    $lblWork = -join ([char[]](0xC791,0xC5C5,0xD3F4,0xB354))               # 작업폴더
+    $lblCode = 'VSCode' + [char]0xB85C + ' ' + (-join ([char[]](0xC5F4,0xAE30)))  # VSCode로 열기
+    $lblOld  = 'PowerCodeDeck ' + (-join ([char[]](0xB370,0xC774,0xD130,0x20,0xD3F4,0xB354)))   # old loose "PowerCodeDeck 데이터 폴더"
 
     $made = @()
     foreach ($dir in $desktops) {
-        # Clean up older shortcuts (ASCII + the old Korean "데이터 폴더").
-        Remove-Item -LiteralPath (Join-Path $dir 'PowerCodeDeck.lnk') -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath (Join-Path $dir "$lblOld.lnk")       -ErrorAction SilentlyContinue
+        # Remove older LOOSE shortcuts from the desktop root (pre-folder layout).
+        Remove-Item -LiteralPath (Join-Path $dir 'PowerCodeDeck.lnk')                        -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $dir "$lblOld.lnk")                              -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $dir "PowerCodeDeck $lblRun.lnk")                -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $dir ('PowerCodeDeck ' + $lblWork + '.lnk'))     -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $dir ('PowerCodeDeck ' + $lblCode + '.lnk'))     -ErrorAction SilentlyContinue
 
-        $s1 = $ws.CreateShortcut((Join-Path $dir "$lblRun.lnk"))
+        # Group all 3 shortcuts inside a single "PowerCodeDeck" folder.
+        $grp = Join-Path $dir 'PowerCodeDeck'
+        New-Item -ItemType Directory -Force -Path $grp | Out-Null
+
+        $s1 = $ws.CreateShortcut((Join-Path $grp "$lblRun.lnk"))
         $s1.TargetPath   = 'powershell.exe'
         $s1.Arguments    = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$appDir\launch-powercodedeck.ps1`""
         $s1.IconLocation = "$env:SystemRoot\System32\wsl.exe,0"
         $s1.Save()
 
-        $s2 = $ws.CreateShortcut((Join-Path $dir "$lblWork.lnk"))
+        $s2 = $ws.CreateShortcut((Join-Path $grp "$lblWork.lnk"))
         $s2.TargetPath = 'explorer.exe'
         $s2.Arguments  = $projUnc
         $s2.Save()
 
-        $s3 = $ws.CreateShortcut((Join-Path $dir "$lblCode.lnk"))
+        $s3 = $ws.CreateShortcut((Join-Path $grp "$lblCode.lnk"))
         $s3.TargetPath = 'powershell.exe'
         $s3.Arguments  = "-NoProfile -ExecutionPolicy Bypass -File `"$appDir\open-vscode-wsl.ps1`""
         $s3.Save()
 
-        $made += $dir
+        $made += $grp
     }
     if ($programs -and (Test-Path $programs)) {
         Remove-Item -LiteralPath (Join-Path $programs 'PowerCodeDeck.lnk') -ErrorAction SilentlyContinue
@@ -396,7 +404,7 @@ if ("`$has".Trim() -eq 'yes') {
     Set-Content -Path (Join-Path $winApps 'pcd.cmd') -Value "@echo off`r`nwsl -d Ubuntu -u $LinuxUser -- bash -lc `"cd ~/PowerCodeDeck && ./pcd`"" -Encoding ASCII
 
     if ($made.Count -gt 0) {
-        Say "Created 3 shortcuts (Run / Workspace / Open in VS Code) in:" Green
+        Say "Created a 'PowerCodeDeck' folder on your Desktop (Run / Workspace / VS Code):" Green
         foreach ($m in $made) { Write-Host "    $m" -ForegroundColor Gray }
     } else {
         Say "No Desktop folder found. Start with the 'pcd' command instead." Yellow
@@ -414,7 +422,7 @@ Write-Host "  ================================================" -ForegroundColor
 Say "Done! PowerCodeDeck is installed (Linux user: $LinuxUser)." Green
 Write-Host "  ================================================" -ForegroundColor Green
 Write-Host ""
-Say "Three shortcuts are on your Desktop:" White
+Say "Open the 'PowerCodeDeck' folder on your Desktop - it holds 3 shortcuts:" White
 Write-Host "    [Run]        start + open the web UI" -ForegroundColor Cyan
 Write-Host "    [Workspace]  open the projects folder in Explorer" -ForegroundColor Cyan
 Write-Host "    [VS Code]    open projects in VS Code (Remote WSL)" -ForegroundColor Cyan

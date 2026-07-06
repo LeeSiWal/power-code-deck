@@ -53,15 +53,15 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 
 > 처음이면 WSL 설치로 **재부팅이 한 번** 필요할 수 있어요 → `Reboot now? [Y/n]`에 **Y**. 재부팅 후 로그인하면 설치가 자동으로 이어집니다.
 
-**② 실행** — 설치가 끝나면 **바탕화면에 바로가기 3개**가 생깁니다:
+**② 실행** — 설치가 끝나면 바탕화면에 **`PowerCodeDeck` 폴더**가 생기고, 그 안에 바로가기 3개가 있습니다:
 
 | 바로가기 | 동작 |
 |---|---|
-| **PowerCodeDeck 실행** | 서버를 켜고 브라우저를 엽니다 |
-| **PowerCodeDeck 작업폴더** | 프로젝트 폴더를 Windows 탐색기로 엽니다 |
-| **PowerCodeDeck VSCode로 열기** | VS Code(Remote WSL)로 프로젝트를 엽니다 |
+| **실행** | 서버를 켜고 브라우저를 엽니다 |
+| **작업폴더** | 프로젝트 폴더를 Windows 탐색기로 엽니다 |
+| **VSCode로 열기** | VS Code(Remote WSL)로 프로젝트를 엽니다 |
 
-**PowerCodeDeck 실행**을 더블클릭하세요. (터미널에서 `pcd` 한 단어로도 실행됩니다.)
+폴더 안의 **실행**을 더블클릭하세요. (터미널에서 `pcd` 한 단어로도 실행됩니다.)
 
 **③ 접속** — 브라우저가 자동으로 열립니다. 안 열리면 **<http://localhost:33033>** 로 접속.
 
@@ -228,18 +228,18 @@ Windows에서 로컬로 쓰는 **권장 경로**입니다. 이 스크립트는 *
    ```
 
 3. WSL 설치가 처음이라 **재부팅이 필요하면** `Reboot now? [Y/n]` → **`Y`**. 재부팅 후 로그인하면 **설치가 자동으로 이어집니다.**
-4. `Done!` 이 뜨면 바탕화면의 **`PowerCodeDeck 실행`** 을 더블클릭 (또는 터미널에서 `pcd`).
+4. `Done!` 이 뜨면 바탕화면 **`PowerCodeDeck` 폴더** 안의 **실행**을 더블클릭 (또는 터미널에서 `pcd`).
 5. 브라우저에서 **<http://localhost:33033>** 접속. 끝.
 
 ##### Windows 바탕화면 바로가기
 
-설치가 끝나면 바탕화면에 다음 3개가 생성됩니다 — WSL 경로를 몰라도 됩니다.
+설치가 끝나면 바탕화면에 **`PowerCodeDeck` 폴더**가 생기고, 그 안에 다음 3개가 들어 있습니다 — WSL 경로를 몰라도 됩니다.
 
 | 바로가기 | 설명 |
 |---|---|
-| **PowerCodeDeck 실행** | PowerCodeDeck을 실행하고 웹 화면을 엽니다 |
-| **PowerCodeDeck 작업폴더** | WSL 내부 프로젝트 폴더를 Windows 탐색기로 엽니다 |
-| **PowerCodeDeck VSCode로 열기** | VS Code(Remote WSL)로 작업폴더를 엽니다 |
+| **실행** | PowerCodeDeck을 실행하고 웹 화면을 엽니다 |
+| **작업폴더** | WSL 내부 프로젝트 폴더를 Windows 탐색기로 엽니다 |
+| **VSCode로 열기** | VS Code(Remote WSL)로 작업폴더를 엽니다 |
 
 - PowerCodeDeck은 **root가 아니라 일반 Linux 사용자**로 실행됩니다(Windows 사용자명에서 자동 생성, 불가하면 `pcduser`).
 - 프로젝트는 **속도와 파일 자동갱신(inotify)** 을 위해 C드라이브가 아닌 **WSL 홈**에 저장됩니다.
