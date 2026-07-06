@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useProjects } from '../../hooks/useProjects';
 import { useProjectLauncher } from '../../hooks/useProjectLauncher';
 import { useDevice } from '../../hooks/useDevice';
-import { IconFolder, IconFolderOpen, IconPlay, IconPlus, IconBack, IconRocket } from '../icons';
+import { IconFolder, IconFolderOpen, IconChevronRight, IconPlus, IconBack, IconRocket } from '../icons';
 import { CreateProjectSheet } from './CreateProjectSheet';
 
 function timeAgo(dateStr: string): string {
@@ -82,39 +82,45 @@ export function ProjectSelector() {
         </button>
 
         {showBrowser && (
-          <div className="mt-2 rounded-lg max-h-64 overflow-y-auto card">
-            <div className="px-3 py-1.5 flex items-center gap-2 border-b border-deck-border">
-              <span className="text-xs truncate flex-1 font-mono text-deck-text-dim">{browsePath}</span>
+          <div className="mt-2 rounded-lg max-h-72 overflow-y-auto card">
+            {/* Current folder bar: go up, and open THIS folder as the project.
+                Clicking a row below navigates into it (VSCode "Open Folder"). */}
+            <div className="px-3 py-2 flex items-center gap-2 border-b border-deck-border sticky top-0 bg-deck-surface z-10">
               {browsePath && (
                 <button onClick={() => browse(browsePath.split('/').slice(0, -1).join('/') || '/')}
-                        className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded hover:bg-deck-border/30">
+                        className="flex items-center gap-1 text-xs px-1.5 py-1 rounded hover:bg-deck-border/30 shrink-0"
+                        title="Up one folder">
                   <IconBack size={10} /> Up
                 </button>
               )}
+              <span className="text-xs truncate flex-1 font-mono text-deck-text-dim">{browsePath || '/'}</span>
+              <button
+                onClick={() => browsePath && launchProject(browsePath)}
+                disabled={!browsePath}
+                className="px-2.5 py-1 rounded flex items-center gap-1 text-xs font-medium shrink-0 btn-primary disabled:opacity-40"
+                title="현재 폴더를 프로젝트로 열기"
+              >
+                <IconFolderOpen size={12} color="#fff" /> 이 폴더 열기
+              </button>
             </div>
             {loading ? (
               <div className="p-4 text-center text-xs text-deck-text-dim">Loading...</div>
             ) : (
               <div className="py-0.5">
                 {browseEntries.filter(e => e.isDir).map((entry) => (
-                  <div key={entry.path} className="flex items-center group hover:bg-deck-border/30">
-                    <button
-                      onClick={() => browse(entry.path)}
-                      className="flex-1 text-left px-3 py-1.5 text-sm truncate flex items-center gap-2"
-                    >
-                      <IconFolder size={14} />
-                      <span className="truncate">{entry.name}</span>
-                    </button>
-                    <button
-                      onClick={() => launchProject(entry.path)}
-                      className="mr-2 px-2 py-1 rounded flex items-center gap-1 text-xs font-medium shrink-0 btn-primary"
-                    >
-                      <IconPlay size={10} color="#fff" /> Open
-                    </button>
-                  </div>
+                  <button
+                    key={entry.path}
+                    onClick={() => browse(entry.path)}
+                    className="w-full text-left px-3 py-1.5 text-sm truncate flex items-center gap-2 hover:bg-deck-border/30"
+                    title="폴더 안으로 이동"
+                  >
+                    <IconFolder size={14} />
+                    <span className="truncate flex-1">{entry.name}</span>
+                    <IconChevronRight size={12} color="#64748b" />
+                  </button>
                 ))}
                 {browseEntries.filter(e => e.isDir).length === 0 && (
-                  <div className="p-3 text-center text-xs text-deck-text-dim">No subdirectories</div>
+                  <div className="p-3 text-center text-xs text-deck-text-dim">하위 폴더 없음 — 위의 '이 폴더 열기'로 여세요</div>
                 )}
               </div>
             )}
