@@ -27,13 +27,38 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 
 This installer uses **WSL2**. It does **not** run the unsigned native `pcd.exe`
 directly. When WSL was just enabled it will ask to reboot and then resume
-automatically after you log back in. When it prints `Done!`, run:
+automatically after you log back in. When it prints `Done!`, double-click the
+**PowerCodeDeck 실행** shortcut on your Desktop (or run `pcd`), then open
+**http://localhost:33033**.
 
+### Windows desktop shortcuts
+
+After installation, PowerCodeDeck creates three desktop shortcuts so you never
+have to type a WSL path:
+
+| Shortcut | Description |
+|---|---|
+| **PowerCodeDeck 실행** | Starts PowerCodeDeck and opens the web UI |
+| **PowerCodeDeck 작업폴더** | Opens the WSL project folder in Windows Explorer |
+| **PowerCodeDeck VSCode로 열기** | Opens the workspace using VS Code Remote WSL |
+
+PowerCodeDeck runs as a **normal Linux user** (not root — derived from your
+Windows username, or `pcduser`) and stores projects **inside WSL** for
+performance and reliable file watching (inotify does not work on `/mnt/c`).
+
+- Actual WSL path: `/home/<user>/PowerCodeDeck/projects`
+- Windows Explorer path: `\\wsl.localhost\Ubuntu\home\<user>\PowerCodeDeck\projects`
+
+The launcher scripts live in `%LOCALAPPDATA%\PowerCodeDeck\`. The "VSCode로
+열기" shortcut needs VS Code + the WSL extension; if `code` isn't found in WSL,
+it prints how to set it up (open VS Code once and run "WSL: Connect to WSL").
+
+**Verify (PowerShell):**
 ```powershell
-wsl -d Ubuntu -u root /root/PowerCodeDeck/pcd    # or just: pcd (shortcut created by the installer)
+wsl -d Ubuntu -- bash -lc "whoami; ls -la ~/PowerCodeDeck/projects"
 ```
-
-Then open **http://localhost:33033**.
+`whoami` should NOT be `root`, and the projects folder should exist owned by
+your user.
 
 ### Virtualization requirement
 

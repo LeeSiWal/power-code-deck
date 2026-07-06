@@ -4,8 +4,9 @@
 #  Usage (run in an Administrator PowerShell):
 #    iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-install.ps1 | iex
 #
-#  Sets up WSL + Ubuntu (no interactive account - runs as root) and
-#  builds PowerCodeDeck inside it. If WSL was just enabled it offers to
+#  Sets up WSL + Ubuntu, creates a normal Linux user (not root), and builds
+#  PowerCodeDeck under that user's home. Creates 3 desktop shortcuts (run /
+#  open workspace / open in VS Code). If WSL was just enabled it offers to
 #  reboot and resumes automatically after you log back in.
 #
 #  If CPU virtualization (VT-x/AMD-V) is off, WSL2 cannot start; this
@@ -103,7 +104,7 @@ printf 'POWERCODEDECK_BIND_HOST=0.0.0.0\n' >> .env
 printf 'POWERCODEDECK_LAN_URL=$lanUrl\n' >> .env
 "@
     $b = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($bash -replace "`r`n", "`n")))
-    wsl -d Ubuntu -u root -- bash -lc "echo $b | base64 -d | bash"
+    wsl -d Ubuntu -u $script:LinuxUser -- bash -lc "echo $b | base64 -d | bash"
 
     netsh interface portproxy delete v4tov4 listenport=$port listenaddress=0.0.0.0 2>$null | Out-Null
     netsh interface portproxy add v4tov4 listenport=$port listenaddress=0.0.0.0 connectport=$port connectaddress=$wslIp | Out-Null
@@ -193,18 +194,68 @@ if (-not (Test-DistroRuns)) {
     Say "OK - WSL / Ubuntu ready." Green
 }
 
-# -- 3. Build & install PowerCodeDeck inside Ubuntu (as root) --
+# -- 3. Provision a NORMAL Linux user (not root) --
+# Non-devs never see /root: PowerCodeDeck runs as a regular user whose home is
+# reachable from Windows (\\wsl.localhost\Ubuntu\home\<user>) and from VS Code
+# Remote-WSL. Derive a safe Linux username from the Windows username.
+$rawUser = "$env:USERNAME"
+$LinuxUser = ($rawUser -replace '[^A-Za-z0-9_-]', '').ToLower()
+if ([string]::IsNullOrEmpty($LinuxUser) -or ($LinuxUser -notmatch '^[a-z]')) { $LinuxUser = 'pcduser' }
+if ($LinuxUser.Length -gt 32) { $LinuxUser = $LinuxUser.Substring(0, 32) }
+$script:LinuxUser = $LinuxUser
+
 Write-Host ""
-Say "Building PowerCodeDeck inside Ubuntu..." Yellow
-Say "(installs Go, Node.js, pnpm + builds - a few minutes; no tmux needed)" Gray
+Say "Setting up a normal Linux user '$LinuxUser' (not root)..." Yellow
+
+$provision = @'
+set -e
+U=__USER__
+if ! id -u "$U" >/dev/null 2>&1; then
+  adduser --disabled-password --gecos "" "$U"
+fi
+usermod -aG sudo "$U" || true
+printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$U" > /etc/sudoers.d/$U
+chmod 440 /etc/sudoers.d/$U
+# Make this the default WSL user so `wsl` and VS Code Remote connect as them.
+if [ -f /etc/wsl.conf ] && grep -q '^\[user\]' /etc/wsl.conf; then
+  if grep -q '^default=' /etc/wsl.conf; then
+    sed -i "s/^default=.*/default=$U/" /etc/wsl.conf
+  else
+    printf 'default=%s\n' "$U" >> /etc/wsl.conf
+  fi
+else
+  printf '\n[user]\ndefault=%s\n' "$U" >> /etc/wsl.conf
+fi
+# Migrate any earlier root-owned install/projects into the user's home.
+mkdir -p /home/$U
+for d in PowerCodeDeck power-code-deck code; do
+  if [ -e /root/$d ] && [ ! -e /home/$U/$d ]; then mv /root/$d /home/$U/$d; fi
+done
+# Drop an absolute DB_PATH pinned to the old /root location so pcd re-resolves.
+if [ -f /home/$U/PowerCodeDeck/.env ]; then
+  grep -vE '^(POWERCODEDECK|AGENTDECK)_DB_PATH=' /home/$U/PowerCodeDeck/.env > /home/$U/PowerCodeDeck/.env.tmp 2>/dev/null && mv /home/$U/PowerCodeDeck/.env.tmp /home/$U/PowerCodeDeck/.env || rm -f /home/$U/PowerCodeDeck/.env.tmp
+fi
+mkdir -p /home/$U/PowerCodeDeck/projects
+chown -R "$U":"$U" /home/$U
+'@
+$provision = $provision -replace '__USER__', $LinuxUser
+$pv = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($provision -replace "`r`n", "`n")))
+wsl -d Ubuntu -u root -- bash -lc "echo $pv | base64 -d > /tmp/pcd-provision.sh && bash /tmp/pcd-provision.sh"
+if ($LASTEXITCODE -ne 0) { Write-Host ""; Say "Failed to set up the Linux user. See errors above." Red; return }
+wsl --terminate Ubuntu 2>$null | Out-Null   # apply the default-user change
+
+# -- 4. Build & install PowerCodeDeck AS that user --
+Write-Host ""
+Say "Building PowerCodeDeck (as '$LinuxUser')..." Yellow
+Say "(installs Go, Node.js, pnpm + builds - a few minutes; passwordless sudo)" Gray
 Write-Host ""
 
 $linux = @'
 set -e
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y git curl ca-certificates
-cd /root
+sudo apt-get update
+sudo apt-get install -y git curl ca-certificates
+cd ~
 if [ -d power-code-deck ]; then
   cd power-code-deck && (git pull --ff-only || true)
 else
@@ -212,69 +263,114 @@ else
   cd power-code-deck
 fi
 bash install.sh </dev/null
+# Default project location = WSL-home projects (fast + reliable file watching).
+cd ~/PowerCodeDeck
+touch .env
+grep -v '^POWERCODEDECK_WORKSPACE_ROOT=' .env > .env.tmp 2>/dev/null || true
+mv .env.tmp .env 2>/dev/null || true
+printf 'POWERCODEDECK_WORKSPACE_ROOT=%s/PowerCodeDeck/projects\n' "$HOME" >> .env
+mkdir -p ~/PowerCodeDeck/projects
 '@
-
-# Pipe the script over stdin so Windows/Linux quoting stays simple.
-# Pass the script as base64 (pure ASCII) and decode inside WSL. This is immune to
-# PowerShell's native-arg quoting/encoding mangling (which otherwise turned "\r"
-# into "r" and left a BOM), and to CRLF/BOM issues. Normalize to LF first.
-$scriptLF = $linux -replace "`r`n", "`n"
-$b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($scriptLF))
-wsl -d Ubuntu -u root -- bash -lc "echo $b64 | base64 -d > /tmp/pcd-setup.sh && bash /tmp/pcd-setup.sh"
-
+$bl = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($linux -replace "`r`n", "`n")))
+wsl -d Ubuntu -u $LinuxUser -- bash -lc "echo $bl | base64 -d > /tmp/pcd-setup.sh && bash /tmp/pcd-setup.sh"
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Say "Something failed during install. Check the errors above." Red
     return
 }
 
-# -- 4. LAN handoff (same Wi-Fi mobile access) --
+# -- 5. LAN handoff (same Wi-Fi mobile access) --
 Write-Host ""
 Say "Setting up LAN handoff (mobile on same Wi-Fi)..." Yellow
 Setup-LanHandoff
 
-# -- 5. Windows launcher + shortcuts (so non-developers never type a path) --
-# A one-word `pcd` command (WindowsApps is on PATH), plus Desktop + Start Menu
-# shortcuts to launch and to open the data folder in Explorer.
-$pcdCmd  = 'wsl -d Ubuntu -u root /root/PowerCodeDeck/pcd'
-$dataUnc = '\\wsl.localhost\Ubuntu\root\PowerCodeDeck'
+# -- 6. Windows launcher files + 3 desktop shortcuts (no WSL path to memorize) --
+$appDir  = Join-Path $env:LOCALAPPDATA 'PowerCodeDeck'
+$projUnc = "\\wsl.localhost\Ubuntu\home\$LinuxUser\PowerCodeDeck\projects"
 try {
-    $winApps = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
-    New-Item -ItemType Directory -Force -Path $winApps | Out-Null
-    Set-Content -Path (Join-Path $winApps 'pcd.cmd') -Value "@echo off`r`n$pcdCmd" -Encoding ASCII
+    New-Item -ItemType Directory -Force -Path $appDir | Out-Null
+
+    # Launcher 1: start pcd if it isn't already up, then open the browser.
+    $launchPs1 = @"
+`$ErrorActionPreference = 'SilentlyContinue'
+`$user = '$LinuxUser'
+`$up = (Test-NetConnection -ComputerName localhost -Port 33033 -WarningAction SilentlyContinue).TcpTestSucceeded
+if (-not `$up) {
+  Start-Process -WindowStyle Hidden wsl -ArgumentList '-d','Ubuntu','-u',`$user,'--','bash','-lc','cd ~/PowerCodeDeck && ./pcd'
+  for (`$i = 0; `$i -lt 40; `$i++) {
+    Start-Sleep -Milliseconds 500
+    if ((Test-NetConnection -ComputerName localhost -Port 33033 -WarningAction SilentlyContinue).TcpTestSucceeded) { break }
+  }
+}
+Start-Process 'http://localhost:33033'
+"@
+    Set-Content -Path (Join-Path $appDir 'launch-powercodedeck.ps1') -Value $launchPs1 -Encoding UTF8
+
+    # Launcher 3: open the projects folder in VS Code via Remote WSL.
+    $vscodePs1 = @"
+`$user = '$LinuxUser'
+`$has = (wsl -d Ubuntu -u `$user -- bash -lc 'command -v code >/dev/null 2>&1 && echo yes') 2>`$null
+if ("`$has".Trim() -eq 'yes') {
+  wsl -d Ubuntu -u `$user -- bash -lc 'cd ~/PowerCodeDeck/projects && code .'
+} else {
+  Write-Host ''
+  Write-Host '  VS Code WSL integration was not found.' -ForegroundColor Yellow
+  Write-Host '  Install Visual Studio Code + the WSL extension, then open VS Code once'
+  Write-Host "  and run 'WSL: Connect to WSL'. After that, run this shortcut again."
+  Write-Host ''
+  Read-Host '  Press Enter to close'
+}
+"@
+    Set-Content -Path (Join-Path $appDir 'open-vscode-wsl.ps1') -Value $vscodePs1 -Encoding UTF8
 
     $ws = New-Object -ComObject WScript.Shell
-    $desktop = [Environment]::GetFolderPath('Desktop')
+    $desktop  = [Environment]::GetFolderPath('Desktop')
     $programs = [Environment]::GetFolderPath('Programs')
-    foreach ($base in @($desktop, $programs)) {
-        $run = $ws.CreateShortcut((Join-Path $base 'PowerCodeDeck.lnk'))
-        $run.TargetPath = "$env:SystemRoot\System32\cmd.exe"
-        $run.Arguments = "/c `"$pcdCmd`""
-        $run.IconLocation = "$env:SystemRoot\System32\wsl.exe,0"
-        $run.Save()
 
-        $open = $ws.CreateShortcut((Join-Path $base 'PowerCodeDeck 데이터 폴더.lnk'))
-        $open.TargetPath = 'explorer.exe'
-        $open.Arguments = $dataUnc
-        $open.Save()
+    # Remove older root-based shortcuts so the desktop stays clean.
+    foreach ($base in @($desktop, $programs)) {
+        foreach ($old in @('PowerCodeDeck.lnk', 'PowerCodeDeck 데이터 폴더.lnk')) {
+            Remove-Item (Join-Path $base $old) -ErrorAction SilentlyContinue
+        }
     }
-    Say "Created 'PowerCodeDeck' shortcut + a 'pcd' command." Gray
+
+    $s1 = $ws.CreateShortcut((Join-Path $desktop 'PowerCodeDeck 실행.lnk'))
+    $s1.TargetPath  = 'powershell.exe'
+    $s1.Arguments   = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$appDir\launch-powercodedeck.ps1`""
+    $s1.IconLocation = "$env:SystemRoot\System32\wsl.exe,0"
+    $s1.Save()
+
+    $s2 = $ws.CreateShortcut((Join-Path $desktop 'PowerCodeDeck 작업폴더.lnk'))
+    $s2.TargetPath = 'explorer.exe'
+    $s2.Arguments  = $projUnc
+    $s2.Save()
+
+    $s3 = $ws.CreateShortcut((Join-Path $desktop 'PowerCodeDeck VSCode로 열기.lnk'))
+    $s3.TargetPath = 'powershell.exe'
+    $s3.Arguments  = "-NoProfile -ExecutionPolicy Bypass -File `"$appDir\open-vscode-wsl.ps1`""
+    $s3.Save()
+
+    # Keep a one-word `pcd` command on PATH too (WindowsApps is on PATH).
+    $winApps = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+    New-Item -ItemType Directory -Force -Path $winApps | Out-Null
+    Set-Content -Path (Join-Path $winApps 'pcd.cmd') -Value "@echo off`r`nwsl -d Ubuntu -u $LinuxUser -- bash -lc `"cd ~/PowerCodeDeck && ./pcd`"" -Encoding ASCII
+
+    Say "Created 3 desktop shortcuts (실행 / 작업폴더 / VSCode로 열기)." Gray
 } catch {
     Say "Could not create shortcuts (non-fatal): $($_.Exception.Message)" Yellow
 }
 
-# -- 6. Done --
+# -- 7. Done --
 Write-Host ""
 Write-Host "  ================================================" -ForegroundColor Green
-Say "Done! PowerCodeDeck is installed." Green
+Say "Done! PowerCodeDeck is installed (Linux user: $LinuxUser)." Green
 Write-Host "  ================================================" -ForegroundColor Green
 Write-Host ""
-Say "Start it (any of these):" White
-Write-Host "    - Double-click the 'PowerCodeDeck' shortcut on your Desktop" -ForegroundColor Cyan
-Write-Host "    - Or type:  pcd" -ForegroundColor Cyan
+Say "From your Desktop:" White
+Write-Host "    PowerCodeDeck 실행          - start + open the web UI" -ForegroundColor Cyan
+Write-Host "    PowerCodeDeck 작업폴더       - open the projects folder in Explorer" -ForegroundColor Cyan
+Write-Host "    PowerCodeDeck VSCode로 열기  - open projects in VS Code (Remote WSL)" -ForegroundColor Cyan
 Write-Host ""
-Say "Then open in your browser:  http://localhost:33033" White
-Write-Host ""
-Say "Your data lives in this folder (double-click 'PowerCodeDeck 데이터 폴더'):" White
-Write-Host "    $dataUnc" -ForegroundColor Cyan
+Say "Projects live inside WSL (fast + reliable file watching):" White
+Write-Host "    $projUnc" -ForegroundColor Cyan
 Write-Host ""

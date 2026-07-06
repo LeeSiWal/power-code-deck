@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useProjects } from '../../hooks/useProjects';
 import { useProjectLauncher } from '../../hooks/useProjectLauncher';
+import { api } from '../../lib/api';
 import { IconClose } from '../icons';
 
 interface CreateProjectSheetProps {
@@ -13,6 +14,15 @@ export function CreateProjectSheet({ open, onClose }: CreateProjectSheetProps) {
   const [name, setName] = useState('');
   const { createProject } = useProjects();
   const { launchProject } = useProjectLauncher();
+
+  // Default the parent to the server's workspace root (POWERCODEDECK_WORKSPACE_ROOT,
+  // e.g. ~/PowerCodeDeck/projects) so new projects land in the standard place.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.browseDir().then((d: any) => { if (!cancelled && d?.path) setParentDir(d.path); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open]);
 
   if (!open) return null;
 
