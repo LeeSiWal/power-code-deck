@@ -41,26 +41,41 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const fromHandoff = params.get('from') === 'handoff';
+    let cancelled = false;
 
-    api.getAuthConfig()
-      .then(async (cfg) => {
-        if (fromHandoff && cfg.authEnabled && !localStorage.getItem('accessToken')) {
-          // Redeemed a QR: trade the httpOnly handoff cookie for real tokens.
-          await api.handoffExchange().catch(() => {});
+    const load = async () => {
+      // Retry a few times: right after launch the server may not be listening
+      // yet, and a single failed probe must NOT force a bogus PIN screen.
+      for (let attempt = 0; attempt < 6 && !cancelled; attempt++) {
+        try {
+          const cfg = await api.getAuthConfig();
+          if (cancelled) return;
+          if (fromHandoff && cfg.authEnabled && !localStorage.getItem('accessToken')) {
+            // Redeemed a QR: trade the httpOnly handoff cookie for real tokens.
+            await api.handoffExchange().catch(() => {});
+          }
+          setAuthConfig({
+            appName: cfg.appName,
+            version: cfg.version,
+            authEnabled: cfg.authEnabled,
+            authMethod: cfg.authMethod,
+            handoffEnabled: cfg.handoffEnabled ?? true,
+          });
+          return;
+        } catch {
+          await new Promise((r) => setTimeout(r, 600));
         }
-        setAuthConfig({
-          appName: cfg.appName,
-          version: cfg.version,
-          authEnabled: cfg.authEnabled,
-          authMethod: cfg.authMethod,
-          handoffEnabled: cfg.handoffEnabled ?? true,
-        });
-      })
-      .catch(() =>
-        // If health is unreachable, fall back to auth-enabled so we don't
-        // accidentally expose an unauthenticated app.
-        setAuthConfig({ appName: 'PowerCodeDeck', version: '', authEnabled: true, authMethod: 'pin', handoffEnabled: true }),
-      );
+      }
+      if (cancelled) return;
+      // Still unreachable after retries: fall back to NO auth, not a PIN prompt.
+      // The server enforces auth on every protected endpoint itself, so a
+      // frontend that fails open never exposes data — it would just 401 if auth
+      // were truly on. The documented default is no-auth anyway, so this avoids
+      // the false PIN screen when /api/auth/health is momentarily unreachable.
+      setAuthConfig({ appName: 'PowerCodeDeck', version: '', authEnabled: false, authMethod: 'none', handoffEnabled: true });
+    };
+    load();
+    return () => { cancelled = true; };
   }, [setAuthConfig]);
 
   // Mobile keyboard: override height only when virtual keyboard shrinks the viewport
