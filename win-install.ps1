@@ -281,12 +281,16 @@ if [ ! -f install.sh ]; then
   cd ~ && rm -rf power-code-deck && git clone https://github.com/LeeSiWal/power-code-deck.git && cd power-code-deck
 fi
 bash install.sh </dev/null
-# Default project location = WSL-home projects (fast + reliable file watching).
+# Write an EXPLICIT no-auth default + WSL-home project location into .env. The
+# explicit AUTH_ENABLED=false is essential: without it pcd treats every launch
+# as a first run and shows the interactive auth wizard (which can end up
+# enabling a PIN). Strip any prior auth/workspace lines first so this is
+# idempotent and clears leftovers from an earlier PIN setup.
 cd ~/PowerCodeDeck
 touch .env
-grep -v '^POWERCODEDECK_WORKSPACE_ROOT=' .env > .env.tmp 2>/dev/null || true
+grep -vE '^(POWERCODEDECK_|AGENTDECK_)(AUTH_ENABLED|AUTH_METHOD|PIN|PASSWORD_HASH|WORKSPACE_ROOT)=' .env > .env.tmp 2>/dev/null || true
 mv .env.tmp .env 2>/dev/null || true
-printf 'POWERCODEDECK_WORKSPACE_ROOT=%s/PowerCodeDeck/projects\n' "$HOME" >> .env
+printf 'POWERCODEDECK_AUTH_ENABLED=false\nPOWERCODEDECK_AUTH_METHOD=none\nPOWERCODEDECK_WORKSPACE_ROOT=%s/PowerCodeDeck/projects\n' "$HOME" >> .env
 mkdir -p ~/PowerCodeDeck/projects
 '@
 $bl = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($linux -replace "`r`n", "`n")))
