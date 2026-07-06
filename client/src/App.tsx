@@ -43,36 +43,49 @@ export default function App() {
     const fromHandoff = params.get('from') === 'handoff';
     let cancelled = false;
 
+    const apply = async (cfg: any) => {
+      if (fromHandoff && cfg.authEnabled && !localStorage.getItem('accessToken')) {
+        // Redeemed a QR: trade the httpOnly handoff cookie for real tokens.
+        await api.handoffExchange().catch(() => {});
+      }
+      if (cancelled) return;
+      setAuthConfig({
+        appName: cfg.appName,
+        version: cfg.version,
+        authEnabled: cfg.authEnabled,
+        authMethod: cfg.authMethod,
+        handoffEnabled: cfg.handoffEnabled ?? true,
+      });
+    };
+
+    const withTimeout = <T,>(p: Promise<T>, ms: number) =>
+      Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
     const load = async () => {
-      // Retry a few times: right after launch the server may not be listening
-      // yet, and a single failed probe must NOT force a bogus PIN screen.
-      for (let attempt = 0; attempt < 6 && !cancelled; attempt++) {
+      // Fast path: one quick probe. If the server answers promptly we render with
+      // the true config immediately and there's no flash.
+      try {
+        const cfg = await withTimeout(api.getAuthConfig(), 1000);
+        await apply(cfg);
+        return;
+      } catch {
+        // Server slow / not up yet — DON'T block the UI on it (that was the long
+        // white screen). Render immediately as no-auth; the server still enforces
+        // auth on protected endpoints, so this exposes nothing.
+      }
+      if (cancelled) return;
+      setAuthConfig({ appName: 'PowerCodeDeck', version: '', authEnabled: false, authMethod: 'none', handoffEnabled: true });
+      // Keep probing in the background and correct to a login only if auth is
+      // actually enabled once the server becomes reachable.
+      for (let i = 0; i < 15 && !cancelled; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
         try {
           const cfg = await api.getAuthConfig();
           if (cancelled) return;
-          if (fromHandoff && cfg.authEnabled && !localStorage.getItem('accessToken')) {
-            // Redeemed a QR: trade the httpOnly handoff cookie for real tokens.
-            await api.handoffExchange().catch(() => {});
-          }
-          setAuthConfig({
-            appName: cfg.appName,
-            version: cfg.version,
-            authEnabled: cfg.authEnabled,
-            authMethod: cfg.authMethod,
-            handoffEnabled: cfg.handoffEnabled ?? true,
-          });
+          if (cfg.authEnabled) await apply(cfg);
           return;
-        } catch {
-          await new Promise((r) => setTimeout(r, 600));
-        }
+        } catch { /* keep trying */ }
       }
-      if (cancelled) return;
-      // Still unreachable after retries: fall back to NO auth, not a PIN prompt.
-      // The server enforces auth on every protected endpoint itself, so a
-      // frontend that fails open never exposes data — it would just 401 if auth
-      // were truly on. The documented default is no-auth anyway, so this avoids
-      // the false PIN screen when /api/auth/health is momentarily unreachable.
-      setAuthConfig({ appName: 'PowerCodeDeck', version: '', authEnabled: false, authMethod: 'none', handoffEnabled: true });
     };
     load();
     return () => { cancelled = true; };
