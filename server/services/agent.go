@@ -159,13 +159,17 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 	// Assign color
 	colorHue, colorName := s.assignColor()
 
+	// Expand a leading ~ so a directly-typed "~/code/foo" resolves to the home
+	// directory instead of a literal "~" path the shell can't cd into.
+	workingDir := expandHome(req.WorkingDir)
+
 	// Start the session's process via the engine (tmux/PTY details are hidden).
 	if _, err := s.engine.Create(CreateSessionRequest{
 		ID:      id,
 		Type:    req.Preset,
 		Command: req.Command,
 		Args:    req.Args,
-		Cwd:     req.WorkingDir,
+		Cwd:     workingDir,
 		Cols:    80,
 		Rows:    24,
 	}); err != nil {
@@ -178,7 +182,7 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 		Preset:      req.Preset,
 		Name:        req.Name,
 		TmuxSession: tmuxSession,
-		WorkingDir:  req.WorkingDir,
+		WorkingDir:  workingDir,
 		Command:     req.Command,
 		Args:        req.Args,
 		Status:      "running",

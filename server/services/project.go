@@ -42,6 +42,38 @@ func NewProjectService(db *sql.DB) *ProjectService {
 // SetWorkspaceRoot sets the default directory the project browser opens at.
 func (s *ProjectService) SetWorkspaceRoot(path string) { s.workspaceRoot = path }
 
+// expandHome expands a leading "~" to the user's home directory. Go does NOT do
+// this automatically, so a literal "~/code" would otherwise be treated as a real
+// relative path with a "~" segment (creating a bogus "~" folder, or a cwd the
+// shell can't enter). Shared with agent working-dir handling.
+func expandHome(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	} else if strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
+}
+
+// resolvePath turns a client-supplied path into an absolute one that does not
+// depend on the process's working directory: expand ~, and resolve any other
+// relative path under the workspace root.
+func (s *ProjectService) resolvePath(p string) string {
+	p = expandHome(p)
+	if p == "" {
+		return s.DefaultRoot()
+	}
+	if !filepath.IsAbs(p) {
+		return filepath.Join(s.DefaultRoot(), p)
+	}
+	return p
+}
+
 // DefaultRoot returns the configured workspace root, falling back to the user's
 // home directory.
 func (s *ProjectService) DefaultRoot() string {
@@ -96,9 +128,7 @@ func (s *ProjectService) DeleteRecent(id int) error {
 }
 
 func (s *ProjectService) BrowseDir(dirPath string) ([]DirEntry, error) {
-	if dirPath == "" {
-		dirPath = s.DefaultRoot()
-	}
+	dirPath = s.resolvePath(dirPath)
 
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
@@ -141,6 +171,7 @@ var projectIndicators = map[string]string{
 }
 
 func (s *ProjectService) DetectProject(dirPath string) (*ProjectInfo, error) {
+	dirPath = s.resolvePath(dirPath)
 	info := &ProjectInfo{
 		Path: dirPath,
 		Name: filepath.Base(dirPath),
@@ -204,7 +235,8 @@ func (s *ProjectService) SearchProjects(query string, baseDirs []string) ([]Proj
 }
 
 func (s *ProjectService) CreateProject(parentDir, name string) (string, error) {
-	projectPath := filepath.Join(parentDir, name)
+	parentDir = s.resolvePath(parentDir)
+	projectPath := filepath.Join(parentDir, strings.TrimSpace(name))
 	if err := os.MkdirAll(projectPath, 0755); err != nil {
 		return "", err
 	}
