@@ -241,7 +241,12 @@ chown -R "$U":"$U" /home/$U
 $provision = $provision -replace '__USER__', $LinuxUser
 $pv = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($provision -replace "`r`n", "`n")))
 wsl -d Ubuntu -u root -- bash -lc "echo $pv | base64 -d > /tmp/pcd-provision.sh && bash /tmp/pcd-provision.sh"
-if ($LASTEXITCODE -ne 0) { Write-Host ""; Say "Failed to set up the Linux user. See errors above." Red; return }
+# Trust the OUTCOME (does the user exist?), not just the exit code.
+$userExists = (wsl -d Ubuntu -u root -- bash -lc "id -u '$LinuxUser' >/dev/null 2>&1 && echo yes") 2>$null
+if ("$userExists".Trim() -ne 'yes') {
+    Write-Host ""; Say "Failed to create the Linux user '$LinuxUser'. See errors above." Red; return
+}
+Say "Linux user '$LinuxUser' ready." Green
 wsl --terminate Ubuntu 2>$null | Out-Null   # apply the default-user change
 
 # -- 4. Build & install PowerCodeDeck AS that user --
@@ -274,9 +279,17 @@ mkdir -p ~/PowerCodeDeck/projects
 $bl = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($linux -replace "`r`n", "`n")))
 wsl -d Ubuntu -u $LinuxUser -- bash -lc "echo $bl | base64 -d > /tmp/pcd-setup.sh && bash /tmp/pcd-setup.sh"
 if ($LASTEXITCODE -ne 0) {
-    Write-Host ""
-    Say "Something failed during install. Check the errors above." Red
-    return
+    # A build hiccup should NOT stop us from creating the desktop shortcuts if a
+    # binary is already in place from a previous run.
+    $havePcd = (wsl -d Ubuntu -u $LinuxUser -- bash -lc "test -x ~/PowerCodeDeck/pcd && echo yes") 2>$null
+    if ("$havePcd".Trim() -ne 'yes') {
+        Write-Host ""
+        Say "Something failed during install and no existing binary was found." Red
+        Say "Fix the errors above and re-run. Shortcuts are still created below." Yellow
+    } else {
+        Write-Host ""
+        Say "Build step reported an error, but an existing pcd binary was found - continuing." Yellow
+    }
 }
 
 # -- 5. LAN handoff (same Wi-Fi mobile access) --
