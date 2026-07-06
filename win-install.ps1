@@ -324,40 +324,66 @@ if ("`$has".Trim() -eq 'yes') {
     Set-Content -Path (Join-Path $appDir 'open-vscode-wsl.ps1') -Value $vscodePs1 -Encoding UTF8
 
     $ws = New-Object -ComObject WScript.Shell
-    $desktop  = [Environment]::GetFolderPath('Desktop')
+
+    # Resolve EVERY plausible Desktop folder. OneDrive "Known Folder" redirection
+    # and running elevated can make GetFolderPath('Desktop') differ from the
+    # desktop the user actually sees, so we write to all of them.
+    $desktops = New-Object System.Collections.Generic.List[string]
+    foreach ($cand in @(
+        [Environment]::GetFolderPath('Desktop'),
+        (Join-Path $env:USERPROFILE 'Desktop'),
+        (Join-Path $env:USERPROFILE 'OneDrive\Desktop'),
+        (Join-Path $env:OneDrive 'Desktop')
+    )) {
+        if ($cand -and (Test-Path $cand) -and -not $desktops.Contains($cand)) { $desktops.Add($cand) }
+    }
     $programs = [Environment]::GetFolderPath('Programs')
 
-    # Remove older root-based shortcuts so the desktop stays clean.
-    foreach ($base in @($desktop, $programs)) {
+    $made = @()
+    foreach ($dir in $desktops) {
+        # Clean up older root-based shortcuts.
         foreach ($old in @('PowerCodeDeck.lnk', 'PowerCodeDeck 데이터 폴더.lnk')) {
-            Remove-Item (Join-Path $base $old) -ErrorAction SilentlyContinue
+            Remove-Item (Join-Path $dir $old) -ErrorAction SilentlyContinue
         }
+        $s1 = $ws.CreateShortcut((Join-Path $dir 'PowerCodeDeck 실행.lnk'))
+        $s1.TargetPath   = 'powershell.exe'
+        $s1.Arguments    = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$appDir\launch-powercodedeck.ps1`""
+        $s1.IconLocation = "$env:SystemRoot\System32\wsl.exe,0"
+        $s1.Save()
+
+        $s2 = $ws.CreateShortcut((Join-Path $dir 'PowerCodeDeck 작업폴더.lnk'))
+        $s2.TargetPath = 'explorer.exe'
+        $s2.Arguments  = $projUnc
+        $s2.Save()
+
+        $s3 = $ws.CreateShortcut((Join-Path $dir 'PowerCodeDeck VSCode로 열기.lnk'))
+        $s3.TargetPath = 'powershell.exe'
+        $s3.Arguments  = "-NoProfile -ExecutionPolicy Bypass -File `"$appDir\open-vscode-wsl.ps1`""
+        $s3.Save()
+
+        $made += $dir
     }
-
-    $s1 = $ws.CreateShortcut((Join-Path $desktop 'PowerCodeDeck 실행.lnk'))
-    $s1.TargetPath  = 'powershell.exe'
-    $s1.Arguments   = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$appDir\launch-powercodedeck.ps1`""
-    $s1.IconLocation = "$env:SystemRoot\System32\wsl.exe,0"
-    $s1.Save()
-
-    $s2 = $ws.CreateShortcut((Join-Path $desktop 'PowerCodeDeck 작업폴더.lnk'))
-    $s2.TargetPath = 'explorer.exe'
-    $s2.Arguments  = $projUnc
-    $s2.Save()
-
-    $s3 = $ws.CreateShortcut((Join-Path $desktop 'PowerCodeDeck VSCode로 열기.lnk'))
-    $s3.TargetPath = 'powershell.exe'
-    $s3.Arguments  = "-NoProfile -ExecutionPolicy Bypass -File `"$appDir\open-vscode-wsl.ps1`""
-    $s3.Save()
+    if ($programs -and (Test-Path $programs)) {
+        Remove-Item (Join-Path $programs 'PowerCodeDeck.lnk') -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $programs 'PowerCodeDeck 데이터 폴더.lnk') -ErrorAction SilentlyContinue
+    }
 
     # Keep a one-word `pcd` command on PATH too (WindowsApps is on PATH).
     $winApps = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
     New-Item -ItemType Directory -Force -Path $winApps | Out-Null
     Set-Content -Path (Join-Path $winApps 'pcd.cmd') -Value "@echo off`r`nwsl -d Ubuntu -u $LinuxUser -- bash -lc `"cd ~/PowerCodeDeck && ./pcd`"" -Encoding ASCII
 
-    Say "Created 3 desktop shortcuts (실행 / 작업폴더 / VSCode로 열기)." Gray
+    if ($made.Count -gt 0) {
+        Say "Created 3 shortcuts (실행 / 작업폴더 / VSCode로 열기) in:" Green
+        foreach ($m in $made) { Write-Host "    $m" -ForegroundColor Gray }
+    } else {
+        Say "No Desktop folder found. Start with the 'pcd' command instead." Yellow
+    }
 } catch {
-    Say "Could not create shortcuts (non-fatal): $($_.Exception.Message)" Yellow
+    Write-Host ""
+    Say "Could not create desktop shortcuts:" Red
+    Say "  $($_.Exception.Message)" Yellow
+    Say "You can still start PowerCodeDeck by typing:  pcd" Gray
 }
 
 # -- 7. Done --
