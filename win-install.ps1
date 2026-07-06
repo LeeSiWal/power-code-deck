@@ -352,24 +352,33 @@ if ("`$has".Trim() -eq 'yes') {
     }
     $programs = [Environment]::GetFolderPath('Programs')
 
+    # Build the Korean labels from Unicode code points. Raw Korean string
+    # literals can arrive as "?" through `iwr | iex` (source-encoding loss), and
+    # "?" is an illegal filename char that makes .Save() fail. Code points are
+    # pure ASCII in the source, so they survive any download encoding.
+    $lblRun  = 'PowerCodeDeck ' + (-join ([char[]](0xC2E4,0xD589)))               # 실행
+    $lblWork = 'PowerCodeDeck ' + (-join ([char[]](0xC791,0xC5C5,0xD3F4,0xB354))) # 작업폴더
+    $lblCode = 'PowerCodeDeck VSCode' + [char]0xB85C + ' ' + (-join ([char[]](0xC5F4,0xAE30)))  # VSCode로 열기
+    $lblOld  = 'PowerCodeDeck ' + (-join ([char[]](0xB370,0xC774,0xD130,0x20,0xD3F4,0xB354)))   # 데이터 폴더
+
     $made = @()
     foreach ($dir in $desktops) {
-        # Clean up older root-based shortcuts.
-        foreach ($old in @('PowerCodeDeck.lnk', 'PowerCodeDeck 데이터 폴더.lnk')) {
-            Remove-Item (Join-Path $dir $old) -ErrorAction SilentlyContinue
-        }
-        $s1 = $ws.CreateShortcut((Join-Path $dir 'PowerCodeDeck 실행.lnk'))
+        # Clean up older shortcuts (ASCII + the old Korean "데이터 폴더").
+        Remove-Item -LiteralPath (Join-Path $dir 'PowerCodeDeck.lnk') -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $dir "$lblOld.lnk")       -ErrorAction SilentlyContinue
+
+        $s1 = $ws.CreateShortcut((Join-Path $dir "$lblRun.lnk"))
         $s1.TargetPath   = 'powershell.exe'
         $s1.Arguments    = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$appDir\launch-powercodedeck.ps1`""
         $s1.IconLocation = "$env:SystemRoot\System32\wsl.exe,0"
         $s1.Save()
 
-        $s2 = $ws.CreateShortcut((Join-Path $dir 'PowerCodeDeck 작업폴더.lnk'))
+        $s2 = $ws.CreateShortcut((Join-Path $dir "$lblWork.lnk"))
         $s2.TargetPath = 'explorer.exe'
         $s2.Arguments  = $projUnc
         $s2.Save()
 
-        $s3 = $ws.CreateShortcut((Join-Path $dir 'PowerCodeDeck VSCode로 열기.lnk'))
+        $s3 = $ws.CreateShortcut((Join-Path $dir "$lblCode.lnk"))
         $s3.TargetPath = 'powershell.exe'
         $s3.Arguments  = "-NoProfile -ExecutionPolicy Bypass -File `"$appDir\open-vscode-wsl.ps1`""
         $s3.Save()
@@ -377,8 +386,8 @@ if ("`$has".Trim() -eq 'yes') {
         $made += $dir
     }
     if ($programs -and (Test-Path $programs)) {
-        Remove-Item (Join-Path $programs 'PowerCodeDeck.lnk') -ErrorAction SilentlyContinue
-        Remove-Item (Join-Path $programs 'PowerCodeDeck 데이터 폴더.lnk') -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $programs 'PowerCodeDeck.lnk') -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $programs "$lblOld.lnk")       -ErrorAction SilentlyContinue
     }
 
     # Keep a one-word `pcd` command on PATH too (WindowsApps is on PATH).
@@ -387,7 +396,7 @@ if ("`$has".Trim() -eq 'yes') {
     Set-Content -Path (Join-Path $winApps 'pcd.cmd') -Value "@echo off`r`nwsl -d Ubuntu -u $LinuxUser -- bash -lc `"cd ~/PowerCodeDeck && ./pcd`"" -Encoding ASCII
 
     if ($made.Count -gt 0) {
-        Say "Created 3 shortcuts (실행 / 작업폴더 / VSCode로 열기) in:" Green
+        Say "Created 3 shortcuts (Run / Workspace / Open in VS Code) in:" Green
         foreach ($m in $made) { Write-Host "    $m" -ForegroundColor Gray }
     } else {
         Say "No Desktop folder found. Start with the 'pcd' command instead." Yellow
@@ -405,10 +414,10 @@ Write-Host "  ================================================" -ForegroundColor
 Say "Done! PowerCodeDeck is installed (Linux user: $LinuxUser)." Green
 Write-Host "  ================================================" -ForegroundColor Green
 Write-Host ""
-Say "From your Desktop:" White
-Write-Host "    PowerCodeDeck 실행          - start + open the web UI" -ForegroundColor Cyan
-Write-Host "    PowerCodeDeck 작업폴더       - open the projects folder in Explorer" -ForegroundColor Cyan
-Write-Host "    PowerCodeDeck VSCode로 열기  - open projects in VS Code (Remote WSL)" -ForegroundColor Cyan
+Say "Three shortcuts are on your Desktop:" White
+Write-Host "    [Run]        start + open the web UI" -ForegroundColor Cyan
+Write-Host "    [Workspace]  open the projects folder in Explorer" -ForegroundColor Cyan
+Write-Host "    [VS Code]    open projects in VS Code (Remote WSL)" -ForegroundColor Cyan
 Write-Host ""
 Say "Projects live inside WSL (fast + reliable file watching):" White
 Write-Host "    $projUnc" -ForegroundColor Cyan
