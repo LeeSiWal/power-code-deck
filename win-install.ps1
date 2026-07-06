@@ -106,8 +106,12 @@ printf 'POWERCODEDECK_LAN_URL=$lanUrl\n' >> .env
     $b = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($bash -replace "`r`n", "`n")))
     wsl -d Ubuntu -u $script:LinuxUser -- bash -lc "echo $b | base64 -d | bash"
 
+    # Bind the forward to the LAN IP ONLY, never 0.0.0.0 — a 0.0.0.0 rule also
+    # captures 127.0.0.1, shadowing WSL2's native localhost forwarding and
+    # sending localhost to a (soon-stale) WSL IP. Remove any old 0.0.0.0 rule.
     netsh interface portproxy delete v4tov4 listenport=$port listenaddress=0.0.0.0 2>$null | Out-Null
-    netsh interface portproxy add v4tov4 listenport=$port listenaddress=0.0.0.0 connectport=$port connectaddress=$wslIp | Out-Null
+    netsh interface portproxy delete v4tov4 listenport=$port listenaddress=$lanIp 2>$null | Out-Null
+    netsh interface portproxy add v4tov4 listenport=$port listenaddress=$lanIp connectport=$port connectaddress=$wslIp | Out-Null
     netsh advfirewall firewall delete rule name="PowerCodeDeck $port" 2>$null | Out-Null
     netsh advfirewall firewall add rule name="PowerCodeDeck $port" dir=in action=allow protocol=TCP localport=$port | Out-Null
     Say "LAN handoff ready - phones on this Wi-Fi can open:  $lanUrl" Green
@@ -313,16 +317,16 @@ try {
     New-Item -ItemType Directory -Force -Path $appDir | Out-Null
 
     # Launcher 1: start pcd if it isn't already up, then open the browser.
+    # Decide by the actual WSL pcd process, NOT the Windows port: a leftover
+    # netsh portproxy keeps 33033 "listening" even when pcd is down, which would
+    # otherwise make us skip starting it and open a dead/old page.
     $launchPs1 = @"
 `$ErrorActionPreference = 'SilentlyContinue'
 `$user = '$LinuxUser'
-`$up = (Test-NetConnection -ComputerName localhost -Port 33033 -WarningAction SilentlyContinue).TcpTestSucceeded
-if (-not `$up) {
-  Start-Process -WindowStyle Hidden wsl -ArgumentList '-d','Ubuntu','-u',`$user,'--','bash','-lc','cd ~/PowerCodeDeck && ./pcd'
-  for (`$i = 0; `$i -lt 40; `$i++) {
-    Start-Sleep -Milliseconds 500
-    if ((Test-NetConnection -ComputerName localhost -Port 33033 -WarningAction SilentlyContinue).TcpTestSucceeded) { break }
-  }
+`$running = (wsl -d Ubuntu -u `$user -- bash -lc 'pgrep -f PowerCodeDeck/pcd >/dev/null 2>&1 && echo yes') 2>`$null
+if ("`$running".Trim() -ne 'yes') {
+  Start-Process -WindowStyle Hidden wsl -ArgumentList '-d','Ubuntu','-u',`$user,'--','bash','-lc','~/PowerCodeDeck/pcd'
+  Start-Sleep -Seconds 3
 }
 Start-Process 'http://localhost:33033'
 "@
