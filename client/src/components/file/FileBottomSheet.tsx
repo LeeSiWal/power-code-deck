@@ -14,7 +14,7 @@ interface FileBottomSheetProps {
 export function FileBottomSheet({ open, onClose, agentId, workingDir }: FileBottomSheetProps) {
   const {
     tree, selectedFile, fileContent, changedFiles,
-    fetchTree, openFile, saveFile, createDir, deleteFile,
+    fetchTree, openFile, saveFile, createDir, createFile, deleteFile, renameFile,
     setSelectedFile,
   } = useFileExplorer(agentId);
   const [editing, setEditing] = useState(false);
@@ -59,6 +59,8 @@ export function FileBottomSheet({ open, onClose, agentId, workingDir }: FileBott
               onSelect={openFile}
               onRefresh={fetchTree}
               onMkdir={createDir}
+              onNewFile={createFile}
+              onRename={renameFile}
               onDelete={deleteFile}
               workingDir={workingDir}
             />

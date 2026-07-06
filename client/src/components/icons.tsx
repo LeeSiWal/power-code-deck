@@ -52,6 +52,12 @@ export function IconRefresh({ size, color = 'currentColor', className }: IconPro
 export function IconNewFolder({ size, color = 'currentColor', className }: IconProps) {
   return <I size={size} className={className}><path d="M1.5 3a.5.5 0 0 1 .5-.5h4l1.5 1.5h6a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5V3z" stroke={color} strokeWidth="1" fill="none" /><path d="M8 7v5M5.5 9.5h5" stroke={color} strokeWidth="1.2" /></I>;
 }
+export function IconFilePlus({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}><path d="M9 1H3.5a.5.5 0 0 0-.5.5v11a.5.5 0 0 0 .5.5h4" stroke={color} strokeWidth="1" fill="none" /><path d="M9 1v3h3" stroke={color} strokeWidth="1" fill="none" /><path d="M11.5 9.5v4M9.5 11.5h4" stroke={color} strokeWidth="1.2" /></I>;
+}
+export function IconEdit({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}><path d="M11 2.5l2.5 2.5L6 12.5 3 13l.5-3L11 2.5z" stroke={color} strokeWidth="1" fill="none" /><path d="M9.5 4l2.5 2.5" stroke={color} strokeWidth="1" /></I>;
+}
 export function IconPlay({ size, color = 'currentColor', className }: IconProps) {
   return <I size={size} className={className}><path d="M5 3l8 5-8 5V3z" fill={color} /></I>;
 }

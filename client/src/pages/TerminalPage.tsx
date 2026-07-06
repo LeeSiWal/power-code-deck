@@ -89,7 +89,7 @@ export function TerminalPage() {
 
   const {
     tree, selectedFile, fileContent, changedFiles,
-    fetchTree, openFile, saveFile, createDir, deleteFile,
+    fetchTree, openFile, saveFile, createDir, createFile, deleteFile, renameFile,
     setSelectedFile,
   } = useFileExplorer(agentId || null);
 
@@ -498,6 +498,8 @@ export function TerminalPage() {
                 onSelect={handleOpenFile}
                 onRefresh={fetchTree}
                 onMkdir={createDir}
+                onNewFile={createFile}
+                onRename={renameFile}
                 onDelete={deleteFile}
                 workingDir={agent.workingDir}
               />

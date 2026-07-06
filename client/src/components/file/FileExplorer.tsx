@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from 'react';
 import {
   IconFile, IconFolder, IconFolderOpen, IconRefresh, IconNewFolder,
   IconPlay, IconTrash, IconChevronRight, IconChevronDown, IconSearch,
+  IconFilePlus, IconEdit,
   FILE_ICON_MAP,
 } from '../icons';
 
@@ -55,11 +56,13 @@ interface FileExplorerProps {
   onSelect: (path: string) => void;
   onRefresh: () => void;
   onMkdir?: (path: string) => void;
+  onNewFile?: (path: string) => void;
+  onRename?: (oldPath: string, newPath: string) => void;
   onDelete?: (path: string) => void;
   workingDir?: string;
 }
 
-export function FileExplorer({ tree, changedFiles, onSelect, onRefresh, onMkdir, onDelete, workingDir }: FileExplorerProps) {
+export function FileExplorer({ tree, changedFiles, onSelect, onRefresh, onMkdir, onNewFile, onRename, onDelete, workingDir }: FileExplorerProps) {
   const [search, setSearch] = useState('');
   const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
@@ -83,6 +86,15 @@ export function FileExplorer({ tree, changedFiles, onSelect, onRefresh, onMkdir,
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-deck-border">
         <span className="text-[11px] font-medium uppercase tracking-wider text-deck-text-dim">Explorer</span>
         <div className="flex items-center gap-0.5">
+          {onNewFile && (
+            <button onClick={() => {
+                      const name = window.prompt('새 파일 이름 (New file name)');
+                      if (name && name.trim()) onNewFile(`${workingDir || '.'}/${name.trim()}`);
+                    }}
+                    className="p-1 rounded hover:bg-deck-border/50" title="New File">
+              <IconFilePlus size={14} color="#64748b" />
+            </button>
+          )}
           {onMkdir && (
             <button onClick={() => { setNewFolderParent(workingDir || '.'); setNewFolderName(''); }}
                     className="p-1 rounded hover:bg-deck-border/50" title="New Folder">
@@ -126,6 +138,8 @@ export function FileExplorer({ tree, changedFiles, onSelect, onRefresh, onMkdir,
               changedFiles={changedFiles}
               onSelect={onSelect}
               onDelete={onDelete}
+              onNewFile={onNewFile}
+              onRename={onRename}
               onNewFolder={onMkdir ? (p) => { setNewFolderParent(p); setNewFolderName(''); } : undefined}
               newFolderParent={newFolderParent}
               newFolderName={newFolderName}
@@ -143,12 +157,14 @@ export function FileExplorer({ tree, changedFiles, onSelect, onRefresh, onMkdir,
 }
 
 function TreeNode({
-  node, depth, search, searchMatchSet, changedFiles, onSelect, onDelete, onNewFolder,
+  node, depth, search, searchMatchSet, changedFiles, onSelect, onDelete, onNewFile, onRename, onNewFolder,
   newFolderParent, newFolderName, onNewFolderNameChange, onNewFolderSubmit, onNewFolderCancel,
 }: {
   node: FileNode; depth: number; search: string; searchMatchSet: Set<string>;
   changedFiles: Set<string>; onSelect: (path: string) => void;
   onDelete?: (path: string) => void;
+  onNewFile?: (path: string) => void;
+  onRename?: (oldPath: string, newPath: string) => void;
   onNewFolder?: (parentPath: string) => void;
   newFolderParent: string | null; newFolderName: string;
   onNewFolderNameChange: (v: string) => void;
@@ -199,12 +215,40 @@ function TreeNode({
           <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
           <div className="fixed z-50 rounded shadow-xl py-1 min-w-[160px] bg-deck-surface border border-deck-border"
                style={{ left: contextMenu.x, top: contextMenu.y }}>
+            {isDir && onNewFile && (
+              <button
+                onClick={() => {
+                  setContextMenu(null); setExpanded(true);
+                  const name = window.prompt('새 파일 이름 (New file name)');
+                  if (name && name.trim()) onNewFile(`${node.path}/${name.trim()}`);
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-deck-border/30 text-deck-text"
+              >
+                <IconFilePlus size={12} /> New File
+              </button>
+            )}
             {isDir && onNewFolder && (
               <button
                 onClick={() => { setContextMenu(null); setExpanded(true); onNewFolder(node.path); }}
                 className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-deck-border/30 text-deck-text"
               >
                 <IconNewFolder size={12} /> New Folder
+              </button>
+            )}
+            {onRename && (
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                  const newName = window.prompt('이름 변경 (Rename)', node.name);
+                  const trimmed = newName?.trim();
+                  if (trimmed && trimmed !== node.name) {
+                    const parent = node.path.slice(0, node.path.lastIndexOf('/'));
+                    onRename(node.path, `${parent}/${trimmed}`);
+                  }
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-deck-border/30 text-deck-text"
+              >
+                <IconEdit size={12} /> Rename
               </button>
             )}
             {onDelete && (
@@ -241,7 +285,8 @@ function TreeNode({
           {node.children?.map((child) => (
             <TreeNode
               key={child.path} node={child} depth={depth + 1} search={search} searchMatchSet={searchMatchSet}
-              changedFiles={changedFiles} onSelect={onSelect} onDelete={onDelete} onNewFolder={onNewFolder}
+              changedFiles={changedFiles} onSelect={onSelect} onDelete={onDelete}
+              onNewFile={onNewFile} onRename={onRename} onNewFolder={onNewFolder}
               newFolderParent={newFolderParent} newFolderName={newFolderName}
               onNewFolderNameChange={onNewFolderNameChange} onNewFolderSubmit={onNewFolderSubmit}
               onNewFolderCancel={onNewFolderCancel}

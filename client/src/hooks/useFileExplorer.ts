@@ -103,6 +103,15 @@ export function useFileExplorer(agentId: string | null) {
     [agentId, fetchTree]
   );
 
+  const createFile = useCallback(
+    async (path: string) => {
+      // WriteFile creates the file (and parent dirs) — empty content is fine.
+      await api.writeFile(path, '', agentId || undefined);
+      fetchTree();
+    },
+    [agentId, fetchTree]
+  );
+
   const deleteFile = useCallback(
     async (path: string) => {
       await api.deleteFile(path, agentId || undefined);
@@ -146,6 +155,7 @@ export function useFileExplorer(agentId: string | null) {
     openFile,
     saveFile,
     createDir,
+    createFile,
     deleteFile,
     renameFile,
     toggleDir,
