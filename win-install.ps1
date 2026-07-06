@@ -96,7 +96,7 @@ function Setup-LanHandoff {
     $lanUrl = "http://${lanIp}:$port"
 
     $bash = @"
-mkdir -p ~/.powercodedeck; cd ~/.powercodedeck; touch .env
+mkdir -p ~/PowerCodeDeck; cd ~/PowerCodeDeck; touch .env
 grep -v '^POWERCODEDECK_BIND_HOST=' .env 2>/dev/null | grep -v '^POWERCODEDECK_LAN_URL=' > .env.tmp || true
 mv .env.tmp .env
 printf 'POWERCODEDECK_BIND_HOST=0.0.0.0\n' >> .env
@@ -233,14 +233,48 @@ Write-Host ""
 Say "Setting up LAN handoff (mobile on same Wi-Fi)..." Yellow
 Setup-LanHandoff
 
-# -- 5. Done --
+# -- 5. Windows launcher + shortcuts (so non-developers never type a path) --
+# A one-word `pcd` command (WindowsApps is on PATH), plus Desktop + Start Menu
+# shortcuts to launch and to open the data folder in Explorer.
+$pcdCmd  = 'wsl -d Ubuntu -u root /root/PowerCodeDeck/pcd'
+$dataUnc = '\\wsl.localhost\Ubuntu\root\PowerCodeDeck'
+try {
+    $winApps = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+    New-Item -ItemType Directory -Force -Path $winApps | Out-Null
+    Set-Content -Path (Join-Path $winApps 'pcd.cmd') -Value "@echo off`r`n$pcdCmd" -Encoding ASCII
+
+    $ws = New-Object -ComObject WScript.Shell
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $programs = [Environment]::GetFolderPath('Programs')
+    foreach ($base in @($desktop, $programs)) {
+        $run = $ws.CreateShortcut((Join-Path $base 'PowerCodeDeck.lnk'))
+        $run.TargetPath = "$env:SystemRoot\System32\cmd.exe"
+        $run.Arguments = "/c `"$pcdCmd`""
+        $run.IconLocation = "$env:SystemRoot\System32\wsl.exe,0"
+        $run.Save()
+
+        $open = $ws.CreateShortcut((Join-Path $base 'PowerCodeDeck 데이터 폴더.lnk'))
+        $open.TargetPath = 'explorer.exe'
+        $open.Arguments = $dataUnc
+        $open.Save()
+    }
+    Say "Created 'PowerCodeDeck' shortcut + a 'pcd' command." Gray
+} catch {
+    Say "Could not create shortcuts (non-fatal): $($_.Exception.Message)" Yellow
+}
+
+# -- 6. Done --
 Write-Host ""
 Write-Host "  ================================================" -ForegroundColor Green
 Say "Done! PowerCodeDeck is installed." Green
 Write-Host "  ================================================" -ForegroundColor Green
 Write-Host ""
-Say "Start it with:" White
-Write-Host '    wsl -d Ubuntu -u root -- bash -lc "cd ~/.powercodedeck && ./pcd"' -ForegroundColor Cyan
+Say "Start it (any of these):" White
+Write-Host "    - Double-click the 'PowerCodeDeck' shortcut on your Desktop" -ForegroundColor Cyan
+Write-Host "    - Or type:  pcd" -ForegroundColor Cyan
 Write-Host ""
 Say "Then open in your browser:  http://localhost:33033" White
+Write-Host ""
+Say "Your data lives in this folder (double-click 'PowerCodeDeck 데이터 폴더'):" White
+Write-Host "    $dataUnc" -ForegroundColor Cyan
 Write-Host ""

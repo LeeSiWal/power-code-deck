@@ -66,8 +66,8 @@ $lanUrl = "http://${lanIp}:$Port"
 # 3. Write BIND_HOST + LAN_URL into the WSL .env (base64 to avoid quoting issues).
 Say "Configuring $lanUrl in WSL .env ..." Yellow
 $bash = @"
-mkdir -p ~/.powercodedeck
-cd ~/.powercodedeck
+mkdir -p ~/PowerCodeDeck
+cd ~/PowerCodeDeck
 touch .env
 grep -v '^POWERCODEDECK_BIND_HOST=' .env 2>/dev/null | grep -v '^POWERCODEDECK_LAN_URL=' > .env.tmp || true
 mv .env.tmp .env
@@ -92,8 +92,8 @@ Write-Host ""
 Say "Phones on the same Wi-Fi can now reach:  $lanUrl" White
 Write-Host ""
 Say "Next:" White
-Say "  1) Restart PowerCodeDeck so the new .env applies:" Gray
-Say "       wsl -d Ubuntu -u root -- bash -lc `"cd ~/.powercodedeck && ./pcd`"" Cyan
+Say "  1) Restart PowerCodeDeck so the new .env applies (or just type: pcd):" Gray
+Say "       wsl -d Ubuntu -u root /root/PowerCodeDeck/pcd" Cyan
 Say "  2) Open a session, click 'Continue on Mobile', pick the Local Wi-Fi URL," Gray
 Say "     and scan the QR with your phone." Gray
 Write-Host ""

@@ -9,6 +9,7 @@ All notable changes to this project are documented here.
 - Agent-launch failures are now surfaced to the user (alert) instead of only logged to the console, so a failed launch is no longer a silent "no-op".
 
 ### Changed
+- **Visible data folder + shortcuts.** The install/data directory moved from the hidden `~/.powercodedeck` to **`~/PowerCodeDeck`** so non-developers can find it; existing installs are migrated automatically (the DB/.env move with it). On Windows the installer now creates a **Desktop + Start Menu shortcut** (launch and "데이터 폴더 열기" in Explorer) and a one-word **`pcd`** command, so no long WSL command is needed. The SQLite filename (`powercodedeck.db`) and bundle id are unchanged.
 - **No more cgo / C toolchain.** SQLite driver switched from `mattn/go-sqlite3` (cgo) to **`modernc.org/sqlite`** (pure Go), and the PTY layer from `creack/pty` (Unix-only) to **`aymanbagabas/go-pty`** (Unix PTY on mac/Linux, **ConPTY on Windows**). `pcd` now builds with `CGO_ENABLED=0` — no gcc/build-essential required.
 - `install.sh` no longer installs `build-essential`; it only needs `git`, `curl`, `ca-certificates`. Builds use `CGO_ENABLED=0`.
 

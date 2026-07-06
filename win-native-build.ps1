@@ -102,8 +102,12 @@ try {
 } finally { Pop-Location }
 if (-not (Test-Path $exeSrc)) { Say "Build failed - pcd.exe was not produced." Red; return }
 
-# 6. Install to %USERPROFILE%\.powercodedeck
-$dir = Join-Path $env:USERPROFILE '.powercodedeck'
+# 6. Install to %USERPROFILE%\PowerCodeDeck
+$dir = Join-Path $env:USERPROFILE 'PowerCodeDeck'
+$legacy = Join-Path $env:USERPROFILE '.powercodedeck'
+if ((Test-Path $legacy) -and -not (Test-Path $dir)) {
+    try { Move-Item $legacy $dir; Say "Moved data: .powercodedeck -> PowerCodeDeck" Gray } catch {}
+}
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 Get-Process pcd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500

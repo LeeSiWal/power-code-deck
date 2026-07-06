@@ -5,7 +5,8 @@ set -e
 #  PowerCodeDeck - One-Click Installer
 # ================================================
 
-INSTALL_DIR="$HOME/.powercodedeck"
+INSTALL_DIR="$HOME/PowerCodeDeck"
+LEGACY_INSTALL_DIR="$HOME/.powercodedeck"   # pre-0.2.x hidden dir (migrated below)
 BIN_NAME="pcd"
 
 echo ""
@@ -145,9 +146,24 @@ cd "$SCRIPT_DIR"
 
 echo "  ✓ Build complete"
 
-# ── 7. Install to ~/.powercodedeck ──
+# ── 7. Install to ~/PowerCodeDeck ──
 echo ""
 echo "  Installing to $INSTALL_DIR ..."
+
+# Migrate a pre-0.2.x hidden install (~/.powercodedeck) to the visible folder
+# so non-developers can find it. The DB/.env travel with the folder; strip any
+# absolute DB_PATH pinned in .env so it re-resolves next to the moved binary.
+if [ -d "$LEGACY_INSTALL_DIR" ] && [ ! -d "$INSTALL_DIR" ]; then
+    echo "  Moving existing data: $LEGACY_INSTALL_DIR → $INSTALL_DIR"
+    mv "$LEGACY_INSTALL_DIR" "$INSTALL_DIR"
+    if [ -f "$INSTALL_DIR/.env" ]; then
+        # Drop pinned absolute DB paths (old dir) so pcd re-resolves next to the
+        # moved binary. grep -vE is portable across GNU (WSL/Linux) and BSD (mac) sed.
+        grep -vE '^(POWERCODEDECK|AGENTDECK)_DB_PATH=' "$INSTALL_DIR/.env" > "$INSTALL_DIR/.env.tmp" 2>/dev/null \
+            && mv "$INSTALL_DIR/.env.tmp" "$INSTALL_DIR/.env" || rm -f "$INSTALL_DIR/.env.tmp"
+    fi
+    echo "  ✓ Migrated (your agents & settings are preserved)"
+fi
 
 mkdir -p "$INSTALL_DIR"
 cp "$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
@@ -173,7 +189,7 @@ if [ "$OS" = "Darwin" ]; then
     LAUNCHER="$HOME/Desktop/PowerCodeDeck.command"
     cat > "$LAUNCHER" << 'LAUNCHER_EOF'
 #!/bin/bash
-cd "$HOME/.powercodedeck"
+cd "$HOME/PowerCodeDeck"
 ./pcd
 LAUNCHER_EOF
     chmod +x "$LAUNCHER"
@@ -184,7 +200,7 @@ LAUNCHER_EOF
     mkdir -p "$APP_DIR"
     cat > "$APP_DIR/PowerCodeDeck" << 'APP_EOF'
 #!/bin/bash
-cd "$HOME/.powercodedeck"
+cd "$HOME/PowerCodeDeck"
 exec ./pcd
 APP_EOF
     chmod +x "$APP_DIR/PowerCodeDeck"

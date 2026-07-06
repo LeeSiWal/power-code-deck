@@ -30,7 +30,7 @@ directly. When WSL was just enabled it will ask to reboot and then resume
 automatically after you log back in. When it prints `Done!`, run:
 
 ```powershell
-wsl -d Ubuntu -u root -- bash -lc "cd ~/.powercodedeck && ./pcd"
+wsl -d Ubuntu -u root /root/PowerCodeDeck/pcd    # or just: pcd (shortcut created by the installer)
 ```
 
 Then open **http://localhost:33033**.
@@ -100,7 +100,7 @@ If SAC blocks the app you have two choices:
 
 1. **Turn Smart App Control off** — Settings → Privacy & security → Windows
    Security → App & browser control → Smart App Control → **Off**. Then run
-   `%USERPROFILE%\.powercodedeck\pcd.exe`.
+   `%USERPROFILE%\PowerCodeDeck\pcd.exe`.
    ⚠️ Once Off, re-enabling SAC requires a Windows reset.
 2. **Use WSL2 instead** (not affected by Smart App Control). This is why WSL2 is
    the recommended path.

@@ -26,7 +26,11 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 function Say($msg, $color = 'White') { Write-Host "  $msg" -ForegroundColor $color }
 
 $RepoRaw = 'https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/dist/pcd.exe'
-$InstallDir = Join-Path $env:USERPROFILE '.powercodedeck'
+$InstallDir = Join-Path $env:USERPROFILE 'PowerCodeDeck'
+$LegacyDir  = Join-Path $env:USERPROFILE '.powercodedeck'   # pre-0.2.x hidden dir
+if ((Test-Path $LegacyDir) -and -not (Test-Path $InstallDir)) {
+    try { Move-Item $LegacyDir $InstallDir; Say "Moved data: .powercodedeck -> PowerCodeDeck" Gray } catch {}
+}
 $Exe = Join-Path $InstallDir 'pcd.exe'
 
 Write-Host ""
