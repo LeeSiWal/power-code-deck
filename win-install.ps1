@@ -327,17 +327,19 @@ try {
     $launchPs1 = @"
 `$ErrorActionPreference = 'SilentlyContinue'
 `$user = '$LinuxUser'
-`$running = (wsl -d Ubuntu -u `$user -- bash -lc 'pgrep -f PowerCodeDeck/pcd >/dev/null 2>&1 && echo yes') 2>`$null
-if ("`$running".Trim() -ne 'yes') {
-  # Run pcd in a MINIMIZED (not hidden) window: the window keeps the WSL distro
-  # and pcd alive. A hidden/detached process can be reaped when the launcher
-  # exits, so the server would die right after starting. Close that window to stop.
+# Fast TCP probe (~200ms) instead of the slow Test-NetConnection (~1s each).
+function Test-Pcd {
+  try {
+    `$c = New-Object System.Net.Sockets.TcpClient
+    `$ok = `$c.BeginConnect('127.0.0.1', 33033, `$null, `$null).AsyncWaitHandle.WaitOne(200)
+    `$c.Close(); return `$ok
+  } catch { return `$false }
+}
+# If pcd is already up, skip WSL entirely and just open the browser (instant).
+if (-not (Test-Pcd)) {
+  # Minimized (not hidden) window keeps the WSL distro + pcd alive; close it to stop.
   Start-Process wsl -ArgumentList '-d','Ubuntu','-u',`$user,'--','bash','-lc','exec ~/PowerCodeDeck/pcd' -WindowStyle Minimized
-  # Wait for the port so the first browser open isn't too early.
-  for (`$i = 0; `$i -lt 40; `$i++) {
-    Start-Sleep -Milliseconds 500
-    if ((Test-NetConnection -ComputerName localhost -Port 33033 -WarningAction SilentlyContinue).TcpTestSucceeded) { break }
-  }
+  for (`$i = 0; `$i -lt 80; `$i++) { if (Test-Pcd) { break }; Start-Sleep -Milliseconds 200 }
 }
 Start-Process 'http://localhost:33033'
 "@
