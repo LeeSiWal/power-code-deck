@@ -329,8 +329,15 @@ try {
 `$user = '$LinuxUser'
 `$running = (wsl -d Ubuntu -u `$user -- bash -lc 'pgrep -f PowerCodeDeck/pcd >/dev/null 2>&1 && echo yes') 2>`$null
 if ("`$running".Trim() -ne 'yes') {
-  Start-Process -WindowStyle Hidden wsl -ArgumentList '-d','Ubuntu','-u',`$user,'--','bash','-lc','~/PowerCodeDeck/pcd'
-  Start-Sleep -Seconds 3
+  # Run pcd in a MINIMIZED (not hidden) window: the window keeps the WSL distro
+  # and pcd alive. A hidden/detached process can be reaped when the launcher
+  # exits, so the server would die right after starting. Close that window to stop.
+  Start-Process wsl -ArgumentList '-d','Ubuntu','-u',`$user,'--','bash','-lc','exec ~/PowerCodeDeck/pcd' -WindowStyle Minimized
+  # Wait for the port so the first browser open isn't too early.
+  for (`$i = 0; `$i -lt 40; `$i++) {
+    Start-Sleep -Milliseconds 500
+    if ((Test-NetConnection -ComputerName localhost -Port 33033 -WarningAction SilentlyContinue).TcpTestSucceeded) { break }
+  }
 }
 Start-Process 'http://localhost:33033'
 "@
