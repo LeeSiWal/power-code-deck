@@ -231,9 +231,12 @@ mkdir -p /home/$U
 for d in PowerCodeDeck power-code-deck code; do
   if [ -e /root/$d ] && [ ! -e /home/$U/$d ]; then mv /root/$d /home/$U/$d; fi
 done
-# Drop an absolute DB_PATH pinned to the old /root location so pcd re-resolves.
+# One-time reset of a migrated .env: drop the absolute DB_PATH pinned to /root
+# (pcd re-resolves) AND any leftover auth (PIN/password) so the documented
+# no-auth default is restored. This runs only during the root->user migration,
+# so a PIN the user intentionally sets later is never wiped.
 if [ -f /home/$U/PowerCodeDeck/.env ]; then
-  grep -vE '^(POWERCODEDECK|AGENTDECK)_DB_PATH=' /home/$U/PowerCodeDeck/.env > /home/$U/PowerCodeDeck/.env.tmp 2>/dev/null && mv /home/$U/PowerCodeDeck/.env.tmp /home/$U/PowerCodeDeck/.env || rm -f /home/$U/PowerCodeDeck/.env.tmp
+  grep -vE '^(POWERCODEDECK|AGENTDECK)_(DB_PATH|AUTH_ENABLED|AUTH_METHOD|PIN|PASSWORD_HASH)=' /home/$U/PowerCodeDeck/.env > /home/$U/PowerCodeDeck/.env.tmp 2>/dev/null && mv /home/$U/PowerCodeDeck/.env.tmp /home/$U/PowerCodeDeck/.env || rm -f /home/$U/PowerCodeDeck/.env.tmp
 fi
 mkdir -p /home/$U/PowerCodeDeck/projects
 chown -R "$U":"$U" /home/$U
@@ -261,11 +264,17 @@ export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update
 sudo apt-get install -y git curl ca-certificates
 cd ~
-if [ -d power-code-deck ]; then
-  cd power-code-deck && (git pull --ff-only || true)
-else
+# A prior clone can be "up to date" yet have a deleted working-tree file (git
+# pull won't restore it). Re-clone if incomplete, then hard-reset to origin/main
+# so every tracked file (install.sh included) is guaranteed present.
+if [ ! -f power-code-deck/install.sh ] || [ ! -d power-code-deck/.git ]; then
+  rm -rf power-code-deck
   git clone https://github.com/LeeSiWal/power-code-deck.git
-  cd power-code-deck
+fi
+cd power-code-deck
+git fetch origin 2>/dev/null && git reset --hard origin/main 2>/dev/null || true
+if [ ! -f install.sh ]; then
+  cd ~ && rm -rf power-code-deck && git clone https://github.com/LeeSiWal/power-code-deck.git && cd power-code-deck
 fi
 bash install.sh </dev/null
 # Default project location = WSL-home projects (fast + reliable file watching).
