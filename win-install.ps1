@@ -80,43 +80,6 @@ function Test-DistroRuns {
     } catch { return $false }
 }
 
-# Set up same-Wi-Fi mobile handoff: detect the Windows LAN IP + WSL IP, write
-# BIND_HOST/LAN_URL into the WSL .env, and forward the port + open the firewall.
-function Setup-LanHandoff {
-    $port = 33033
-    $lanIp = $null
-    try {
-        $lanIp = (Get-NetIPConfiguration | Where-Object {
-                $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' -and
-                $_.InterfaceAlias -notmatch 'WSL|Loopback|vEthernet'
-            } | Select-Object -First 1).IPv4Address.IPAddress
-    } catch {}
-    if (-not $lanIp) { Say "LAN handoff: no LAN IP detected; skipping." Yellow; return }
-    $wslIp = ((wsl hostname -I) -split '\s+' | Where-Object { $_ }) | Select-Object -First 1
-    if (-not $wslIp) { return }
-    $lanUrl = "http://${lanIp}:$port"
-
-    $bash = @"
-mkdir -p ~/PowerCodeDeck; cd ~/PowerCodeDeck; touch .env
-grep -v '^POWERCODEDECK_BIND_HOST=' .env 2>/dev/null | grep -v '^POWERCODEDECK_LAN_URL=' > .env.tmp || true
-mv .env.tmp .env
-printf 'POWERCODEDECK_BIND_HOST=0.0.0.0\n' >> .env
-printf 'POWERCODEDECK_LAN_URL=$lanUrl\n' >> .env
-"@
-    $b = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($bash -replace "`r`n", "`n")))
-    wsl -d Ubuntu -u $script:LinuxUser -- bash -lc "echo $b | base64 -d | bash"
-
-    # Bind the forward to the LAN IP ONLY, never 0.0.0.0 — a 0.0.0.0 rule also
-    # captures 127.0.0.1, shadowing WSL2's native localhost forwarding and
-    # sending localhost to a (soon-stale) WSL IP. Remove any old 0.0.0.0 rule.
-    netsh interface portproxy delete v4tov4 listenport=$port listenaddress=0.0.0.0 2>$null | Out-Null
-    netsh interface portproxy delete v4tov4 listenport=$port listenaddress=$lanIp 2>$null | Out-Null
-    netsh interface portproxy add v4tov4 listenport=$port listenaddress=$lanIp connectport=$port connectaddress=$wslIp | Out-Null
-    netsh advfirewall firewall delete rule name="PowerCodeDeck $port" 2>$null | Out-Null
-    netsh advfirewall firewall add rule name="PowerCodeDeck $port" dir=in action=allow protocol=TCP localport=$port | Out-Null
-    Say "LAN handoff ready - phones on this Wi-Fi can open:  $lanUrl" Green
-    Say "(WSL IP changes on reboot - re-run to refresh mobile access.)" Gray
-}
 
 # Ensure we run as Administrator. WSL feature install, port forwarding and the
 # firewall rule all need it - relaunch elevated (UAC) if we aren't.
@@ -288,9 +251,9 @@ bash install.sh </dev/null
 # idempotent and clears leftovers from an earlier PIN setup.
 cd ~/PowerCodeDeck
 touch .env
-grep -vE '^(POWERCODEDECK_|AGENTDECK_)(AUTH_ENABLED|AUTH_METHOD|PIN|PASSWORD_HASH|WORKSPACE_ROOT)=' .env > .env.tmp 2>/dev/null || true
+grep -vE '^(POWERCODEDECK_|AGENTDECK_)(AUTH_ENABLED|AUTH_METHOD|PIN|PASSWORD_HASH|WORKSPACE_ROOT|BIND_HOST|LAN_URL)=' .env > .env.tmp 2>/dev/null || true
 mv .env.tmp .env 2>/dev/null || true
-printf 'POWERCODEDECK_AUTH_ENABLED=false\nPOWERCODEDECK_AUTH_METHOD=none\nPOWERCODEDECK_WORKSPACE_ROOT=%s/PowerCodeDeck/projects\n' "$HOME" >> .env
+printf 'POWERCODEDECK_AUTH_ENABLED=false\nPOWERCODEDECK_AUTH_METHOD=none\nPOWERCODEDECK_BIND_HOST=0.0.0.0\nPOWERCODEDECK_WORKSPACE_ROOT=%s/PowerCodeDeck/projects\n' "$HOME" >> .env
 mkdir -p ~/PowerCodeDeck/projects
 '@
 $bl = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($linux -replace "`r`n", "`n")))
@@ -309,10 +272,13 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 
-# -- 5. LAN handoff (same Wi-Fi mobile access) --
-Write-Host ""
-Say "Setting up LAN handoff (mobile on same Wi-Fi)..." Yellow
-Setup-LanHandoff
+# -- 5. Remove any leftover LAN port-forward from earlier installs --
+# The old netsh port-forward bound 0.0.0.0:33033, which ALSO captured localhost
+# and shadowed WSL2's native localhost forwarding — routing localhost to a stale
+# WSL IP and causing "server not found / old PIN" confusion. pcd binds localhost
+# by default, which WSL2 forwards for free, so no port-forward is needed for local
+# use. Same-Wi-Fi mobile access is available on demand via win-lan-handoff.ps1.
+netsh interface portproxy delete v4tov4 listenport=33033 listenaddress=0.0.0.0 2>$null | Out-Null
 
 # -- 6. Windows launcher files + 3 desktop shortcuts (no WSL path to memorize) --
 $appDir  = Join-Path $env:LOCALAPPDATA 'PowerCodeDeck'
