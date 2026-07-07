@@ -294,27 +294,38 @@ $projUnc = "\\wsl.localhost\Ubuntu\home\$LinuxUser\code"
 try {
     New-Item -ItemType Directory -Force -Path $appDir | Out-Null
 
-    # Launcher 1: start pcd if it isn't already up, then open the browser.
-    # Decide by the actual WSL pcd process, NOT the Windows port: a leftover
-    # netsh portproxy keeps 33033 "listening" even when pcd is down, which would
-    # otherwise make us skip starting it and open a dead/old page.
+    # Launcher: self-healing. One button that guarantees a HEALTHY pcd, then
+    # opens the browser. It repairs the stuck states we used to hit manually —
+    # a stale/dead server or a leftover port-forward on 33033.
     $launchPs1 = @"
 `$ErrorActionPreference = 'SilentlyContinue'
 `$user = '$LinuxUser'
-# Fast TCP probe (~200ms) instead of the slow Test-NetConnection (~1s each).
-function Test-Pcd {
+# Is a real, healthy PowerCodeDeck answering? (HTTP, not just an open port —
+# a leftover port-forward can keep 33033 "listening" with nothing behind it.)
+function Test-Health {
+  try {
+    `$r = Invoke-WebRequest -Uri 'http://localhost:33033/api/health' -UseBasicParsing -TimeoutSec 2
+    return (`$r.StatusCode -eq 200 -and `$r.Content -match 'PowerCodeDeck')
+  } catch { return `$false }
+}
+function Test-Port {
   try {
     `$c = New-Object System.Net.Sockets.TcpClient
     `$ok = `$c.BeginConnect('127.0.0.1', 33033, `$null, `$null).AsyncWaitHandle.WaitOne(200)
     `$c.Close(); return `$ok
   } catch { return `$false }
 }
-# If pcd is already up, skip WSL entirely and just open the browser (instant).
-if (-not (Test-Pcd)) {
-  # Minimized (not hidden) window keeps the WSL distro + pcd alive; close it to stop.
-  Start-Process wsl -ArgumentList '-d','Ubuntu','-u',`$user,'--','bash','-lc','exec ~/PowerCodeDeck/pcd' -WindowStyle Minimized
-  for (`$i = 0; `$i -lt 80; `$i++) { if (Test-Pcd) { break }; Start-Sleep -Milliseconds 200 }
+if (Test-Health) { Start-Process 'http://localhost:33033'; return }   # already up -> instant
+# Not healthy. If something is squatting on the port (dead server / stale
+# forward), clean it up and hard-restart; otherwise just start pcd.
+if (Test-Port) {
+  netsh interface portproxy delete v4tov4 listenport=33033 listenaddress=0.0.0.0 2>`$null | Out-Null
+  wsl --shutdown
+  Start-Sleep -Seconds 4
 }
+# Minimized (not hidden) window keeps the WSL distro + pcd alive; close it to stop.
+Start-Process wsl -ArgumentList '-d','Ubuntu','-u',`$user,'--','bash','-lc','exec ~/PowerCodeDeck/pcd' -WindowStyle Minimized
+for (`$i = 0; `$i -lt 100; `$i++) { if (Test-Health) { break }; Start-Sleep -Milliseconds 300 }
 Start-Process 'http://localhost:33033'
 "@
     Set-Content -Path (Join-Path $appDir 'launch-powercodedeck.ps1') -Value $launchPs1 -Encoding UTF8
