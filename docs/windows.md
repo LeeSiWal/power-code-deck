@@ -46,8 +46,8 @@ PowerCodeDeck runs as a **normal Linux user** (not root — derived from your
 Windows username, or `pcduser`) and stores projects **inside WSL** for
 performance and reliable file watching (inotify does not work on `/mnt/c`).
 
-- Actual WSL path: `/home/<user>/PowerCodeDeck/projects`
-- Windows Explorer path: `\\wsl.localhost\Ubuntu\home\<user>\PowerCodeDeck\projects`
+- Actual WSL path: `/home/<user>/code`
+- Windows Explorer path: `\\wsl.localhost\Ubuntu\home\<user>\code`
 
 The launcher scripts live in `%LOCALAPPDATA%\PowerCodeDeck\`. The "VSCode로
 열기" shortcut needs VS Code + the WSL extension; if `code` isn't found in WSL,
@@ -55,7 +55,7 @@ it prints how to set it up (open VS Code once and run "WSL: Connect to WSL").
 
 **Verify (PowerShell):**
 ```powershell
-wsl -d Ubuntu -- bash -lc "whoami; ls -la ~/PowerCodeDeck/projects"
+wsl -d Ubuntu -- bash -lc "whoami; ls -la ~/code"
 ```
 `whoami` should NOT be `root`, and the projects folder should exist owned by
 your user.

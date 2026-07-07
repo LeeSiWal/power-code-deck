@@ -67,7 +67,7 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 
 > - 실행하려는 CLI(`claude` / `gemini` / `codex`)는 **미리 설치**돼 있어야 합니다 → [사전 요구사항](#사전-요구사항)
 > - WSL2는 BIOS에서 **가상화가 켜져 있어야** 합니다. 실패 시 [가상화 설정](#가상화-설정이-필요한-경우) 참고.
-> - PowerCodeDeck은 **root가 아니라 일반 Linux 사용자**로 실행되고, 프로젝트는 속도·파일 자동갱신을 위해 **WSL 홈**(`~/PowerCodeDeck/projects`)에 저장됩니다. 자세한 내용은 [docs/windows.md](docs/windows.md).
+> - PowerCodeDeck은 **root가 아니라 일반 Linux 사용자**로 실행되고, 프로젝트는 속도·파일 자동갱신을 위해 **WSL 홈**(`~/code`)에 저장됩니다. 자세한 내용은 [docs/windows.md](docs/windows.md).
 
 ---
 
@@ -243,8 +243,8 @@ Windows에서 로컬로 쓰는 **권장 경로**입니다. 이 스크립트는 *
 
 - PowerCodeDeck은 **root가 아니라 일반 Linux 사용자**로 실행됩니다(Windows 사용자명에서 자동 생성, 불가하면 `pcduser`).
 - 프로젝트는 **속도와 파일 자동갱신(inotify)** 을 위해 C드라이브가 아닌 **WSL 홈**에 저장됩니다.
-  - 실제 경로: `/home/<user>/PowerCodeDeck/projects`
-  - 탐색기 경로: `\\wsl.localhost\Ubuntu\home\<user>\PowerCodeDeck\projects`
+  - 실제 경로: `/home/<user>/code`
+  - 탐색기 경로: `\\wsl.localhost\Ubuntu\home\<user>\code`
   - (C드라이브/`/mnt/c`에 두면 파일 자동갱신이 동작하지 않고 빌드가 느려 권장하지 않습니다.)
 
 #### 가상화 설정이 필요한 경우

@@ -205,7 +205,7 @@ done
 if [ -f /home/$U/PowerCodeDeck/.env ]; then
   grep -vE '^(POWERCODEDECK|AGENTDECK)_(DB_PATH|AUTH_ENABLED|AUTH_METHOD|PIN|PASSWORD_HASH)=' /home/$U/PowerCodeDeck/.env > /home/$U/PowerCodeDeck/.env.tmp 2>/dev/null && mv /home/$U/PowerCodeDeck/.env.tmp /home/$U/PowerCodeDeck/.env || rm -f /home/$U/PowerCodeDeck/.env.tmp
 fi
-mkdir -p /home/$U/PowerCodeDeck/projects
+mkdir -p /home/$U/code
 chown -R "$U":"$U" /home/$U
 '@
 $provision = $provision -replace '__USER__', $LinuxUser
@@ -253,8 +253,16 @@ cd ~/PowerCodeDeck
 touch .env
 grep -vE '^(POWERCODEDECK_|AGENTDECK_)(AUTH_ENABLED|AUTH_METHOD|PIN|PASSWORD_HASH|WORKSPACE_ROOT|BIND_HOST|LAN_URL)=' .env > .env.tmp 2>/dev/null || true
 mv .env.tmp .env 2>/dev/null || true
-printf 'POWERCODEDECK_AUTH_ENABLED=false\nPOWERCODEDECK_AUTH_METHOD=none\nPOWERCODEDECK_BIND_HOST=0.0.0.0\nPOWERCODEDECK_WORKSPACE_ROOT=%s/PowerCodeDeck/projects\n' "$HOME" >> .env
-mkdir -p ~/PowerCodeDeck/projects
+# Projects live in ONE clear place, ~/code — separate from the app folder
+# (~/PowerCodeDeck holds only pcd/db/.env). This matches the conventional
+# ~/code and where earlier projects were migrated to.
+printf 'POWERCODEDECK_AUTH_ENABLED=false\nPOWERCODEDECK_AUTH_METHOD=none\nPOWERCODEDECK_BIND_HOST=0.0.0.0\nPOWERCODEDECK_WORKSPACE_ROOT=%s/code\n' "$HOME" >> .env
+mkdir -p ~/code
+# Consolidate any projects created under the old app-nested location.
+if [ -d ~/PowerCodeDeck/projects ]; then
+  find ~/PowerCodeDeck/projects -mindepth 1 -maxdepth 1 -exec mv -t ~/code {} + 2>/dev/null || true
+  rmdir ~/PowerCodeDeck/projects 2>/dev/null || true
+fi
 '@
 $bl = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($linux -replace "`r`n", "`n")))
 wsl -d Ubuntu -u $LinuxUser -- bash -lc "echo $bl | base64 -d > /tmp/pcd-setup.sh && bash /tmp/pcd-setup.sh"
@@ -282,7 +290,7 @@ netsh interface portproxy delete v4tov4 listenport=33033 listenaddress=0.0.0.0 2
 
 # -- 6. Windows launcher files + 3 desktop shortcuts (no WSL path to memorize) --
 $appDir  = Join-Path $env:LOCALAPPDATA 'PowerCodeDeck'
-$projUnc = "\\wsl.localhost\Ubuntu\home\$LinuxUser\PowerCodeDeck\projects"
+$projUnc = "\\wsl.localhost\Ubuntu\home\$LinuxUser\code"
 try {
     New-Item -ItemType Directory -Force -Path $appDir | Out-Null
 
@@ -316,7 +324,7 @@ Start-Process 'http://localhost:33033'
 `$user = '$LinuxUser'
 `$has = (wsl -d Ubuntu -u `$user -- bash -lc 'command -v code >/dev/null 2>&1 && echo yes') 2>`$null
 if ("`$has".Trim() -eq 'yes') {
-  wsl -d Ubuntu -u `$user -- bash -lc 'cd ~/PowerCodeDeck/projects && code .'
+  wsl -d Ubuntu -u `$user -- bash -lc 'cd ~/code && code .'
 } else {
   Write-Host ''
   Write-Host '  VS Code WSL integration was not found.' -ForegroundColor Yellow
