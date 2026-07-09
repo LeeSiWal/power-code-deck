@@ -24,6 +24,36 @@ export interface SubAgent {
   completedAt?: number;
 }
 
+// Structured agent activity derived server-side from the Claude Code transcript
+// (replaces the old terminal-scraping SubAgent heuristic).
+export interface ActivityNode {
+  id: string;
+  kind: 'main' | 'subagent';
+  label: string;
+  status: 'working' | 'thinking' | 'idle' | 'done';
+  currentTool?: string;
+  currentTarget?: string;
+  toolCount: number;
+  startedAt: number;
+  lastActivityAt: number;
+  parent?: string;
+}
+
+export interface ActivityEvent {
+  node: string;
+  tool: string;
+  target?: string;
+  sidechain: boolean;
+  startedAt: number;
+  endedAt?: number;
+}
+
+export interface AgentActivity {
+  agentId: string;
+  nodes: ActivityNode[];
+  recent: ActivityEvent[];
+}
+
 export interface AgentNotification {
   id?: number;
   agentId: string;
@@ -68,12 +98,16 @@ interface AppState {
   currentAgentId: string | null;
   setCurrentAgentId: (id: string | null) => void;
 
-  // Sub-agents
+  // Sub-agents (legacy terminal-scraping heuristic — kept for non-Claude presets)
   subAgents: Map<string, SubAgent[]>;
   setSubAgents: (agentId: string, subs: SubAgent[]) => void;
   addSubAgent: (agentId: string, sub: SubAgent) => void;
   updateSubAgent: (agentId: string, subId: string, updates: Partial<SubAgent>) => void;
   cleanupSubAgents: (agentId: string, maxAge: number) => void;
+
+  // Structured agent activity (transcript-based)
+  activity: Map<string, AgentActivity>;
+  setActivity: (agentId: string, a: AgentActivity) => void;
 
   // Settings
   soundEnabled: boolean;
@@ -167,7 +201,15 @@ export const useAppStore = create<AppState>((set) => ({
       return { subAgents: m };
     }),
 
-  soundEnabled: localStorage.getItem('soundEnabled') !== 'false',
+  activity: new Map(),
+  setActivity: (agentId, a) =>
+    set((s) => {
+      const m = new Map(s.activity);
+      m.set(agentId, a);
+      return { activity: m };
+    }),
+
+  soundEnabled: localStorage.getItem('soundEnabled') === 'true',
   setSoundEnabled: (v) => {
     localStorage.setItem('soundEnabled', String(v));
     set({ soundEnabled: v });

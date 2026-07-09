@@ -15,7 +15,7 @@ import { StatusBadge } from '../components/layout/StatusBadge';
 import { BrowserPanel } from '../components/browser/BrowserPanel';
 import { useDevice } from '../hooks/useDevice';
 import { useFileExplorer } from '../hooks/useFileExplorer';
-import { useSubAgents } from '../hooks/useSubAgents';
+import { useAgentActivity } from '../hooks/useAgentActivity';
 import { IconBack, IconFiles, IconClose, IconTerminal, AGENT_ICON_MAP } from '../components/icons';
 import { api } from '../lib/api';
 import { generatePalette } from '../lib/paletteGenerator';
@@ -93,7 +93,7 @@ export function TerminalPage() {
     setSelectedFile,
   } = useFileExplorer(agentId || null);
 
-  const { subAgents } = useSubAgents(agentId);
+  const { activity } = useAgentActivity(agentId);
 
   useEffect(() => {
     if (agentId) {
@@ -387,7 +387,7 @@ export function TerminalPage() {
               </div>
               <div className="h-[calc(100%-28px)] overflow-hidden">
                 <SubAgentPanel
-                  subAgents={subAgents}
+                  activity={activity}
                   palette={generatePalette(agent?.colorHue ?? 220)}
                   onClose={() => setMobileAnimOpen(false)}
                 />
@@ -605,7 +605,7 @@ export function TerminalPage() {
               {rightTab === 'browser' ? (
                 <BrowserPanel agentId={agentId} onClose={() => setRightPanelOpen(false)} />
               ) : (
-                <SubAgentPanel subAgents={subAgents} palette={generatePalette(agent?.colorHue ?? 220)} onClose={() => setRightPanelOpen(false)} />
+                <SubAgentPanel activity={activity} palette={generatePalette(agent?.colorHue ?? 220)} onClose={() => setRightPanelOpen(false)} />
               )}
             </div>
           </>

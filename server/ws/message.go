@@ -27,6 +27,7 @@ const (
 	EventAgentStatus    = "agent:status"
 	EventAgentCreated   = "agent:created"
 	EventAgentDestroyed = "agent:destroyed"
+	EventAgentActivity  = "agent:activity"
 	EventFileChanged    = "file:changed"
 	EventFileTree       = "file:tree"
 	EventPong           = "pong"

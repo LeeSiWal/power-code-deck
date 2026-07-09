@@ -34,12 +34,31 @@ var colorPool = []struct {
 }
 
 type AgentService struct {
-	db     *sql.DB
-	engine SessionEngine
+	db       *sql.DB
+	engine   SessionEngine
+	activity *ActivityManager
 }
 
 func NewAgentService(db *sql.DB, engine SessionEngine) *AgentService {
 	return &AgentService{db: db, engine: engine}
+}
+
+// SetActivityManager wires the transcript-based activity watcher so sessions start/stop
+// watching in lockstep with their lifecycle. Optional — nil is safe.
+func (s *AgentService) SetActivityManager(m *ActivityManager) {
+	s.activity = m
+}
+
+func (s *AgentService) startActivity(a *Agent) {
+	if s.activity != nil {
+		s.activity.Start(a.ID, a.Preset, a.Command, a.WorkingDir)
+	}
+}
+
+func (s *AgentService) stopActivity(id string) {
+	if s.activity != nil {
+		s.activity.Stop(id)
+	}
 }
 
 func (s *AgentService) List() ([]Agent, error) {
@@ -201,6 +220,7 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 		return nil, err
 	}
 
+	s.startActivity(agent)
 	return agent, nil
 }
 
@@ -211,6 +231,7 @@ func (s *AgentService) Delete(id string) error {
 
 	// Explicit user delete → Kill the underlying process.
 	s.engine.Kill(id)
+	s.stopActivity(id)
 
 	_, err := s.db.Exec("DELETE FROM agents WHERE id = ?", id)
 	return err
@@ -239,6 +260,7 @@ func (s *AgentService) Restart(id string) (*Agent, error) {
 
 	s.db.Exec("UPDATE agents SET status = 'running', updated_at = datetime('now') WHERE id = ?", id)
 	agent.Status = "running"
+	s.startActivity(agent)
 	return agent, nil
 }
 

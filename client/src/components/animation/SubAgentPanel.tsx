@@ -1,6 +1,6 @@
-import { SubAgent, useAppStore } from '../../stores/appStore';
-import { SubAgentOrbital } from './SubAgentOrbital';
-import { SubAgentTimeline } from './SubAgentTimeline';
+import { AgentActivity, useAppStore } from '../../stores/appStore';
+import { AgentActivityTree } from './AgentActivityTree';
+import { ActivityStrip } from './ActivityStrip';
 import { PixelSprite } from './PixelSprite';
 import { getSpritePreset, type CharacterTheme } from './sprites/presets';
 import { generatePalette } from '../../lib/paletteGenerator';
@@ -15,13 +15,14 @@ const PREVIEW_TYPES = ['read', 'write', 'bash', 'search', 'think'];
 const PREVIEW_PALETTE = generatePalette(220);
 
 interface SubAgentPanelProps {
-  subAgents: SubAgent[];
+  activity?: AgentActivity;
   palette: string[];
   onClose: () => void;
 }
 
-export function SubAgentPanel({ subAgents, palette, onClose }: SubAgentPanelProps) {
+export function SubAgentPanel({ activity, palette, onClose }: SubAgentPanelProps) {
   const { characterTheme, setCharacterTheme, soundEnabled, setSoundEnabled } = useAppStore();
+  const hasActivity = !!activity && activity.nodes.length > 0;
 
   return (
     <div className="flex flex-col h-full bg-deck-surface overflow-hidden">
@@ -33,18 +34,18 @@ export function SubAgentPanel({ subAgents, palette, onClose }: SubAgentPanelProp
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
-        {subAgents.length > 0 ? (
+        {hasActivity && activity ? (
           <>
-            <div className="flex justify-center">
-              <SubAgentOrbital subAgents={subAgents} palette={palette} size="sm" />
+            <AgentActivityTree activity={activity} palette={palette} />
+            <div className="border-t border-deck-border pt-3">
+              <ActivityStrip activity={activity} palette={palette} />
             </div>
-            <SubAgentTimeline subAgents={subAgents} palette={palette} />
           </>
         ) : (
           <div className="text-center text-xs text-deck-text-dim py-8">
             No activity detected yet.
             <br />
-            <span className="text-[10px] mt-1 block">Characters will appear when the agent starts working.</span>
+            <span className="text-[10px] mt-1 block">The tree appears when the agent starts using tools.</span>
           </div>
         )}
 

@@ -48,6 +48,10 @@ func main() {
 	var sessionEngine services.SessionEngine = services.NewInternalPtySessionEngine(cfg.ScrollbackBytes)
 	log.Printf("Session engine: internal")
 	agentSvc := services.NewAgentService(database, sessionEngine)
+	// Transcript-based agent/sub-agent activity watcher (replaces client-side
+	// terminal scraping). Wired to the hub below once it exists.
+	activitySvc := services.NewActivityManager()
+	agentSvc.SetActivityManager(activitySvc)
 	fileSvc := services.NewFileService()
 	watcherSvc := services.NewWatcherService()
 	projectSvc := services.NewProjectService(database)
@@ -69,6 +73,11 @@ func main() {
 			AgentID: sessionID,
 			Data:    string(data),
 		})
+	})
+
+	// Structured agent/sub-agent activity snapshots → broadcast to that session's viewers.
+	activitySvc.SetEmitter(func(agentID string, snap services.AgentActivitySnapshot) {
+		hub.BroadcastToAgent(agentID, ws.EventAgentActivity, snap)
 	})
 
 	// Router
