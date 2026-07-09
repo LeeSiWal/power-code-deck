@@ -44,9 +44,15 @@ export default function App() {
     let cancelled = false;
 
     const apply = async (cfg: any) => {
-      if (fromHandoff && cfg.authEnabled && !localStorage.getItem('accessToken')) {
-        // Redeemed a QR: trade the httpOnly handoff cookie for real tokens.
-        await api.handoffExchange().catch(() => {});
+      if (cfg.authEnabled) {
+        if (fromHandoff && !localStorage.getItem('accessToken')) {
+          // Redeemed a QR: trade the httpOnly handoff cookie for real tokens.
+          await api.handoffExchange().catch(() => {});
+        }
+      } else if (!localStorage.getItem('accessToken')) {
+        // No-auth mode still needs a token for the WebSocket. Mint an anonymous
+        // one; ignore failures so the UI still renders (the WS layer retries).
+        await api.getAnonymousToken().catch(() => {});
       }
       if (cancelled) return;
       setAuthConfig({
@@ -82,7 +88,9 @@ export default function App() {
         try {
           const cfg = await api.getAuthConfig();
           if (cancelled) return;
-          if (cfg.authEnabled) await apply(cfg);
+          // apply() handles both: correct to a login if auth is on, or mint the
+          // anonymous token the WebSocket needs if it's off.
+          await apply(cfg);
           return;
         } catch { /* keep trying */ }
       }

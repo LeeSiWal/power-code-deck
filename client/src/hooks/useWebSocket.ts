@@ -1,28 +1,36 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { agentDeckWS } from '../lib/ws';
 import { api } from '../lib/api';
 import { useAppStore } from '../stores/appStore';
 
 export function useWebSocket() {
-  const connected = useRef(false);
-  const { setAgents, addAgent, removeAgent, updateAgentStatus, isAuthenticated, authConfig } = useAppStore();
-  const authEnabled = authConfig?.authEnabled ?? true;
+  const { setAgents, addAgent, removeAgent, updateAgentStatus, isAuthenticated } = useAppStore();
 
   useEffect(() => {
-    if (isAuthenticated) return;
-    agentDeckWS.disconnect();
-    connected.current = false;
-  }, [isAuthenticated]);
+    if (!isAuthenticated) {
+      agentDeckWS.disconnect();
+      return;
+    }
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    // In no-auth mode there is no token; the server accepts the WS anyway.
-    const token = api.getToken();
-    if ((authEnabled && !token) || connected.current) return;
-
-    agentDeckWS.connect(token || '');
-    connected.current = true;
+    // The WebSocket always authenticates now — even in no-auth mode, where the
+    // token is an anonymous one minted at boot. That token may still be minting
+    // on first paint, so connect as soon as it appears rather than with an empty
+    // token (which the server would reject).
+    let cancelled = false;
+    let poll: number | undefined;
+    const connectWhenReady = () => {
+      const token = api.getToken();
+      if (token) {
+        agentDeckWS.connect(token);
+        return true;
+      }
+      return false;
+    };
+    if (!connectWhenReady()) {
+      poll = window.setInterval(() => {
+        if (cancelled || connectWhenReady()) window.clearInterval(poll);
+      }, 300);
+    }
 
     const unsubs = [
       agentDeckWS.on('agent:list', (agents) => setAgents(agents)),
@@ -60,9 +68,11 @@ export function useWebSocket() {
     ];
 
     return () => {
+      cancelled = true;
+      if (poll) window.clearInterval(poll);
       unsubs.forEach((fn) => fn());
     };
-  }, [isAuthenticated, authEnabled]);
+  }, [isAuthenticated]);
 
   return { ws: agentDeckWS };
 }

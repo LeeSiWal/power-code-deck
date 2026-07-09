@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -58,8 +59,8 @@ func main() {
 	handoffSvc := services.NewHandoffService(database)
 	handoffSvc.CleanupExpired()
 
-	// WebSocket hub
-	hub := ws.NewHub(sessionEngine, watcherSvc, agentSvc, gitSvc, portScanner, notifSvc)
+	// WebSocket hub. The allow-list rejects cross-origin handshakes (drive-by RCE).
+	hub := ws.NewHub(sessionEngine, watcherSvc, agentSvc, gitSvc, portScanner, notifSvc, cfg.AllowedOrigins())
 	go hub.Run()
 
 	// Session output → broadcast to every viewer of that session.
@@ -73,8 +74,18 @@ func main() {
 	// Router
 	r := mux.NewRouter()
 
-	// Global middleware
+	// Global middleware. HostCheck runs first to block DNS-rebinding before any
+	// handler sees the request.
+	allowedHosts := cfg.AllowedHosts()
+	if cfg.LanHandoffEnabled && cfg.LanURL == "" {
+		// Bound to the LAN for handoff but no explicit LAN_URL — allow the
+		// auto-detected private IP so scanned QR links resolve.
+		if ip := services.DetectLANIP(); ip != "" {
+			allowedHosts = append(allowedHosts, ip, ip+":"+cfg.Port)
+		}
+	}
 	r.Use(middleware.Helmet)
+	r.Use(middleware.HostCheck(allowedHosts))
 	r.Use(middleware.CORS(cfg.CORSOrigins))
 
 	// Rate limiter for auth endpoints
@@ -97,6 +108,8 @@ func main() {
 	authRouter.Use(authLimiter.Middleware)
 	authRouter.HandleFunc("/login", handlers.Login(authSvc)).Methods("POST", "OPTIONS")
 	authRouter.HandleFunc("/refresh", handlers.Refresh(authSvc)).Methods("POST", "OPTIONS")
+	// Anonymous token for no-auth mode so the WebSocket can always require a token.
+	authRouter.HandleFunc("/anonymous", handlers.AnonymousToken(authSvc, cfg)).Methods("POST", "OPTIONS")
 	// Handoff exchange: trade a session-scoped handoff cookie for normal tokens.
 	authRouter.HandleFunc("/handoff/exchange", handlers.HandoffExchange(authSvc)).Methods("POST", "OPTIONS")
 
@@ -113,13 +126,13 @@ func main() {
 	api.HandleFunc("/agents/{id}/restart", handlers.RestartAgent(agentSvc, hub)).Methods("POST")
 
 	// Files
-	api.HandleFunc("/files/tree", handlers.FileTree(fileSvc, agentSvc)).Methods("GET")
-	api.HandleFunc("/files/read", handlers.ReadFile(fileSvc, agentSvc)).Methods("GET")
-	api.HandleFunc("/files/write", handlers.WriteFile(fileSvc, agentSvc)).Methods("PUT")
-	api.HandleFunc("/files/mkdir", handlers.Mkdir(fileSvc, agentSvc)).Methods("POST")
-	api.HandleFunc("/files/delete", handlers.DeleteFile(fileSvc, agentSvc)).Methods("DELETE")
-	api.HandleFunc("/files/rename", handlers.RenameFile(fileSvc, agentSvc)).Methods("PATCH")
-	api.HandleFunc("/files/stat", handlers.FileStat(fileSvc, agentSvc)).Methods("GET")
+	api.HandleFunc("/files/tree", handlers.FileTree(fileSvc, agentSvc, projectSvc, cfg)).Methods("GET")
+	api.HandleFunc("/files/read", handlers.ReadFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("GET")
+	api.HandleFunc("/files/write", handlers.WriteFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("PUT")
+	api.HandleFunc("/files/mkdir", handlers.Mkdir(fileSvc, agentSvc, projectSvc, cfg)).Methods("POST")
+	api.HandleFunc("/files/delete", handlers.DeleteFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("DELETE")
+	api.HandleFunc("/files/rename", handlers.RenameFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("PATCH")
+	api.HandleFunc("/files/stat", handlers.FileStat(fileSvc, agentSvc, projectSvc, cfg)).Methods("GET")
 
 	// Projects
 	api.HandleFunc("/projects/recent", handlers.RecentProjects(projectSvc)).Methods("GET")
@@ -157,14 +170,16 @@ func main() {
 	// token itself is the credential. Registered before the SPA/static catch-all.
 	r.HandleFunc("/handoff/{token}", handlers.RedeemHandoff(handoffSvc, agentSvc, authSvc, cfg)).Methods("GET")
 
-	// WebSocket (auth via query param; skipped in no-auth mode)
+	// WebSocket. Always requires a valid access token — even in no-auth mode,
+	// where the local browser first mints an anonymous token from
+	// /api/auth/anonymous. This (with the Origin check in the hub) closes the
+	// drive-by hole where any web page could open ws://localhost/ws and inject
+	// terminal input.
 	r.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		if authSvc.Enabled() {
-			token := r.URL.Query().Get("token")
-			if err := authSvc.VerifyToken(token); err != nil {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
+		token := r.URL.Query().Get("token")
+		if err := authSvc.VerifyAccessToken(token); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
 		}
 		hub.HandleWebSocket(w, r)
 	})
@@ -224,8 +239,12 @@ func main() {
 
 	// Start server in goroutine. BindHost defaults to 127.0.0.1 (localhost only);
 	// set POWERCODEDECK_BIND_HOST=0.0.0.0 to expose it on the LAN for handoff.
+	srv := &http.Server{
+		Addr:    cfg.BindHost + ":" + cfg.Port,
+		Handler: r,
+	}
 	go func() {
-		if err := http.ListenAndServe(cfg.BindHost+":"+cfg.Port, r); err != nil {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
@@ -246,6 +265,19 @@ func main() {
 
 	fmt.Println()
 	log.Printf("Shutting down %s...", version.AppName)
+
+	// Stop accepting new connections and let in-flight requests finish (up to 5s).
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("graceful shutdown timed out: %v", err)
+	}
+
+	// Active PTY sessions are intentionally kept running here (Detach ≠ Kill).
+	// Their lifetime is tied to this process, so they end when it exits; we do
+	// not force-kill them on Ctrl+C.
+	log.Printf("HTTP server stopped; active sessions end with this process.")
+
 	database.Close()
 	log.Println("Goodbye!")
 }

@@ -94,6 +94,20 @@ export const api = {
         return data;
       }),
 
+  // No-auth mode: mint an anonymous access/refresh token so the WebSocket (which
+  // always authenticates now) can connect without a login. The server only
+  // issues this when auth is disabled and the caller's Origin is local.
+  getAnonymousToken: () =>
+    fetch(`${API_BASE}/auth/anonymous`, { method: 'POST', credentials: 'same-origin' })
+      .then(async (r) => {
+        if (!r.ok) throw new Error('anonymous token failed');
+        return r.json() as Promise<{ accessToken: string; refreshToken: string }>;
+      })
+      .then((data) => {
+        setTokens(data.accessToken, data.refreshToken);
+        return data;
+      }),
+
   // Submit a PIN or password; the server accepts the credential in `secret`.
   login: (secret: string) =>
     apiFetch<{ accessToken: string; refreshToken: string }>('/auth/login', {

@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,17 +20,18 @@ import (
 )
 
 type Config struct {
-	AuthEnabled   bool   // whether PowerCodeDeck enforces its own auth
-	AuthMethod    string // "none" | "pin" | "password"
-	Pin           string
-	PasswordHash  string
-	JWTSecret     string
-	Port          string
-	BindHost      string // interface to bind (default 127.0.0.1; 0.0.0.0 for LAN)
-	DBPath        string
-	CORSOrigins   string
-	WorkspaceRoot string // default root for the project browser (optional)
-	SetupMode     bool   // true when this run performed first-run setup
+	AuthEnabled       bool   // whether PowerCodeDeck enforces its own auth
+	AuthMethod        string // "none" | "pin" | "password"
+	Pin               string
+	PasswordHash      string
+	JWTSecret         string
+	Port              string
+	BindHost          string // interface to bind (default 127.0.0.1; 0.0.0.0 for LAN)
+	DBPath            string
+	CORSOrigins       string
+	AllowedHostsExtra string // extra Host header values accepted by the DNS-rebinding guard (comma-separated)
+	WorkspaceRoot     string // default root for the project browser (optional)
+	SetupMode         bool   // true when this run performed first-run setup
 
 	// Session engine. PowerCodeDeck always uses the internal PTY engine now;
 	// this field only carries a legacy/deprecated value for a startup warning.
@@ -59,16 +62,17 @@ func Load() *Config {
 	}
 
 	cfg := &Config{
-		Pin:           envDual("PIN"),
-		PasswordHash:  envDual("PASSWORD_HASH"),
-		JWTSecret:     envDual("JWT_SECRET"),
-		Port:          envDual("PORT"),
-		BindHost:      envDual("BIND_HOST"),
-		DBPath:        envDual("DB_PATH"),
-		CORSOrigins:   envDual("CORS_ORIGINS"),
-		WorkspaceRoot: envDual("WORKSPACE_ROOT"),
-		PublicURL:     strings.TrimRight(envDual("PUBLIC_URL"), "/"),
-		LanURL:        strings.TrimRight(envDual("LAN_URL"), "/"),
+		Pin:               envDual("PIN"),
+		PasswordHash:      envDual("PASSWORD_HASH"),
+		JWTSecret:         envDual("JWT_SECRET"),
+		Port:              envDual("PORT"),
+		BindHost:          envDual("BIND_HOST"),
+		DBPath:            envDual("DB_PATH"),
+		CORSOrigins:       envDual("CORS_ORIGINS"),
+		AllowedHostsExtra: envDual("ALLOWED_HOSTS"),
+		WorkspaceRoot:     envDual("WORKSPACE_ROOT"),
+		PublicURL:         strings.TrimRight(envDual("PUBLIC_URL"), "/"),
+		LanURL:            strings.TrimRight(envDual("LAN_URL"), "/"),
 	}
 
 	// Handoff feature — enabled by default; only "false" turns it off.
@@ -140,6 +144,71 @@ func Load() *Config {
 	}
 
 	return cfg
+}
+
+// AllowedOrigins returns the browser Origins permitted to open the WebSocket or
+// mint an anonymous token. Loopback origins for the configured port are always
+// allowed; PUBLIC_URL / LAN_URL / CORS_ORIGINS add explicit remote origins.
+func (c *Config) AllowedOrigins() []string {
+	out := []string{
+		"http://localhost:" + c.Port,
+		"http://127.0.0.1:" + c.Port,
+		"https://localhost:" + c.Port,
+		"https://127.0.0.1:" + c.Port,
+	}
+	if c.PublicURL != "" {
+		out = append(out, strings.TrimRight(c.PublicURL, "/"))
+	}
+	if c.LanURL != "" {
+		out = append(out, strings.TrimRight(c.LanURL, "/"))
+	}
+	for _, o := range strings.Split(c.CORSOrigins, ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// AllowedHosts returns the Host header values accepted by the DNS-rebinding
+// guard: loopback names (any port), an explicitly-bound host, the hosts from
+// PUBLIC_URL / LAN_URL, and anything in ALLOWED_HOSTS. Bare hostnames match any
+// port, so a port change doesn't lock anyone out.
+func (c *Config) AllowedHosts() []string {
+	out := []string{
+		"localhost", "127.0.0.1", "::1", "[::1]",
+		"localhost:" + c.Port, "127.0.0.1:" + c.Port, "[::1]:" + c.Port,
+	}
+	if c.BindHost != "" && c.BindHost != "0.0.0.0" && c.BindHost != "::" {
+		out = append(out, c.BindHost, c.BindHost+":"+c.Port)
+	}
+	for _, u := range []string{c.PublicURL, c.LanURL} {
+		if h := hostFromURL(u); h != "" {
+			out = append(out, h)
+			if _, _, err := net.SplitHostPort(h); err != nil {
+				out = append(out, h+":"+c.Port)
+			}
+		}
+	}
+	for _, h := range strings.Split(c.AllowedHostsExtra, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// hostFromURL extracts the host[:port] from a base URL like
+// "https://pcd.example.com" → "pcd.example.com".
+func hostFromURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return ""
 }
 
 // deriveMethod resolves the auth method from an explicit value, falling back to
