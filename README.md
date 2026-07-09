@@ -1,12 +1,13 @@
 # PowerCodeDeck
 
-**PowerCodeDeck v0.2.3** — 브라우저에서 서버 프로젝트를 열고, 터미널과 AI 코딩 에이전트를 실행하는 개인용 웹 콘솔입니다.
+**PowerCodeDeck v0.2.4** — 브라우저에서 서버 프로젝트를 열고, 터미널과 AI 코딩 에이전트를 실행하는 개인용 웹 콘솔입니다.
 *PowerCodeDeck is a self-hosted web console for project terminals and AI coding agents.*
 
 Claude Code, Gemini CLI, Codex CLI 등 AI 코딩 에이전트를 한 화면에서 실행하고 모니터링합니다.
 Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 
-> **새 소식 (v0.2.3)**
+> **새 소식 (v0.2.4)**
+> - 🔒 **보안 강화** — WebSocket Origin/토큰 검증, 파일 경로 검증 상시 적용, Host 헤더 검증(DNS rebinding 방지), 토큰 타입 분리, graceful shutdown ([CHANGELOG](CHANGELOG.md#v024--보안-강화-security-hardening)). **v0.2.3 이하는 취약점이 있으므로 업그레이드를 권장합니다.**
 > - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
 > - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
 > - 🪟 **Windows 지원** — **WSL2 한 줄 설치**가 권장. cgo 없는 네이티브 `pcd.exe` 빌드도 지원(실험적 — Smart App Control 해제 또는 서명 필요) ([Windows 설치](#windows-설치-wsl2-권장) · [docs/windows.md](docs/windows.md))
@@ -14,7 +15,7 @@ Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 >
 > 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
 
-![Version](https://img.shields.io/badge/version-0.2.3-6366f1)
+![Version](https://img.shields.io/badge/version-0.2.4-6366f1)
 ![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![SQLite](https://img.shields.io/badge/SQLite-embedded-003B57?logo=sqlite&logoColor=white)
@@ -380,11 +381,14 @@ POWERCODEDECK_PIN=123456
 PowerCodeDeck은 **서버 터미널과 파일에 접근할 수 있는 도구**입니다.
 인증 없음 모드는 로컬 실행, VPN, Tailscale, SSH 터널, 또는 Caddy + Authelia 같은 외부 인증 뒤에서 사용하는 것을 전제로 합니다.
 
+> ⚠️ **v0.2.3 이하는 보안 취약점(WS Origin/토큰 미검증, 파일 경로 우회 등)이 있으므로 v0.2.4 이상으로 업그레이드하세요.**
+
 권장:
 - `127.0.0.1`에만 바인딩 (리버스 프록시 뒤에 배치)
 - Caddy + Authelia 등 외부 인증 뒤에서 사용
 - **공개 인터넷에 직접 노출 금지**
 - 작업 가능한 루트 디렉터리 제한 (`POWERCODEDECK_WORKSPACE_ROOT`)
+- 리버스 프록시 도메인으로 접근할 때는 `POWERCODEDECK_ALLOWED_HOSTS`에 해당 호스트를 추가 (Host 검증 통과용)
 
 ---
 

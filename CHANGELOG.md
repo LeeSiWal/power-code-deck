@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented here.
 
+## v0.2.4 — 보안 강화 (security hardening)
+
+> **v0.2.3 이하는 아래 취약점이 있으므로 업그레이드가 필요합니다.** 특히 무인증(기본값) 모드에서 로컬에 열려 있으면 악성 웹페이지가 접근할 수 있었습니다.
+
+### Security
+- **WebSocket Origin 검증** — `/ws`가 모든 Origin을 허용하던 것을 허용 목록 기반 검증으로 교체. 임의의 웹페이지가 `ws://localhost/ws`에 붙어 터미널에 명령을 주입하는 drive-by 공격을 차단합니다(브라우저가 아닌 CLI 등 Origin 헤더가 없는 클라이언트는 허용).
+- **WebSocket 토큰 상시 요구** — 무인증 모드에서도 `/ws`가 항상 유효한 토큰을 요구합니다. 로컬 브라우저는 `POST /api/auth/anonymous`(무인증 모드 + 로컬 Origin 한정)에서 익명 토큰을 발급받아 사용합니다. 기존 무인증 UX(로그인 화면 없음)는 그대로 유지됩니다.
+- **파일 API 경로 검증 상시 적용** — `agentId`를 생략하면 경로 검증을 건너뛰어 임의 절대경로 read/write/delete/rename이 가능하던 문제를 수정. 이제 모든 파일 작업이 허용 base(에이전트 작업 디렉토리, 또는 워크스페이스 루트/홈 + 최근 프로젝트) 안으로 제한되며, `~/.ssh`·`~/.aws`·`~/.gnupg` 등 민감 디렉토리는 명시적으로 차단됩니다.
+- **ValidatePath prefix 우회 버그 수정** — `/base`가 `/base-evil`도 통과시키던 `HasPrefix` 검사를 `filepath.Rel` 기반으로 교체하고, 아직 존재하지 않는 쓰기 경로는 가장 가까운 실제 부모를 심링크 해석해 base 이탈을 차단합니다.
+- **Refresh 토큰의 access 통용 차단** — access 토큰에 `type:"access"` 클레임을 추가하고 인증·WS 검증에서 타입을 확인합니다. 30일짜리 refresh 토큰을 API 자격증명으로 쓸 수 없습니다(v0.2.4 이전 발급된 무타입 토큰은 만료까지 access로 허용하는 마이그레이션 유예 포함).
+- **Host 헤더 검증(DNS rebinding 방지)** — Host가 localhost/127.0.0.1/`[::1]`(및 PUBLIC_URL/LAN_URL/BIND_HOST/`ALLOWED_HOSTS`) 허용 목록에 없으면 403. 모든 라우트에 전역 적용됩니다.
+
+### Changed
+- **Graceful shutdown** — `http.ListenAndServe` 대신 `http.Server`를 사용해 SIGINT/SIGTERM 시 5초 컨텍스트로 in-flight 요청을 정리한 뒤 DB를 닫습니다. 활성 PTY 세션은 의도적으로 유지(Detach ≠ Kill)되며 프로세스 종료와 함께 정리됩니다.
+- `POWERCODEDECK_ALLOWED_HOSTS`(쉼표 구분) 환경변수 추가 — 리버스 프록시 도메인이나 커스텀 호스트로 접근할 때 Host 검증 허용 목록에 추가합니다.
+
+### Tests
+- `services/file_test.go` — ValidatePath 테이블 테스트(정상/`..` traversal/prefix 우회/심링크 이탈/미존재 쓰기 경로) 및 민감 디렉토리 차단.
+- `auth/auth_test.go` — access/refresh 타입 분리 및 레거시 무타입 토큰 허용.
+- `ws/hub_test.go`, `middleware/hostcheck_test.go` — Origin/Host 허용·차단.
+
 ## v0.2.3 — cgo-free, natively cross-compilable (incl. Windows .exe)
 
 ### Fixed
