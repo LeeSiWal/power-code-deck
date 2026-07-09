@@ -26,7 +26,7 @@ func Middleware(authSvc *AuthService) func(http.Handler) http.Handler {
 				return
 			}
 
-			if err := authSvc.VerifyToken(parts[1]); err != nil {
+			if err := authSvc.VerifyAccessToken(parts[1]); err != nil {
 				http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 				return
 			}

@@ -50,8 +50,9 @@ func (s *AuthService) VerifyCredential(secret string) bool {
 
 func (s *AuthService) GenerateToken() (string, error) {
 	claims := jwt.MapClaims{
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(7 * 24 * time.Hour).Unix(),
+		"iat":  time.Now().Unix(),
+		"exp":  time.Now().Add(7 * 24 * time.Hour).Unix(),
+		"type": "access",
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(s.jwtSecret)
@@ -67,11 +68,12 @@ func (s *AuthService) GenerateRefreshToken() (string, error) {
 	return token.SignedString(s.jwtSecret)
 }
 
-func (s *AuthService) VerifyToken(tokenStr string) error {
+// parse validates a token's signature + expiry and returns its claims. It does
+// NOT check the token's purpose — callers must verify the "type" claim.
+func (s *AuthService) parse(tokenStr string) (jwt.MapClaims, error) {
 	if tokenStr == "" {
-		return errors.New("empty token")
+		return nil, errors.New("empty token")
 	}
-
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected signing method")
@@ -79,12 +81,33 @@ func (s *AuthService) VerifyToken(tokenStr string) error {
 		return s.jwtSecret, nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || !token.Valid {
+		return nil, errors.New("invalid token")
+	}
+	return claims, nil
+}
+
+// VerifyAccessToken validates a token AND requires it to be an access token, so
+// a 30-day refresh token (or a session-scoped handoff token) can never be used
+// as an API/WebSocket credential.
+//
+// Migration: access tokens issued before v0.2.4 carried no "type" claim; they
+// are still accepted until they expire.
+// TODO(v0.3.0): drop the legacy no-type ("") allowance below.
+func (s *AuthService) VerifyAccessToken(tokenStr string) error {
+	claims, err := s.parse(tokenStr)
+	if err != nil {
 		return err
 	}
-	if !token.Valid {
-		return errors.New("invalid token")
+	switch t, _ := claims["type"].(string); t {
+	case "access", "":
+		return nil
+	default:
+		return errors.New("not an access token")
 	}
-	return nil
 }
 
 // GenerateHandoffCookie mints a short-lived JWT scoped to a single session. It
@@ -105,21 +128,9 @@ func (s *AuthService) GenerateHandoffCookie(sessionID string) (string, error) {
 // VerifyHandoffCookie validates a handoff cookie and returns the session id it
 // is bound to.
 func (s *AuthService) VerifyHandoffCookie(cookie string) (string, error) {
-	if cookie == "" {
-		return "", errors.New("empty handoff cookie")
-	}
-	token, err := jwt.Parse(cookie, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return s.jwtSecret, nil
-	})
+	claims, err := s.parse(cookie)
 	if err != nil {
 		return "", err
-	}
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok || !token.Valid {
-		return "", errors.New("invalid handoff cookie")
 	}
 	if t, _ := claims["type"].(string); t != "handoff" {
 		return "", errors.New("not a handoff cookie")
@@ -132,25 +143,12 @@ func (s *AuthService) VerifyHandoffCookie(cookie string) (string, error) {
 }
 
 func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (string, error) {
-	token, err := jwt.Parse(refreshTokenStr, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return s.jwtSecret, nil
-	})
+	claims, err := s.parse(refreshTokenStr)
 	if err != nil {
 		return "", err
 	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok || !token.Valid {
-		return "", errors.New("invalid refresh token")
-	}
-
-	tokenType, _ := claims["type"].(string)
-	if tokenType != "refresh" {
+	if t, _ := claims["type"].(string); t != "refresh" {
 		return "", errors.New("not a refresh token")
 	}
-
 	return s.GenerateToken()
 }
