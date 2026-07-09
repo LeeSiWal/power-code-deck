@@ -214,6 +214,12 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 			return
 		}
 		h.watcherSvc.Unwatch(payload.AgentID)
+
+	case EventPing:
+		// Client-initiated liveness probe (sent when a mobile tab returns to the
+		// foreground). Echo back so the client can tell a live socket from a dead
+		// one that iOS left stuck in the OPEN state.
+		c.sendEvent(EventPong, nil)
 	}
 }
 

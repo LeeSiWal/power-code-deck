@@ -17,6 +17,7 @@ const (
 	EventTerminalPasteOnly   = "terminal:pasteOnly"
 	EventFileWatch           = "file:watch"
 	EventFileUnwatch         = "file:unwatch"
+	EventPing                = "ping"
 )
 
 // Server -> Client events
@@ -28,6 +29,7 @@ const (
 	EventAgentDestroyed = "agent:destroyed"
 	EventFileChanged    = "file:changed"
 	EventFileTree       = "file:tree"
+	EventPong           = "pong"
 )
 
 // Server -> Client events (meta + notifications)
