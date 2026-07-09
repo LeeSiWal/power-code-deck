@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## v0.2.5 — 리버스 프록시 접속 복구 (fix)
+
+> **v0.2.4에서 리버스 프록시/도메인으로 접속하던 배포가 깨졌던 문제를 수정합니다.** 도메인만 `CORS_ORIGINS`에 설정한 사용자는 v0.2.4로 올리면 에이전트가 "connecting"에서 멈췄습니다 — 아래 수정으로 해결됩니다.
+
+### Fixed
+- **Host 검증이 `CORS_ORIGINS`를 존중** — v0.2.4의 DNS-rebinding Host 가드는 `PUBLIC_URL`/`LAN_URL`/`BIND_HOST`/`ALLOWED_HOSTS`만 허용 목록으로 읽어, 도메인을 `CORS_ORIGINS`에만 설정한 리버스 프록시 배포가 모든 요청에서 403 "forbidden host"를 받고 WebSocket이 연결되지 않았습니다(에이전트 목록/터미널이 "connecting"에서 멈춤). 이미 신뢰하는 Origin의 Host도 신뢰하도록 `AllowedHosts()`가 `CORS_ORIGINS`의 호스트를 포함합니다. 기본값(빈 `CORS_ORIGINS`)에서는 loopback 전용 동작이 그대로라 보안 약화가 없습니다.
+
+### Tests
+- `config/config_test.go` — `CORS_ORIGINS` 도메인이 Host 허용 목록에 포함되는지, 그리고 미설정 시 loopback 전용 기본값이 유지되는지 확인.
+
 ## v0.2.4 — 보안 강화 (security hardening)
 
 > **v0.2.3 이하는 아래 취약점이 있으므로 업그레이드가 필요합니다.** 특히 무인증(기본값) 모드에서 로컬에 열려 있으면 악성 웹페이지가 접근할 수 있었습니다.

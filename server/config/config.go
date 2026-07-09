@@ -190,6 +190,17 @@ func (c *Config) AllowedHosts() []string {
 			}
 		}
 	}
+	// A trusted browser Origin is also a trusted Host: reverse-proxy setups that
+	// only set CORS_ORIGINS (not PUBLIC_URL) must still pass the DNS-rebinding
+	// guard, or every request 403s before any handler runs.
+	for _, o := range strings.Split(c.CORSOrigins, ",") {
+		if h := hostFromURL(strings.TrimSpace(o)); h != "" {
+			out = append(out, h)
+			if _, _, err := net.SplitHostPort(h); err != nil {
+				out = append(out, h+":"+c.Port)
+			}
+		}
+	}
 	for _, h := range strings.Split(c.AllowedHostsExtra, ",") {
 		if h = strings.TrimSpace(h); h != "" {
 			out = append(out, h)

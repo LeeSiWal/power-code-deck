@@ -10,8 +10,9 @@ const (
 	// v0.2.3 = cgo-free native builds (go-pty/ConPTY + modernc SQLite),
 	// v0.2.4 = security hardening (WS origin/token, file path validation,
 	//          host check, token type separation, graceful shutdown),
+	// v0.2.5 = fix: Host guard honors CORS_ORIGINS (reverse-proxy access),
 	// v0.3.0 = Control Room (planned).
-	Version = "0.2.4"
+	Version = "0.2.5"
 
 	// AppName is the product name shown to users.
 	AppName = "PowerCodeDeck"
