@@ -34,33 +34,107 @@ type FileStat struct {
 
 var ignoredDirs = map[string]bool{}
 
+// sensitiveHomeDirs are credential/secret directories that the file API must
+// never expose, even when the user's home directory is an allowed base.
+var sensitiveHomeDirs = []string{
+	".ssh", ".aws", ".gnupg", ".kube", ".docker",
+	".config/gcloud", ".config/gh", ".azure", ".gcloud",
+}
+
+// ValidatePath resolves requestedPath to an absolute path and verifies it stays
+// within baseDir. It defends against ".." traversal, absolute-path escapes,
+// symlink escapes, and the "prefix sibling" bug (base=/home/u/proj must NOT
+// admit /home/u/proj-evil). For paths that don't exist yet (writes / mkdir) the
+// nearest existing ancestor is resolved through symlinks and checked, so a
+// symlinked parent can't be used to escape.
 func (s *FileService) ValidatePath(baseDir, requestedPath string) (string, error) {
+	if requestedPath == "" {
+		return "", fmt.Errorf("empty path")
+	}
+
 	absBase, err := filepath.Abs(baseDir)
 	if err != nil {
 		return "", err
 	}
-
 	absPath, err := filepath.Abs(requestedPath)
 	if err != nil {
 		return "", err
 	}
 
-	// Resolve symlinks for traversal check
 	realBase, err := filepath.EvalSymlinks(absBase)
 	if err != nil {
 		realBase = absBase
 	}
+
 	realPath, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
-		// File might not exist yet (for writes), check parent
-		realPath = absPath
+		// Doesn't exist yet: resolve the nearest existing ancestor (through
+		// symlinks) and re-append the non-existent tail.
+		realPath = resolveNearestParent(absPath)
 	}
 
-	if !strings.HasPrefix(realPath, realBase) {
+	if !withinBase(realBase, realPath) {
 		return "", fmt.Errorf("path traversal detected")
 	}
 
 	return absPath, nil
+}
+
+// withinBase reports whether target is base itself or lives under it. It uses
+// filepath.Rel so that /home/u/proj-evil is NOT treated as inside /home/u/proj.
+func withinBase(base, target string) bool {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// resolveNearestParent walks up from absPath until it finds an existing
+// ancestor, resolves that ancestor's symlinks, then re-joins the non-existent
+// remainder. This makes symlink escapes visible even for paths being created.
+func resolveNearestParent(absPath string) string {
+	var tail []string
+	cur := absPath
+	for {
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return absPath // reached root; nothing on the path exists
+		}
+		tail = append([]string{filepath.Base(cur)}, tail...)
+		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+			return filepath.Join(append([]string{resolved}, tail...)...)
+		}
+		cur = parent
+	}
+}
+
+// IsSensitivePath reports whether p resolves inside a well-known credential
+// directory under the user's home (~/.ssh, ~/.aws, ...). Callers use this to
+// keep secrets out of the file API even when home is an allowed base.
+func (s *FileService) IsSensitivePath(p string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	} else {
+		abs = resolveNearestParent(abs)
+	}
+	for _, d := range sensitiveHomeDirs {
+		if withinBase(filepath.Join(home, d), abs) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *FileService) GetTree(baseDir string, maxDepth int) (*FileNode, error) {

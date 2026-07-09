@@ -2,14 +2,89 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 
+	"powercodedeck/config"
 	"powercodedeck/services"
 )
 
-func FileTree(fileSvc *services.FileService, agentSvc *services.AgentService) http.HandlerFunc {
+// fileGuard authorizes every file operation. A path is allowed only if it lives
+// under one of the permitted bases and is not a sensitive credential directory.
+// This runs on ALL requests — previously validation only happened when an
+// agentId was supplied, so omitting agentId allowed arbitrary absolute-path
+// read/write/delete.
+type fileGuard struct {
+	fileSvc    *services.FileService
+	agentSvc   *services.AgentService
+	projectSvc *services.ProjectService
+	cfg        *config.Config
+}
+
+func newFileGuard(fileSvc *services.FileService, agentSvc *services.AgentService, projectSvc *services.ProjectService, cfg *config.Config) *fileGuard {
+	return &fileGuard{fileSvc: fileSvc, agentSvc: agentSvc, projectSvc: projectSvc, cfg: cfg}
+}
+
+// authorize validates requestedPath and returns the cleaned absolute path. On
+// failure it returns an HTTP status + error so the handler can respond
+// consistently (404 for a missing agent, 403 for a denied path).
+func (g *fileGuard) authorize(agentID, requestedPath string) (string, int, error) {
+	if requestedPath == "" {
+		return "", http.StatusBadRequest, fmt.Errorf("path required")
+	}
+
+	if agentID != "" {
+		baseDir, err := g.agentSvc.GetWorkingDir(agentID)
+		if err != nil {
+			return "", http.StatusNotFound, fmt.Errorf("agent not found")
+		}
+		abs, err := g.fileSvc.ValidatePath(baseDir, requestedPath)
+		if err != nil || g.fileSvc.IsSensitivePath(abs) {
+			return "", http.StatusForbidden, fmt.Errorf("access denied")
+		}
+		return abs, 0, nil
+	}
+
+	// No agent scope: the path must fall under a known base (workspace root or
+	// home, plus any recent project) and must not touch a sensitive directory.
+	for _, base := range g.allowedBases() {
+		if abs, err := g.fileSvc.ValidatePath(base, requestedPath); err == nil {
+			if g.fileSvc.IsSensitivePath(abs) {
+				return "", http.StatusForbidden, fmt.Errorf("access denied")
+			}
+			return abs, 0, nil
+		}
+	}
+	return "", http.StatusForbidden, fmt.Errorf("access denied")
+}
+
+// allowedBases is the set of directories the file API may serve without an
+// agent scope: the configured workspace root (or the home directory when unset)
+// plus every recent project path.
+func (g *fileGuard) allowedBases() []string {
+	var bases []string
+	if g.cfg != nil && g.cfg.WorkspaceRoot != "" {
+		bases = append(bases, g.cfg.WorkspaceRoot)
+	} else if home, err := os.UserHomeDir(); err == nil {
+		bases = append(bases, home)
+	}
+	if g.projectSvc != nil {
+		if recents, err := g.projectSvc.GetRecent(200); err == nil {
+			for _, p := range recents {
+				if p.Path != "" {
+					bases = append(bases, p.Path)
+				}
+			}
+		}
+	}
+	return bases
+}
+
+func FileTree(fileSvc *services.FileService, agentSvc *services.AgentService, projectSvc *services.ProjectService, cfg *config.Config) http.HandlerFunc {
+	guard := newFileGuard(fileSvc, agentSvc, projectSvc, cfg)
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := r.URL.Query().Get("agentId")
 		path := r.URL.Query().Get("path")
@@ -29,6 +104,12 @@ func FileTree(fileSvc *services.FileService, agentSvc *services.AgentService) ht
 			return
 		}
 
+		abs, status, err := guard.authorize(agentID, path)
+		if err != nil {
+			jsonError(w, err.Error(), status)
+			return
+		}
+
 		depth := 10
 		if depthStr != "" {
 			if d, err := strconv.Atoi(depthStr); err == nil && d > 0 && d <= 20 {
@@ -36,7 +117,7 @@ func FileTree(fileSvc *services.FileService, agentSvc *services.AgentService) ht
 			}
 		}
 
-		tree, err := fileSvc.GetTree(path, depth)
+		tree, err := fileSvc.GetTree(abs, depth)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -46,38 +127,27 @@ func FileTree(fileSvc *services.FileService, agentSvc *services.AgentService) ht
 	}
 }
 
-func ReadFile(fileSvc *services.FileService, agentSvc *services.AgentService) http.HandlerFunc {
+func ReadFile(fileSvc *services.FileService, agentSvc *services.AgentService, projectSvc *services.ProjectService, cfg *config.Config) http.HandlerFunc {
+	guard := newFileGuard(fileSvc, agentSvc, projectSvc, cfg)
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := r.URL.Query().Get("agentId")
 		filePath := r.URL.Query().Get("path")
 
-		if filePath == "" {
-			jsonError(w, "path required", http.StatusBadRequest)
+		abs, status, err := guard.authorize(agentID, filePath)
+		if err != nil {
+			jsonError(w, err.Error(), status)
 			return
 		}
 
-		// Validate path if agent-scoped
-		if agentID != "" {
-			baseDir, err := agentSvc.GetWorkingDir(agentID)
-			if err != nil {
-				jsonError(w, "agent not found", http.StatusNotFound)
-				return
-			}
-			if _, err := fileSvc.ValidatePath(baseDir, filePath); err != nil {
-				jsonError(w, "access denied", http.StatusForbidden)
-				return
-			}
-		}
-
-		content, err := fileSvc.ReadFile(filePath)
+		content, err := fileSvc.ReadFile(abs)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusNotFound)
 			return
 		}
 
 		jsonResponse(w, map[string]interface{}{
-			"path":    filePath,
-			"name":    filepath.Base(filePath),
+			"path":    abs,
+			"name":    filepath.Base(abs),
 			"content": content,
 		})
 	}
@@ -88,7 +158,8 @@ type writeFileRequest struct {
 	Content string `json:"content"`
 }
 
-func WriteFile(fileSvc *services.FileService, agentSvc *services.AgentService) http.HandlerFunc {
+func WriteFile(fileSvc *services.FileService, agentSvc *services.AgentService, projectSvc *services.ProjectService, cfg *config.Config) http.HandlerFunc {
+	guard := newFileGuard(fileSvc, agentSvc, projectSvc, cfg)
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req writeFileRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -96,20 +167,13 @@ func WriteFile(fileSvc *services.FileService, agentSvc *services.AgentService) h
 			return
 		}
 
-		agentID := r.URL.Query().Get("agentId")
-		if agentID != "" {
-			baseDir, err := agentSvc.GetWorkingDir(agentID)
-			if err != nil {
-				jsonError(w, "agent not found", http.StatusNotFound)
-				return
-			}
-			if _, err := fileSvc.ValidatePath(baseDir, req.Path); err != nil {
-				jsonError(w, "access denied", http.StatusForbidden)
-				return
-			}
+		abs, status, err := guard.authorize(r.URL.Query().Get("agentId"), req.Path)
+		if err != nil {
+			jsonError(w, err.Error(), status)
+			return
 		}
 
-		if err := fileSvc.WriteFile(req.Path, req.Content); err != nil {
+		if err := fileSvc.WriteFile(abs, req.Content); err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -122,7 +186,8 @@ type mkdirRequest struct {
 	Path string `json:"path"`
 }
 
-func Mkdir(fileSvc *services.FileService, agentSvc *services.AgentService) http.HandlerFunc {
+func Mkdir(fileSvc *services.FileService, agentSvc *services.AgentService, projectSvc *services.ProjectService, cfg *config.Config) http.HandlerFunc {
+	guard := newFileGuard(fileSvc, agentSvc, projectSvc, cfg)
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req mkdirRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -130,20 +195,13 @@ func Mkdir(fileSvc *services.FileService, agentSvc *services.AgentService) http.
 			return
 		}
 
-		agentID := r.URL.Query().Get("agentId")
-		if agentID != "" {
-			baseDir, err := agentSvc.GetWorkingDir(agentID)
-			if err != nil {
-				jsonError(w, "agent not found", http.StatusNotFound)
-				return
-			}
-			if _, err := fileSvc.ValidatePath(baseDir, req.Path); err != nil {
-				jsonError(w, "access denied", http.StatusForbidden)
-				return
-			}
+		abs, status, err := guard.authorize(r.URL.Query().Get("agentId"), req.Path)
+		if err != nil {
+			jsonError(w, err.Error(), status)
+			return
 		}
 
-		if err := fileSvc.Mkdir(req.Path); err != nil {
+		if err := fileSvc.Mkdir(abs); err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -157,28 +215,16 @@ type deleteFileRequest struct {
 	Path string `json:"path"`
 }
 
-func DeleteFile(fileSvc *services.FileService, agentSvc *services.AgentService) http.HandlerFunc {
+func DeleteFile(fileSvc *services.FileService, agentSvc *services.AgentService, projectSvc *services.ProjectService, cfg *config.Config) http.HandlerFunc {
+	guard := newFileGuard(fileSvc, agentSvc, projectSvc, cfg)
 	return func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Query().Get("path")
-		if path == "" {
-			jsonError(w, "path required", http.StatusBadRequest)
+		abs, status, err := guard.authorize(r.URL.Query().Get("agentId"), r.URL.Query().Get("path"))
+		if err != nil {
+			jsonError(w, err.Error(), status)
 			return
 		}
 
-		agentID := r.URL.Query().Get("agentId")
-		if agentID != "" {
-			baseDir, err := agentSvc.GetWorkingDir(agentID)
-			if err != nil {
-				jsonError(w, "agent not found", http.StatusNotFound)
-				return
-			}
-			if _, err := fileSvc.ValidatePath(baseDir, path); err != nil {
-				jsonError(w, "access denied", http.StatusForbidden)
-				return
-			}
-		}
-
-		if err := fileSvc.Delete(path); err != nil {
+		if err := fileSvc.Delete(abs); err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -192,7 +238,8 @@ type renameFileRequest struct {
 	NewPath string `json:"newPath"`
 }
 
-func RenameFile(fileSvc *services.FileService, agentSvc *services.AgentService) http.HandlerFunc {
+func RenameFile(fileSvc *services.FileService, agentSvc *services.AgentService, projectSvc *services.ProjectService, cfg *config.Config) http.HandlerFunc {
+	guard := newFileGuard(fileSvc, agentSvc, projectSvc, cfg)
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req renameFileRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -201,23 +248,18 @@ func RenameFile(fileSvc *services.FileService, agentSvc *services.AgentService) 
 		}
 
 		agentID := r.URL.Query().Get("agentId")
-		if agentID != "" {
-			baseDir, err := agentSvc.GetWorkingDir(agentID)
-			if err != nil {
-				jsonError(w, "agent not found", http.StatusNotFound)
-				return
-			}
-			if _, err := fileSvc.ValidatePath(baseDir, req.OldPath); err != nil {
-				jsonError(w, "access denied", http.StatusForbidden)
-				return
-			}
-			if _, err := fileSvc.ValidatePath(baseDir, req.NewPath); err != nil {
-				jsonError(w, "access denied", http.StatusForbidden)
-				return
-			}
+		oldAbs, status, err := guard.authorize(agentID, req.OldPath)
+		if err != nil {
+			jsonError(w, err.Error(), status)
+			return
+		}
+		newAbs, status, err := guard.authorize(agentID, req.NewPath)
+		if err != nil {
+			jsonError(w, err.Error(), status)
+			return
 		}
 
-		if err := fileSvc.Rename(req.OldPath, req.NewPath); err != nil {
+		if err := fileSvc.Rename(oldAbs, newAbs); err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -226,15 +268,16 @@ func RenameFile(fileSvc *services.FileService, agentSvc *services.AgentService) 
 	}
 }
 
-func FileStat(fileSvc *services.FileService, agentSvc *services.AgentService) http.HandlerFunc {
+func FileStat(fileSvc *services.FileService, agentSvc *services.AgentService, projectSvc *services.ProjectService, cfg *config.Config) http.HandlerFunc {
+	guard := newFileGuard(fileSvc, agentSvc, projectSvc, cfg)
 	return func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Query().Get("path")
-		if path == "" {
-			jsonError(w, "path required", http.StatusBadRequest)
+		abs, status, err := guard.authorize(r.URL.Query().Get("agentId"), r.URL.Query().Get("path"))
+		if err != nil {
+			jsonError(w, err.Error(), status)
 			return
 		}
 
-		stat, err := fileSvc.Stat(path)
+		stat, err := fileSvc.Stat(abs)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusNotFound)
 			return
