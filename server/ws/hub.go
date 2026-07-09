@@ -40,30 +40,50 @@ func buildPasteData(text, mode string, submit bool) string {
 	return b.String()
 }
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin:     func(r *http.Request) bool { return true },
-	ReadBufferSize:  65536,
-	WriteBufferSize: 65536,
+// checkOrigin decides whether a WebSocket handshake may proceed. Browsers always
+// send an Origin header, so a cross-origin page (the drive-by RCE vector) is
+// rejected unless its origin is explicitly allowed. Requests with no Origin
+// header are non-browser clients (e.g. a CLI) and are permitted.
+func checkOrigin(allowed map[string]bool, r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	return allowed[strings.ToLower(strings.TrimRight(origin, "/"))]
 }
 
 type Hub struct {
-	clients     sync.Map
-	engine      services.SessionEngine
-	watcherSvc  *services.WatcherService
-	agentSvc    *services.AgentService
-	gitSvc      *services.GitService
-	portScanner *services.PortScanner
-	notifSvc    *services.NotificationService
+	clients        sync.Map
+	engine         services.SessionEngine
+	watcherSvc     *services.WatcherService
+	agentSvc       *services.AgentService
+	gitSvc         *services.GitService
+	portScanner    *services.PortScanner
+	notifSvc       *services.NotificationService
+	allowedOrigins map[string]bool
+	upgrader       websocket.Upgrader
 }
 
-func NewHub(engine services.SessionEngine, watcherSvc *services.WatcherService, agentSvc *services.AgentService, gitSvc *services.GitService, portScanner *services.PortScanner, notifSvc *services.NotificationService) *Hub {
+func NewHub(engine services.SessionEngine, watcherSvc *services.WatcherService, agentSvc *services.AgentService, gitSvc *services.GitService, portScanner *services.PortScanner, notifSvc *services.NotificationService, allowedOrigins []string) *Hub {
+	origins := make(map[string]bool, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		if o = strings.ToLower(strings.TrimRight(strings.TrimSpace(o), "/")); o != "" {
+			origins[o] = true
+		}
+	}
 	h := &Hub{
-		engine:      engine,
-		watcherSvc:  watcherSvc,
-		agentSvc:    agentSvc,
-		gitSvc:      gitSvc,
-		portScanner: portScanner,
-		notifSvc:    notifSvc,
+		engine:         engine,
+		watcherSvc:     watcherSvc,
+		agentSvc:       agentSvc,
+		gitSvc:         gitSvc,
+		portScanner:    portScanner,
+		notifSvc:       notifSvc,
+		allowedOrigins: origins,
+	}
+	h.upgrader = websocket.Upgrader{
+		CheckOrigin:     func(r *http.Request) bool { return checkOrigin(h.allowedOrigins, r) },
+		ReadBufferSize:  65536,
+		WriteBufferSize: 65536,
 	}
 
 	watcherSvc.SetOnChange(func(agentID string, change services.FileChange) {
@@ -106,7 +126,7 @@ func (h *Hub) pollMeta() {
 }
 
 func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
