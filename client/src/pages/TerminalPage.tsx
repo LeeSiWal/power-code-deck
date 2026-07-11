@@ -51,6 +51,13 @@ export function TerminalPage() {
     terminalApiRef.current?.focus();
   }, []);
 
+  // Send a control / navigation key via the terminal so arrow keys are translated
+  // to the app-cursor-key form (ESC O x) when the TUI has DECCKM on — the toolbars'
+  // hardcoded ESC [ x bytes don't drive arrow menus in apps like Claude Code.
+  const sendTerminalKey = useCallback((data: string) => {
+    terminalApiRef.current?.sendKey(data);
+  }, []);
+
   // Expand + focus the Prompt Bar (Prompt button / shortcut).
   const openPrompt = useCallback(() => {
     promptFocusedRef.current = true;
@@ -344,7 +351,7 @@ export function TerminalPage() {
               onFocusTerminal={focusTerminal}
               onFocusChange={(f) => { promptFocusedRef.current = f; }}
             />
-            <MobileToolbar agentId={agentId} onOpenPrompt={openPrompt} />
+            <MobileToolbar agentId={agentId} onOpenPrompt={openPrompt} sendKey={sendTerminalKey} />
           </>
         )}
 
@@ -589,6 +596,7 @@ export function TerminalPage() {
               <TerminalKeyBar
                 agentId={agentId}
                 onKeySent={() => terminalApiRef.current?.focus()}
+                sendKey={sendTerminalKey}
               />
             </>
           )}

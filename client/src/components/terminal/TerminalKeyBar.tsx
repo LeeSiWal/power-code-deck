@@ -26,12 +26,16 @@ interface TerminalKeyBarProps {
   /** Called after a key is sent — desktop uses this to refocus the terminal so
    * the physical keyboard keeps working. */
   onKeySent?: () => void;
+  /** Routes the key through the terminal so arrow keys honor the app-cursor-key
+   * mode (DECCKM). Falls back to a raw PTY write when unavailable. */
+  sendKey?: (data: string) => void;
 }
 
 /** Horizontal, scrollable row of PTY control keys (desktop / tablet). */
-export function TerminalKeyBar({ agentId, onKeySent }: TerminalKeyBarProps) {
+export function TerminalKeyBar({ agentId, onKeySent, sendKey }: TerminalKeyBarProps) {
   const send = (data: string) => {
-    agentDeckWS.send('terminal:input', { agentId, data });
+    if (sendKey) sendKey(data);
+    else agentDeckWS.send('terminal:input', { agentId, data });
     onKeySent?.();
   };
 

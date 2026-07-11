@@ -10,7 +10,26 @@ import { useDevice } from '../../hooks/useDevice';
 export interface TerminalHandle {
   /** Imperatively move keyboard focus into the terminal (used after Prompt Bar Send). */
   focus: () => void;
+  /**
+   * Send a control / navigation key to the PTY. Arrow keys are translated to the
+   * application-cursor-key form (ESC O A/B/C/D) when the TUI has DECCKM enabled —
+   * the hardcoded normal-mode bytes (ESC [ A/B/C/D) don't work in apps like Claude
+   * Code that put the terminal in application cursor mode for their arrow menus.
+   */
+  sendKey: (data: string) => void;
 }
+
+/**
+ * Normal-mode cursor sequences (ESC [ x) → application-mode (ESC O x). When a TUI
+ * enables DECCKM (application cursor keys), the app expects the SS3 form; sending
+ * the CSI form makes arrow keys do nothing or behave erratically in its menus.
+ */
+const APP_CURSOR_MAP: Record<string, string> = {
+  '\x1b[A': '\x1bOA',
+  '\x1b[B': '\x1bOB',
+  '\x1b[C': '\x1bOC',
+  '\x1b[D': '\x1bOD',
+};
 
 /** Open a URL from the terminal in a new tab (login links, docs, localhost, …). */
 function openTerminalLink(uri: string) {
@@ -125,11 +144,21 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
   useImperativeHandle(ref, () => ({
     focus: () => terminalRef.current?.focus(),
-  }), []);
+    sendKey: (data: string) => {
+      const term = terminalRef.current;
+      const out = term?.modes.applicationCursorKeysMode ? (APP_CURSOR_MAP[data] ?? data) : data;
+      agentDeckWS.send('terminal:input', { agentId, data: out });
+    },
+  }), [agentId]);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [hasOutput, setHasOutput] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Touch text-selection mode. On touch a one-finger drag scrolls the viewport, so
+  // there is no way to drag-select. When this is on, drags are turned into an
+  // xterm selection instead (and native scroll is suspended); tap the toggle again
+  // to go back to scrolling.
+  const [selectMode, setSelectMode] = useState(false);
 
   const statusRef = useRef(status);
   statusRef.current = status;
@@ -202,7 +231,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       cursorBlink: true,
       scrollback: 3000,
       scrollSensitivity: isTouchDevice ? 1.1 : 1.16,
-      smoothScrollDuration: isTouchDevice ? 245 : 180,
+      // Touch: 0 (no JS smooth-scroll animation). The viewport scrolls natively via
+      // iOS momentum; xterm's own animated scroll on top of that fought the native
+      // inertia and made finger-scrolling stutter. Desktop keeps a short animation.
+      smoothScrollDuration: isTouchDevice ? 0 : 180,
       allowTransparency: false,
       // Single interactive terminal: xterm always accepts input and forwards it
       // straight to the PTY. Short shell ops, Claude choices, y/n, arrows, Ctrl+C
@@ -554,7 +586,17 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     let vvTimer = 0;
     const onVVResize = () => {
       clearTimeout(vvTimer);
-      vvTimer = window.setTimeout(() => scheduleViewportSettle(false), 100);
+      vvTimer = window.setTimeout(() => {
+        // On touch the terminal never holds the soft keyboard (Korean / long text
+        // goes through the Prompt Bar), so a visualViewport resize here is almost
+        // always the iOS address bar collapsing as the user scrolls. Running the
+        // full settle (refit + viewport rebuild + scrollTop poke) mid-scroll makes
+        // it stutter — a cheap size-guarded fit keeps resize correct without the
+        // jank. Real container changes (Prompt Bar open/close) are handled by the
+        // ResizeObserver anyway. Desktop keeps the full settle for keyboard focus.
+        if (isTouchDevice) safeFit();
+        else scheduleViewportSettle(false);
+      }, 100);
     };
     vv?.addEventListener('resize', onVVResize);
 
@@ -601,13 +643,86 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     };
   }, [agentId, isTouchDevice, resolvedFontSize]);
 
+  // Touch text-selection mode. The listeners are attached ONLY while select mode is
+  // on — a persistent non-passive touchmove listener would stop the browser from
+  // fast-pathing normal scrolling and reintroduce stutter. When on, a one-finger
+  // drag is translated into synthetic mouse events so xterm's own SelectionService
+  // highlights text (with edge auto-scroll). Mouse-reporting TUIs (Claude Code)
+  // suppress local selection unless the event carries a force modifier — Option on
+  // macOS / iPadOS, Shift elsewhere — added only then; on a plain shell Shift would
+  // extend a previous selection instead of starting a fresh single-drag select.
+  useEffect(() => {
+    if (!isTouchDevice || !selectMode) return;
+    const container = termRef.current;
+    const terminal = terminalRef.current;
+    if (!container || !terminal) return;
+
+    const xtermIsMac = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'].includes(navigator.platform);
+    const mouseReportingOn = () => {
+      try {
+        return !!(terminal as any)._core?.coreMouseService?.areMouseEventsActive;
+      } catch {
+        return false;
+      }
+    };
+    const dispatchSelMouse = (type: string, clientX: number, clientY: number, target: EventTarget) => {
+      const force = mouseReportingOn();
+      target.dispatchEvent(new MouseEvent(type, {
+        view: window,
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY,
+        button: 0,
+        buttons: type === 'mouseup' ? 0 : 1,
+        detail: 1,
+        shiftKey: force && !xtermIsMac,
+        altKey: force && xtermIsMac,
+      }));
+    };
+
+    let selecting = false;
+    const onStart = (e: TouchEvent) => {
+      const xel = container.querySelector('.xterm') as HTMLElement | null; // SelectionService listens here
+      const t = e.touches[0];
+      if (!xel || !t) return;
+      e.preventDefault();
+      selecting = true;
+      dispatchSelMouse('mousedown', t.clientX, t.clientY, xel);
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!selecting) return;
+      const t = e.touches[0];
+      if (!t) return;
+      e.preventDefault();
+      dispatchSelMouse('mousemove', t.clientX, t.clientY, document); // drag lands on document
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!selecting) return;
+      selecting = false;
+      const t = e.changedTouches[0];
+      dispatchSelMouse('mouseup', t?.clientX ?? 0, t?.clientY ?? 0, document);
+    };
+
+    container.addEventListener('touchstart', onStart, { passive: false });
+    container.addEventListener('touchmove', onMove, { passive: false });
+    container.addEventListener('touchend', onEnd);
+    container.addEventListener('touchcancel', onEnd);
+    return () => {
+      container.removeEventListener('touchstart', onStart);
+      container.removeEventListener('touchmove', onMove);
+      container.removeEventListener('touchend', onEnd);
+      container.removeEventListener('touchcancel', onEnd);
+    };
+  }, [isTouchDevice, selectMode]);
+
   const handleClick = useCallback(() => {
     if (isTouchDevice) return;
     terminalRef.current?.focus();
   }, [isTouchDevice]);
 
   return (
-    <div className="relative w-full h-full terminal-shell">
+    <div className={`relative w-full h-full terminal-shell${selectMode ? ' select-mode' : ''}`}>
       {/* Status overlays — pointer-events:none so they don't block xterm */}
       {status !== 'connected' && (
         <div className="absolute top-0 left-0 right-0 z-10 px-3 py-1.5 text-xs flex items-center gap-2 pointer-events-none"
@@ -634,6 +749,22 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         onClick={handleClick}
         className="w-full h-full cursor-text"
       />
+
+      {/* Select-mode toggle (touch only). Off → one-finger drag scrolls; On → drag
+          selects text (native scroll suspended) so it can be copied. Bottom-left so
+          it never overlaps the 복사 button (bottom-right). */}
+      {isTouchDevice && (
+        <button
+          onClick={() => setSelectMode((m) => !m)}
+          className={`absolute bottom-2 left-2 z-20 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-lg
+                      touch-manipulation active:opacity-70 ${
+                        selectMode ? 'bg-deck-accent text-white' : 'bg-deck-surface/90 text-deck-text-dim border border-deck-border'
+                      }`}
+          title={selectMode ? '선택 모드 — 드래그로 텍스트 선택. 탭하면 스크롤로 돌아갑니다.' : '탭하면 선택 모드 — 드래그로 텍스트를 선택해 복사할 수 있습니다.'}
+        >
+          {selectMode ? '✓ 선택 모드' : '⇱ 선택'}
+        </button>
+      )}
 
       {/* Copy button — appears while text is selected. mousedown/touchstart with
           preventDefault so clicking it doesn't clear the terminal selection. */}

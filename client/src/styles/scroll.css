@@ -68,6 +68,15 @@
   overscroll-behavior-y: contain;
 }
 
+/* Select mode: suspend native touch scrolling so a one-finger drag becomes an
+   xterm text selection instead. xterm still scrolls programmatically (drag past
+   the edge auto-scrolls the selection), so only the browser's touch scroll is off. */
+.terminal-shell.select-mode,
+.terminal-shell.select-mode .xterm-viewport,
+.terminal-shell.select-mode .xterm-screen {
+  touch-action: none;
+}
+
 /* Toolbar buttons: fast tap (no 300ms delay) */
 .touch-manipulation {
   touch-action: manipulation;

@@ -5,15 +5,19 @@ interface MobileToolbarProps {
   agentId: string;
   /** Expand + focus the Prompt Bar for Korean / long text entry. */
   onOpenPrompt: () => void;
+  /** Routes the key through the terminal so arrow keys honor the app-cursor-key
+   * mode (DECCKM). Falls back to a raw PTY write when unavailable. */
+  sendKey?: (data: string) => void;
 }
 
 // PTY control keys are shared with the desktop key bar (TERMINAL_KEYS) so both
 // surfaces expose the same navigation / choice / signal keys.
 const KEYS = TERMINAL_KEYS;
 
-export function MobileToolbar({ agentId, onOpenPrompt }: MobileToolbarProps) {
+export function MobileToolbar({ agentId, onOpenPrompt, sendKey }: MobileToolbarProps) {
   const send = (data: string) => {
-    agentDeckWS.send('terminal:input', { agentId, data });
+    if (sendKey) sendKey(data);
+    else agentDeckWS.send('terminal:input', { agentId, data });
   };
 
   return (
