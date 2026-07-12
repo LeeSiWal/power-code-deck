@@ -81,3 +81,26 @@
 .touch-manipulation {
   touch-action: manipulation;
 }
+
+/* ===== wterm (spike) — fill the panel, drop the card chrome ===== */
+.wterm.wterm-embed {
+  padding: 6px 8px;
+  border-radius: 0;
+  box-shadow: none;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+/* Scrollback uses native overflow scroll — momentum + one-finger drag on touch */
+.wterm.wterm-embed.has-scrollback {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+.wterm.wterm-embed::-webkit-scrollbar {
+  width: 4px;
+}
+.wterm.wterm-embed::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}

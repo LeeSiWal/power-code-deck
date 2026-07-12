@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { TerminalView, type TerminalHandle } from '../components/terminal/TerminalView';
+import { WTermView } from '../components/terminal/WTermView';
 import { MobileToolbar } from '../components/terminal/MobileToolbar';
 import { TerminalKeyBar } from '../components/terminal/TerminalKeyBar';
 import { PromptBar } from '../components/terminal/PromptBar';
@@ -39,6 +40,10 @@ export function TerminalPage() {
   // xterm, so the Prompt Bar is mandatory there — it can only be collapsed, not
   // closed. On desktop it is an optional overlay toggled by shortcut / button.
   const forcePromptBar = isTouchDevice;
+  // Spike: ?term=wterm renders the DOM-based wterm terminal instead of xterm.js,
+  // so we can A/B the two on the same device. Cast keeps the shared props/ref type.
+  const useWterm = searchParams.get('term') === 'wterm';
+  const TermComponent = (useWterm ? WTermView : TerminalView) as typeof TerminalView;
   const terminalApiRef = useRef<TerminalHandle | null>(null);
   const promptFocusedRef = useRef(false); // suspends terminal auto-focus while typing in the Prompt Bar
   const [promptOpen, setPromptOpen] = useState(forcePromptBar);
@@ -310,7 +315,7 @@ export function TerminalPage() {
         {activeTab === 'terminal' && (
           <div className="flex-1 min-h-0">
             {terminalReady ? (
-              <TerminalView
+              <TermComponent
                 key={`${agentId}:${terminalMountKey}`}
                 ref={terminalApiRef}
                 agentId={agentId}
@@ -550,7 +555,7 @@ export function TerminalPage() {
           {activeTab === 'terminal' && (
             <div className="flex-1 min-h-0">
               {terminalReady ? (
-                <TerminalView
+                <TermComponent
                   key={`${agentId}:${terminalMountKey}`}
                   ref={terminalApiRef}
                   agentId={agentId}
