@@ -51,6 +51,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const handleRef = useRef<WTermReactHandle | null>(null);
   const wtRef = useRef<WTerm | null>(null);
   const attachedRef = useRef(false);
+  const readyRef = useRef(false);
   const colsRef = useRef(80);
   const rowsRef = useRef(24);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
@@ -69,7 +70,12 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     },
   }), [agentId]);
 
-  const attach = useCallback(() => {
+  // Attach ONLY once wterm is ready AND the socket is open. The server replies to
+  // attach with the current screen buffer immediately; if we attached before
+  // wterm's write handle existed, that first dump would be written to a null
+  // handle and lost — leaving an idle alt-screen app (Claude Code) blank forever.
+  const maybeAttach = useCallback(() => {
+    if (!readyRef.current || attachedRef.current || !agentDeckWS.connected) return;
     agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current });
     attachedRef.current = true;
   }, [agentId]);
@@ -83,14 +89,14 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     });
     const unsubOpen = agentDeckWS.on('open', () => {
       attachedRef.current = false;
-      attach();
       setStatus('connected');
+      maybeAttach();
     });
     const unsubClose = agentDeckWS.on('close', () => setStatus('disconnected'));
 
     if (agentDeckWS.connected) {
-      attach();
       setStatus('connected');
+      maybeAttach();
     }
 
     return () => {
@@ -99,7 +105,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       unsubClose();
       agentDeckWS.send('terminal:detach', { agentId });
     };
-  }, [agentId, attach]);
+  }, [agentId, maybeAttach]);
 
   const onData = useCallback((data: string) => {
     if (onHangulDirectRef.current && HANGUL_RE.test(data)) onHangulDirectRef.current();
@@ -116,6 +122,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     wtRef.current = wt;
     colsRef.current = wt.cols;
     rowsRef.current = wt.rows;
+    readyRef.current = true;
     // wterm focuses its hidden textarea on init, popping the iOS soft keyboard over
     // the panel on mount. On touch we type via the Prompt Bar, so blur it — a real
     // tap still focuses to type, but scrolling / long-press selection aren't
@@ -123,8 +130,9 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     if (isTouchDevice) {
       requestAnimationFrame(() => (document.activeElement as HTMLElement | null)?.blur?.());
     }
-    if (agentDeckWS.connected && !attachedRef.current) attach();
-  }, [attach, isTouchDevice]);
+    // wterm is ready now — safe to attach (the screen dump lands on a live handle).
+    maybeAttach();
+  }, [maybeAttach, isTouchDevice]);
 
   return (
     <div className="relative w-full h-full wterm-shell">
