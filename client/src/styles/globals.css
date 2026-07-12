@@ -66,5 +66,5 @@
     @apply bg-deck-surface border border-deck-border rounded-xl p-4;
   }
 
-  /* xterm scrollbar styles are in scroll.css */
+  /* terminal scrollbar styles are in scroll.css */
 }

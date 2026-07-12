@@ -1,80 +1,19 @@
 /* ===== Scroll + Touch ===== */
 
-/* Scrollbar appearance (Webkit) — NON-terminal areas */
-*:not(.xterm-viewport)::-webkit-scrollbar {
+/* Scrollbar appearance (Webkit) — general (non-terminal) areas */
+*:not(.wterm)::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-*:not(.xterm-viewport)::-webkit-scrollbar-track {
+*:not(.wterm)::-webkit-scrollbar-track {
   background: transparent;
 }
-*:not(.xterm-viewport)::-webkit-scrollbar-thumb {
+*:not(.wterm)::-webkit-scrollbar-thumb {
   background: rgba(148, 163, 184, 0.3);
   border-radius: 3px;
 }
-*:not(.xterm-viewport)::-webkit-scrollbar-thumb:hover {
+*:not(.wterm)::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.5);
-}
-
-/* xterm viewport scrollbar */
-.xterm-viewport::-webkit-scrollbar {
-  width: 4px;
-}
-.xterm-viewport::-webkit-scrollbar-track {
-  background: transparent;
-}
-.xterm-viewport::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-}
-
-/* ===== Terminal pointer + touch ===== */
-
-/* Ensure xterm elements always receive pointer events */
-.xterm,
-.xterm-viewport,
-.xterm-screen {
-  pointer-events: auto;
-}
-
-.xterm {
-  height: 100%;
-}
-
-.xterm-viewport,
-.xterm-screen {
-  height: 100% !important;
-}
-
-/* ===== Terminal touch-action (granular) ===== */
-
-/* Viewport: scroll owner — let browser handle all touch natively */
-.xterm-viewport {
-  overflow-y: auto !important;
-  overscroll-behavior-y: contain;
-  touch-action: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Screen (canvas): allow vertical pan only */
-.xterm-screen {
-  touch-action: pan-y;
-}
-
-/* Terminal wrapper: vertical pan + pinch, contain scroll chain */
-.terminal-shell {
-  min-height: 0;
-  touch-action: pan-y pinch-zoom;
-  overscroll-behavior-y: contain;
-}
-
-/* Select mode: suspend native touch scrolling so a one-finger drag becomes an
-   xterm text selection instead. xterm still scrolls programmatically (drag past
-   the edge auto-scrolls the selection), so only the browser's touch scroll is off. */
-.terminal-shell.select-mode,
-.terminal-shell.select-mode .xterm-viewport,
-.terminal-shell.select-mode .xterm-screen {
-  touch-action: none;
 }
 
 /* Toolbar buttons: fast tap (no 300ms delay) */
@@ -82,11 +21,10 @@
   touch-action: manipulation;
 }
 
-/* ===== wterm (spike) — clean native-touch surface =====
-   Deliberately NOT reusing .terminal-shell: that wrapper carries xterm-era
-   touch-action/overscroll rules that fight wterm's DOM-native selection + scroll.
-   wterm renders text to the DOM, so selection and scrolling must be the browser's
-   own — this wrapper adds nothing that could intercept a touch. */
+/* ===== wterm terminal — DOM-native touch surface =====
+   wterm renders text to the DOM, so selection and scrolling are the browser's
+   own. The wrapper and terminal only add what native behavior needs — nothing
+   that could intercept a touch (no canvas-era touch-action hacks). */
 .wterm-shell {
   position: relative;
   width: 100%;

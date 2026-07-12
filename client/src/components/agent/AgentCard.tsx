@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { Agent } from '../../stores/appStore';
 import { StatusBadge } from '../layout/StatusBadge';
 import { SubAgentBar } from '../animation/SubAgentBar';
-import { TerminalView } from '../terminal/TerminalView';
+import { TerminalSnapshot } from '../terminal/TerminalSnapshot';
 import { AGENT_ICON_MAP } from '../icons';
 import { NotificationRing } from '../notification/NotificationRing';
 import { AgentMeta } from '../sidebar/AgentMeta';
@@ -47,7 +47,7 @@ export function AgentCard({ agent, onDestroy }: AgentCardProps) {
         <SubAgentBar agentId={agent.id} />
 
         <div className="flex-1 min-h-[200px]">
-          <TerminalView agentId={agent.id} fontSize={11} />
+          <TerminalSnapshot agentId={agent.id} />
         </div>
       </div>
     </NotificationRing>

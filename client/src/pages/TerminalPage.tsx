@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { TerminalView, type TerminalHandle } from '../components/terminal/TerminalView';
-import { WTermView } from '../components/terminal/WTermView';
 import { MobileToolbar } from '../components/terminal/MobileToolbar';
 import { TerminalKeyBar } from '../components/terminal/TerminalKeyBar';
 import { PromptBar } from '../components/terminal/PromptBar';
@@ -37,13 +36,9 @@ export function TerminalPage() {
 
   // Single interactive terminal + a device-aware Prompt Bar for Korean / long
   // prompts. Touch devices (mobile / iPad) can't reliably compose Korean in
-  // xterm, so the Prompt Bar is mandatory there — it can only be collapsed, not
+  // the terminal, so the Prompt Bar is mandatory there — it can only be collapsed, not
   // closed. On desktop it is an optional overlay toggled by shortcut / button.
   const forcePromptBar = isTouchDevice;
-  // Spike: ?term=wterm renders the DOM-based wterm terminal instead of xterm.js,
-  // so we can A/B the two on the same device. Cast keeps the shared props/ref type.
-  const useWterm = searchParams.get('term') === 'wterm';
-  const TermComponent = (useWterm ? WTermView : TerminalView) as typeof TerminalView;
   const terminalApiRef = useRef<TerminalHandle | null>(null);
   const promptFocusedRef = useRef(false); // suspends terminal auto-focus while typing in the Prompt Bar
   const [promptOpen, setPromptOpen] = useState(forcePromptBar);
@@ -93,8 +88,6 @@ export function TerminalPage() {
   const [leftWidth, setLeftWidth] = useState(220);
   const [rightWidth, setRightWidth] = useState(220);
   const [editing, setEditing] = useState(false);
-  const [terminalMountKey, setTerminalMountKey] = useState(0);
-  const [terminalReady, setTerminalReady] = useState(false);
   const resizingRef = useRef<'left' | 'right' | null>(null);
 
   const agentId = id || '';
@@ -127,41 +120,6 @@ export function TerminalPage() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (!agentId) return;
-
-    const navEntry = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
-    const isDirectReload = navEntry?.type === 'reload';
-
-    const armTerminal = () => {
-      window.setTimeout(() => setTerminalReady(true), isDirectReload ? 650 : 0);
-    };
-
-    setTerminalReady(false);
-
-    if (document.readyState === 'complete') {
-      armTerminal();
-      return;
-    }
-
-    const onLoad = () => armTerminal();
-    window.addEventListener('load', onLoad);
-    return () => window.removeEventListener('load', onLoad);
-  }, [agentId]);
-
-  useEffect(() => {
-    if (!agentId) return;
-    const bootstrapKey = `terminal-bootstrap:${agentId}`;
-    if (sessionStorage.getItem(bootstrapKey) === 'done') return;
-
-    const timer = window.setTimeout(() => {
-      sessionStorage.setItem(bootstrapKey, 'done');
-      setTerminalMountKey((key) => key + 1);
-    }, 450);
-
-    return () => clearTimeout(timer);
-  }, [agentId]);
 
   // Cmd+Shift+Z: panel zoom toggle. Cmd/Ctrl+K or Cmd/Ctrl+P: open Prompt Bar.
   useEffect(() => {
@@ -314,17 +272,13 @@ export function TerminalPage() {
         {/* Content — no absolute positioning, flex fills remaining space */}
         {activeTab === 'terminal' && (
           <div className="flex-1 min-h-0">
-            {terminalReady ? (
-              <TermComponent
-                key={`${agentId}:${terminalMountKey}`}
-                ref={terminalApiRef}
-                agentId={agentId}
-                focusGuardRef={promptFocusedRef}
-                onHangulDirect={handleHangulDirectInput}
-              />
-            ) : (
-              <div className="h-full w-full" />
-            )}
+            <TerminalView
+              key={agentId}
+              ref={terminalApiRef}
+              agentId={agentId}
+              onFocusTerminal={focusTerminal}
+              onHangulDirect={handleHangulDirectInput}
+            />
           </div>
         )}
         {selectedFile && fileContent !== null && activeTab === 'editor' && (
@@ -344,7 +298,7 @@ export function TerminalPage() {
 
         {/* Bottom input — mandatory Prompt Bar (한글/긴 프롬프트) + terminal
             control keys. Korean is composed in the Prompt Bar's textarea and
-            pasted into the terminal; direct xterm typing would split jamo. */}
+            pasted into the terminal; direct typing into the terminal would split jamo. */}
         {activeTab === 'terminal' && (
           <>
             <PromptBar
@@ -554,17 +508,13 @@ export function TerminalPage() {
           {/* Content — flex fills remaining space, no absolute */}
           {activeTab === 'terminal' && (
             <div className="flex-1 min-h-0">
-              {terminalReady ? (
-                <TermComponent
-                  key={`${agentId}:${terminalMountKey}`}
-                  ref={terminalApiRef}
-                  agentId={agentId}
-                  focusGuardRef={promptFocusedRef}
-                  onHangulDirect={handleHangulDirectInput}
-                />
-              ) : (
-                <div className="h-full w-full" />
-              )}
+              <TerminalView
+                key={agentId}
+                ref={terminalApiRef}
+                agentId={agentId}
+                onFocusTerminal={focusTerminal}
+                onHangulDirect={handleHangulDirectInput}
+              />
             </div>
           )}
           {selectedFile && fileContent !== null && activeTab === 'editor' && (

@@ -18,7 +18,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          xterm: ['@xterm/xterm', '@xterm/addon-fit'],
+          wterm: ['@wterm/react', '@wterm/dom', '@wterm/core'],
           react: ['react', 'react-dom', 'react-router-dom'],
         },
       },
