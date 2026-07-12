@@ -249,6 +249,23 @@ func (h *Hub) handleTerminalAttach(c *Client, payload TerminalAttachPayload) {
 		return
 	}
 
+	// Exclusive viewer: only one device watches a session at a time so two viewers
+	// never fight over the PTY size. Evict any OTHER client on this agent — notify
+	// it (terminal:evicted) and detach it from the engine. We don't touch the other
+	// client's watchingAgent from here (that field is owned by its own goroutine);
+	// it clears itself by sending terminal:detach in response to the event.
+	h.clients.Range(func(key, _ interface{}) bool {
+		other, ok := key.(*Client)
+		if !ok || other == c {
+			return true
+		}
+		if other.watchingAgent == payload.AgentID {
+			other.sendEvent(EventTerminalEvicted, TerminalEvictedPayload{AgentID: payload.AgentID})
+			h.engine.Detach(payload.AgentID, other.viewerID)
+		}
+		return true
+	})
+
 	// Leaving a previous session is a viewer Detach — never a Kill.
 	if c.watchingAgent != "" && c.watchingAgent != payload.AgentID {
 		h.engine.Detach(c.watchingAgent, c.viewerID)

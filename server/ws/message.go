@@ -31,6 +31,9 @@ const (
 	EventFileChanged    = "file:changed"
 	EventFileTree       = "file:tree"
 	EventPong           = "pong"
+	// Sent to a viewer when another device attaches to the same session — only one
+	// device views a session at a time, so the PTY isn't resized by two viewers.
+	EventTerminalEvicted = "terminal:evicted"
 )
 
 // Server -> Client events (meta + notifications)
@@ -72,6 +75,10 @@ type TerminalPastePayload struct {
 type TerminalOutputPayload struct {
 	AgentID string `json:"agentId"`
 	Data    string `json:"data"`
+}
+
+type TerminalEvictedPayload struct {
+	AgentID string `json:"agentId"`
 }
 
 type FileWatchPayload struct {

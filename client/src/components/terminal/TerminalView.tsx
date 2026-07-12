@@ -120,6 +120,11 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const statusRef = useRef(status);
   statusRef.current = status;
+  // Exclusive viewer: another device took over this session. We stop attaching
+  // (so the two devices don't ping-pong) until the user reclaims it here.
+  const [evicted, setEvicted] = useState(false);
+  const evictedRef = useRef(evicted);
+  evictedRef.current = evicted;
   const onHangulDirectRef = useRef(onHangulDirect);
   onHangulDirectRef.current = onHangulDirect;
 
@@ -206,10 +211,18 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   // write handle exists would drop that first dump — leaving an idle alt-screen
   // app (Claude Code) blank forever.
   const maybeAttach = useCallback(() => {
-    if (!readyRef.current || attachedRef.current || !agentDeckWS.connected) return;
+    if (evictedRef.current || !readyRef.current || attachedRef.current || !agentDeckWS.connected) return;
     agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current });
     attachedRef.current = true;
   }, [agentId]);
+
+  // Reclaim the session on this device (after being evicted by another device).
+  const reclaim = useCallback(() => {
+    setEvicted(false);
+    evictedRef.current = false;
+    attachedRef.current = false;
+    maybeAttach();
+  }, [maybeAttach]);
 
   // WS wiring: output → write; open/close → status + (re)attach; detach on unmount.
   useEffect(() => {
@@ -224,6 +237,14 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       maybeAttach();
     });
     const unsubClose = agentDeckWS.on('close', () => setStatus('disconnected'));
+    // Another device attached — release this viewer and stop attaching until the
+    // user reclaims it. Tell the server to drop us (clears our server-side viewer).
+    const unsubEvicted = agentDeckWS.on('terminal:evicted', (payload: any) => {
+      if (payload.agentId !== agentId) return;
+      attachedRef.current = false;
+      setEvicted(true);
+      agentDeckWS.send('terminal:detach', { agentId });
+    });
 
     if (agentDeckWS.connected) {
       setStatus('connected');
@@ -234,6 +255,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       unsubOutput();
       unsubOpen();
       unsubClose();
+      unsubEvicted();
       agentDeckWS.send('terminal:detach', { agentId });
     };
   }, [agentId, maybeAttach, writeToTerm]);
@@ -444,11 +466,13 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const onResize = useCallback((cols: number, rows: number) => {
     colsRef.current = cols;
     rowsRef.current = rows;
-    // Always forward to the PTY when connected — engine.Resize is keyed by agentId
-    // and independent of viewer attach. Gating on attach dropped wterm's initial
-    // ResizeObserver measurement when it landed before attach, leaving the PTY at
-    // the default 80 cols so Claude Code emitted lines too wide for the screen.
-    if (agentDeckWS.connected) agentDeckWS.send('terminal:resize', { agentId, cols, rows });
+    // Forward to the PTY when we're this session's active viewer. NOT while evicted
+    // — an inactive device resizing (e.g. orientation change) would resize the PTY
+    // out from under the device that's actually in use. (Not gated on attachedRef so
+    // wterm's initial pre-attach measurement still reaches the PTY.)
+    if (agentDeckWS.connected && !evictedRef.current) {
+      agentDeckWS.send('terminal:resize', { agentId, cols, rows });
+    }
   }, [agentId]);
 
   const onReady = useCallback((wt: WTerm) => {
@@ -488,6 +512,21 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
           <span className={`w-2 h-2 rounded-full shrink-0 ${status !== 'disconnected' ? 'animate-pulse' : ''}`}
                 style={{ background: status === 'disconnected' ? '#ef4444' : '#f59e0b' }} />
           {status === 'disconnected' ? 'Disconnected — reconnecting...' : 'Connecting...'}
+        </div>
+      )}
+
+      {evicted && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 px-6 text-center bg-deck-bg/95">
+          <div className="text-2xl">🖥️📱</div>
+          <div className="text-sm text-deck-text-dim max-w-xs">
+            다른 기기에서 이 세션을 열었습니다.<br />한 번에 한 기기에서만 볼 수 있어요.
+          </div>
+          <button
+            onClick={reclaim}
+            className="px-4 py-2 rounded-lg text-sm font-semibold shadow-lg touch-manipulation active:opacity-70 bg-deck-accent text-white"
+          >
+            이 기기에서 다시 열기
+          </button>
         </div>
       )}
 
