@@ -49,9 +49,14 @@ export default function App() {
           // Redeemed a QR: trade the httpOnly handoff cookie for real tokens.
           await api.handoffExchange().catch(() => {});
         }
-      } else if (!localStorage.getItem('accessToken')) {
-        // No-auth mode still needs a token for the WebSocket. Mint an anonymous
-        // one; ignore failures so the UI still renders (the WS layer retries).
+      } else {
+        // No-auth mode still needs a token for the WebSocket. ALWAYS mint a fresh
+        // one on boot instead of reusing a stored token: the no-auth JWT secret is
+        // an in-memory random value regenerated on every server start, so a token
+        // minted against a previous server process fails verification and leaves
+        // the WebSocket stuck in a 401 reconnect loop ("연결이 되지 않았습니다").
+        // A fresh mint always matches the current server. Ignore failures so the
+        // UI still renders (the WS layer retries).
         await api.getAnonymousToken().catch(() => {});
       }
       if (cancelled) return;
