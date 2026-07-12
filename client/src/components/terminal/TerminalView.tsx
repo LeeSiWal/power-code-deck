@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { Terminal, type TerminalHandle as WTermReactHandle } from '@wterm/react';
 import type { WTerm } from '@wterm/dom';
+import type { TerminalCore } from '@wterm/core';
+import { GhosttyCore } from '@wterm/ghostty';
+import ghosttyWasmUrl from '../../assets/ghostty-vt.wasm?url';
 import '@wterm/react/css';
+import { wideAwareCore } from '../../lib/wideAwareCore';
 // Bundled fixed-width coding font with Latin AND Hangul at a 1:2 advance ratio.
 // System fonts (JetBrains Mono etc.) lack Hangul, so Korean fell back to a font
 // that isn't 2× the Latin width — breaking the terminal grid's CJK=2-cell model
@@ -123,6 +127,13 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const [copied, setCopied] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>('');
   const debug = typeof window !== 'undefined' && window.location.search.includes('debug');
+  // Terminal core: the ghostty (libghostty) VT core measures CJK as 2 cells like
+  // Claude Code does, unlike wterm's built-in Zig core (1 cell) which drifts and
+  // garbles Korean. Wrapped so the renderer draws wide glyphs across both cells.
+  // Loaded async; the terminal mounts once it's ready (or falls back to built-in).
+  const [core, setCore] = useState<TerminalCore | null>(null);
+  const [coreFailed, setCoreFailed] = useState(false);
+  const coreReady = core !== null || coreFailed;
   // Whether the running app has mouse tracking on (Claude Code and other TUIs do).
   // When on, the app owns scrolling — a wheel/drag must be forwarded as a mouse
   // event so the app scrolls ITS conversation (its screen is the alternate buffer,
@@ -137,6 +148,18 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const pendingLenRef = useRef(0);
 
   const resolvedFontSize = fontSize ?? (isMobile ? 13 : isTablet ? 13 : 14);
+
+  // Load the ghostty core once. On failure, fall back to wterm's built-in core.
+  useEffect(() => {
+    let disposed = false;
+    GhosttyCore.load({ wasmPath: ghosttyWasmUrl, scrollbackLimit: 10000 })
+      .then((gc) => { if (!disposed) setCore(wideAwareCore(gc)); })
+      .catch((err) => {
+        console.error('[terminal] ghostty core load failed, using built-in core', err);
+        if (!disposed) setCoreFailed(true);
+      });
+    return () => { disposed = true; };
+  }, []);
 
   useImperativeHandle(ref, () => ({
     focus: () => handleRef.current?.focus(),
@@ -468,8 +491,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         </div>
       )}
 
+      {coreReady && (
       <Terminal
         ref={handleRef}
+        {...(core ? { core } : {})}
         autoResize
         cursorBlink
         onData={onData}
@@ -489,6 +514,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
           ['--term-cursor' as any]: '#6366f1',
         }}
       />
+      )}
 
       {debug && debugInfo && (
         <pre className="absolute top-1 left-1 z-30 px-2 py-1 rounded text-[9px] leading-tight whitespace-pre
