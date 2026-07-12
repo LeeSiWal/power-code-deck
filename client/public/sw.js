@@ -1,4 +1,4 @@
-const CACHE_NAME = 'powercodedeck-v4';
+const CACHE_NAME = 'powercodedeck-v5';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -58,8 +58,11 @@ self.addEventListener('fetch', (event) => {
   // build's index.html (which references the new asset hashes) is picked up.
   // Only a clean same-origin 200 is cached, and the cache is used solely as an
   // offline fallback — a redirect/error is passed straight through, never stored.
+  // cache:'no-store' so the app shell bypasses the HTTP cache and always gets the
+  // current index.html (with the current asset hashes) — iOS Safari otherwise
+  // serves a heuristically-cached shell and the app stays stuck on an old build.
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-store' })
       .then((response) => {
         if (cacheable(response)) {
           const clone = response.clone();

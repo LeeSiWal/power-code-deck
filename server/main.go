@@ -205,6 +205,7 @@ func main() {
 			r.PathPrefix(route).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				if f, err := staticFS.(fs.ReadFileFS).ReadFile("index.html"); err == nil {
 					w.Header().Set("Content-Type", "text/html")
+					w.Header().Set("Cache-Control", "no-cache")
 					w.Write(f)
 				}
 			})
@@ -234,11 +235,20 @@ func main() {
 				case len(path) > 4 && path[len(path)-4:] == ".png":
 					w.Header().Set("Content-Type", "image/png")
 				}
+				// Hashed /assets/* are immutable; always revalidate the app shell
+				// (index.html, sw.js, manifest) so a new build's asset hashes are
+				// picked up instead of a stale cached shell (iOS Safari PWA caching).
+				if len(path) >= 8 && path[:8] == "/assets/" {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				} else {
+					w.Header().Set("Cache-Control", "no-cache")
+				}
 				w.Write(f)
 				return
 			}
 
 			// SPA fallback
+			w.Header().Set("Cache-Control", "no-cache")
 			r.URL.Path = "/index.html"
 			fileServer.ServeHTTP(w, r)
 		})
