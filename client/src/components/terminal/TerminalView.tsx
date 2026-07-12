@@ -356,7 +356,11 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const onResize = useCallback((cols: number, rows: number) => {
     colsRef.current = cols;
     rowsRef.current = rows;
-    if (attachedRef.current) agentDeckWS.send('terminal:resize', { agentId, cols, rows });
+    // Always forward to the PTY when connected — engine.Resize is keyed by agentId
+    // and independent of viewer attach. Gating on attach dropped wterm's initial
+    // ResizeObserver measurement when it landed before attach, leaving the PTY at
+    // the default 80 cols so Claude Code emitted lines too wide for the screen.
+    if (agentDeckWS.connected) agentDeckWS.send('terminal:resize', { agentId, cols, rows });
   }, [agentId]);
 
   const onReady = useCallback((wt: WTerm) => {
@@ -372,7 +376,18 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       requestAnimationFrame(() => (document.activeElement as HTMLElement | null)?.blur?.());
     }
     maybeAttach();
-  }, [maybeAttach, isTouchDevice]);
+    // Guarantee the PTY gets the real measured size: by the next frame wterm's
+    // ResizeObserver has fit the grid to the container, so push that size even if
+    // its onResize fired before we were attached.
+    requestAnimationFrame(() => {
+      const term = wtRef.current;
+      if (term && agentDeckWS.connected) {
+        colsRef.current = term.cols;
+        rowsRef.current = term.rows;
+        agentDeckWS.send('terminal:resize', { agentId, cols: term.cols, rows: term.rows });
+      }
+    });
+  }, [maybeAttach, isTouchDevice, agentId]);
 
   return (
     <div ref={shellRef} className="relative w-full h-full wterm-shell">
