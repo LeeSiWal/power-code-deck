@@ -39,7 +39,7 @@ export const WTermView = forwardRef<TerminalHandle, WTermViewProps>(function WTe
   { agentId, fontSize, onHangulDirect },
   ref,
 ) {
-  const { isMobile, isTablet } = useDevice();
+  const { isMobile, isTablet, isTouchDevice } = useDevice();
   const handleRef = useRef<WTermReactHandle | null>(null);
   const wtRef = useRef<WTerm | null>(null);
   const attachedRef = useRef(false);
@@ -112,11 +112,18 @@ export const WTermView = forwardRef<TerminalHandle, WTermViewProps>(function WTe
     wtRef.current = wt;
     colsRef.current = wt.cols;
     rowsRef.current = wt.rows;
+    // wterm focuses its hidden textarea on init, which pops the iOS soft keyboard
+    // over the panel on mount. On touch we type via the Prompt Bar (same as the
+    // xterm path), so blur it — a real tap can still focus to type, but scrolling
+    // and long-press selection aren't fighting a keyboard that appeared unbidden.
+    if (isTouchDevice) {
+      requestAnimationFrame(() => (document.activeElement as HTMLElement | null)?.blur?.());
+    }
     if (agentDeckWS.connected && !attachedRef.current) attach();
-  }, [attach]);
+  }, [attach, isTouchDevice]);
 
   return (
-    <div className="relative w-full h-full terminal-shell">
+    <div className="relative w-full h-full wterm-shell">
       {status !== 'connected' && (
         <div className="absolute top-0 left-0 right-0 z-10 px-3 py-1.5 text-xs flex items-center gap-2 pointer-events-none"
              style={{

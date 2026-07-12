@@ -82,7 +82,18 @@
   touch-action: manipulation;
 }
 
-/* ===== wterm (spike) — fill the panel, drop the card chrome ===== */
+/* ===== wterm (spike) — clean native-touch surface =====
+   Deliberately NOT reusing .terminal-shell: that wrapper carries xterm-era
+   touch-action/overscroll rules that fight wterm's DOM-native selection + scroll.
+   wterm renders text to the DOM, so selection and scrolling must be the browser's
+   own — this wrapper adds nothing that could intercept a touch. */
+.wterm-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
 .wterm.wterm-embed {
   padding: 6px 8px;
   border-radius: 0;
@@ -90,12 +101,15 @@
   height: 100%;
   width: 100%;
   box-sizing: border-box;
-}
-/* Scrollback uses native overflow scroll — momentum + one-finger drag on touch */
-.wterm.wterm-embed.has-scrollback {
+  /* the .wterm element is wterm's own scroll container (it sets scrollTop) */
   overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  -webkit-overflow-scrolling: touch; /* iOS momentum */
   overscroll-behavior-y: contain;
+  touch-action: pan-y;               /* one-finger vertical scroll; long-press still selects */
+  /* native text selection (drag / long-press → OS copy menu) */
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 .wterm.wterm-embed::-webkit-scrollbar {
   width: 4px;
