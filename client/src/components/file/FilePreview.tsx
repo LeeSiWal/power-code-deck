@@ -32,7 +32,7 @@ export function FilePreview({ path, content, onEdit }: FilePreviewProps) {
           )}
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0 selectable">
         {isMarkdown && viewMode === 'preview' ? (
           <MarkdownPreview content={content} />
         ) : (

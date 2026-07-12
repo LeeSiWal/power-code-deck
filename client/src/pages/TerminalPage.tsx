@@ -271,7 +271,7 @@ export function TerminalPage() {
 
         {/* Content — no absolute positioning, flex fills remaining space */}
         {activeTab === 'terminal' && (
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
             <TerminalView
               key={agentId}
               ref={terminalApiRef}
@@ -383,7 +383,7 @@ export function TerminalPage() {
 
   // ──────────── DESKTOP / TABLET LAYOUT ────────────
   return (
-    <div className="flex flex-col h-[100dvh] safe-top bg-deck-bg overflow-hidden">
+    <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       {/* Header */}
       <header className="flex items-center gap-2 px-3 py-1.5 bg-deck-surface border-b border-deck-border shrink-0">
         <button onClick={() => navigate('/dashboard')} className="p-1 rounded hover:bg-deck-border/30">

@@ -29,7 +29,14 @@
   position: relative;
   width: 100%;
   height: 100%;
+  min-width: 0;   /* let the flex child shrink to the viewport instead of to the
+                     terminal's (long-line) min-content width — stops mobile overflow */
+  max-width: 100%;
   min-height: 0;
+  overflow: hidden;
+  /* Distinct "section": a hairline top border sets the terminal apart from the
+     surrounding chrome so its selection reads as its own region. */
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .wterm.wterm-embed {
@@ -38,9 +45,11 @@
   box-shadow: none;
   height: 100%;
   width: 100%;
+  max-width: 100%;
   box-sizing: border-box;
   /* the .wterm element is wterm's own scroll container (it sets scrollTop) */
   overflow-y: auto;
+  overflow-x: hidden;                /* never let a long line push past the viewport */
   -webkit-overflow-scrolling: touch; /* iOS momentum */
   overscroll-behavior-y: contain;
   touch-action: pan-y;               /* one-finger vertical scroll; long-press still selects */

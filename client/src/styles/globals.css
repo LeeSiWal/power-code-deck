@@ -16,6 +16,19 @@
     height: 100dvh;
     margin: 0;
     overflow: hidden;
+    /* Native-app feel: the chrome (headers, explorer, toolbars) is NOT selectable,
+       so a Cmd/Ctrl+A or a mouse/touch drag can't spill selection out of the
+       terminal. Selectable content opts back in with .selectable. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Opt-in selectable regions (terminal, file preview/editor). */
+  .selectable,
+  .selectable * {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
   }
 
   #root {

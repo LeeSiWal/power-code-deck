@@ -41,7 +41,7 @@ export function FileEditor({ path, content, onSave, onCancel }: FileEditorProps)
             handleSave();
           }
         }}
-        className="flex-1 w-full p-3 bg-transparent text-xs font-mono text-deck-text resize-none outline-none leading-relaxed"
+        className="selectable flex-1 w-full p-3 bg-transparent text-xs font-mono text-deck-text resize-none outline-none leading-relaxed"
         spellCheck={false}
       />
     </div>

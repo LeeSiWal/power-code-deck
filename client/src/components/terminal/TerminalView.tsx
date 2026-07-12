@@ -27,6 +27,57 @@ const APP_CURSOR_MAP: Record<string, string> = {
 
 const HANGUL_RE = /[ᄀ-ᇿ㄰-㆏가-힣]/;
 
+/** Bound the freeze-while-selecting buffer so a long-held selection can't grow it
+ * without limit; past this we give up the freeze and let output through. */
+const MAX_FROZEN_CHARS = 1_000_000;
+
+/**
+ * Synchronous clipboard copy via a hidden textarea + execCommand. Works within a
+ * user gesture even in non-secure (http) contexts — e.g. a LAN URL like
+ * http://192.168.x.x:5553 — where navigator.clipboard is unavailable or rejects.
+ * Must run synchronously inside the gesture (no preceding await).
+ */
+function legacyCopy(text: string): boolean {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', ''); // avoid popping the mobile keyboard
+    ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    ta.style.width = '1px';
+    ta.style.height = '1px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length); // iOS Safari needs an explicit range
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copy text to the clipboard. Secure context (https / localhost) → async Clipboard
+ * API. Non-secure (LAN http) → straight to the synchronous execCommand path
+ * (awaiting the rejecting promise first would spend the user gesture).
+ */
+async function writeClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* fall through */
+    }
+  }
+  return legacyCopy(text);
+}
+
 interface TerminalViewProps {
   agentId: string;
   fontSize?: number;
@@ -38,16 +89,18 @@ interface TerminalViewProps {
 
 /**
  * Interactive terminal backed by wterm (@wterm/react). wterm renders to the DOM,
- * so text selection, copy/paste and scrolling are the browser's own — no canvas
- * workarounds, no synthetic-mouse selection, no iOS viewport babysitting. Wired to
- * the WebSocket PTY protocol (terminal:attach/input/output/resize); the Go server
- * is unaware of the front-end library.
+ * so selection, copy/paste and scrolling are the browser's own. This component
+ * scopes selection to the terminal (its own section), keeps a selection stable
+ * while a live TUI redraws (freeze-while-selecting), and offers touch-friendly
+ * select-all / copy affordances. Wired to the WebSocket PTY protocol
+ * (terminal:attach/input/output/resize).
  */
 export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(function TerminalView(
   { agentId, fontSize, onFocusTerminal, onHangulDirect },
   ref,
 ) {
   const { isMobile, isTablet, isTouchDevice } = useDevice();
+  const shellRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<WTermReactHandle | null>(null);
   const wtRef = useRef<WTerm | null>(null);
   const attachedRef = useRef(false);
@@ -60,6 +113,15 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const onHangulDirectRef = useRef(onHangulDirect);
   onHangulDirectRef.current = onHangulDirect;
 
+  const [hasSelection, setHasSelection] = useState(false);
+  const [copied, setCopied] = useState(false);
+  // freeze-while-selecting: while a selection is held inside the terminal, buffer
+  // incoming output instead of writing it — a redraw would replace the DOM rows
+  // and wipe the selection mid-drag.
+  const selectingRef = useRef(false);
+  const pendingRef = useRef<string[]>([]);
+  const pendingLenRef = useRef(0);
+
   const resolvedFontSize = fontSize ?? (isMobile ? 13 : isTablet ? 13 : 14);
 
   useImperativeHandle(ref, () => ({
@@ -70,10 +132,29 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     },
   }), [agentId]);
 
+  const flushPending = useCallback(() => {
+    selectingRef.current = false;
+    if (pendingRef.current.length) {
+      handleRef.current?.write(pendingRef.current.join(''));
+      pendingRef.current = [];
+      pendingLenRef.current = 0;
+    }
+  }, []);
+
+  const writeToTerm = useCallback((data: string) => {
+    if (selectingRef.current) {
+      pendingRef.current.push(data);
+      pendingLenRef.current += data.length;
+      if (pendingLenRef.current > MAX_FROZEN_CHARS) flushPending(); // bound memory
+      return;
+    }
+    handleRef.current?.write(data);
+  }, [flushPending]);
+
   // Attach ONLY once wterm is ready AND the socket is open. The server replies to
-  // attach with the current screen buffer immediately; if we attached before
-  // wterm's write handle existed, that first dump would be written to a null
-  // handle and lost — leaving an idle alt-screen app (Claude Code) blank forever.
+  // attach with the current screen buffer immediately; attaching before wterm's
+  // write handle exists would drop that first dump — leaving an idle alt-screen
+  // app (Claude Code) blank forever.
   const maybeAttach = useCallback(() => {
     if (!readyRef.current || attachedRef.current || !agentDeckWS.connected) return;
     agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current });
@@ -84,7 +165,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   useEffect(() => {
     const unsubOutput = agentDeckWS.on('terminal:output', (payload: any) => {
       if (payload.agentId !== agentId) return;
-      handleRef.current?.write(payload.data);
+      writeToTerm(payload.data);
       if (statusRef.current !== 'connected') setStatus('connected');
     });
     const unsubOpen = agentDeckWS.on('open', () => {
@@ -105,7 +186,62 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       unsubClose();
       agentDeckWS.send('terminal:detach', { agentId });
     };
-  }, [agentId, maybeAttach]);
+  }, [agentId, maybeAttach, writeToTerm]);
+
+  // Track a terminal-scoped selection: drives the freeze + the 복사 button. When
+  // the selection clears, flush any output buffered during the freeze.
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const sel = document.getSelection();
+      const active = !!sel && !sel.isCollapsed && !!shellRef.current && shellRef.current.contains(sel.anchorNode);
+      setHasSelection(active);
+      if (active) selectingRef.current = true;
+      else flushPending();
+    };
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => document.removeEventListener('selectionchange', onSelectionChange);
+  }, [flushPending]);
+
+  const selectAllTerminal = useCallback(() => {
+    const el = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
+    const sel = window.getSelection();
+    if (!el || !sel) return;
+    sel.removeAllRanges();
+    sel.selectAllChildren(el);
+  }, []);
+
+  const copySelection = useCallback(() => {
+    const text = window.getSelection()?.toString() ?? '';
+    if (!text) return;
+    writeClipboard(text).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    });
+  }, []);
+
+  // Scope the GUI select-all (Cmd+A) to the terminal when the user is working in
+  // it — so it grabs the terminal's text, not the whole page. Ctrl+A is left alone
+  // (it's readline's beginning-of-line inside a terminal).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'a' || !e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const shell = shellRef.current;
+      if (!shell) return;
+      const sel = document.getSelection();
+      const inTerminal =
+        shell.contains(document.activeElement) ||
+        (!!sel && !sel.isCollapsed && shell.contains(sel.anchorNode)) ||
+        document.activeElement === document.body ||
+        document.activeElement === null;
+      if (inTerminal) {
+        e.preventDefault();
+        selectAllTerminal();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [selectAllTerminal]);
 
   const onData = useCallback((data: string) => {
     if (onHangulDirectRef.current && HANGUL_RE.test(data)) onHangulDirectRef.current();
@@ -125,17 +261,16 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     readyRef.current = true;
     // wterm focuses its hidden textarea on init, popping the iOS soft keyboard over
     // the panel on mount. On touch we type via the Prompt Bar, so blur it — a real
-    // tap still focuses to type, but scrolling / long-press selection aren't
-    // fighting a keyboard that appeared unbidden.
+    // tap still focuses to type, but scroll / long-press selection aren't fighting a
+    // keyboard that appeared unbidden.
     if (isTouchDevice) {
       requestAnimationFrame(() => (document.activeElement as HTMLElement | null)?.blur?.());
     }
-    // wterm is ready now — safe to attach (the screen dump lands on a live handle).
     maybeAttach();
   }, [maybeAttach, isTouchDevice]);
 
   return (
-    <div className="relative w-full h-full wterm-shell">
+    <div ref={shellRef} className="relative w-full h-full wterm-shell">
       {status !== 'connected' && (
         <div className="absolute top-0 left-0 right-0 z-10 px-3 py-1.5 text-xs flex items-center gap-2 pointer-events-none"
              style={{
@@ -167,6 +302,34 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
           ['--term-cursor' as any]: '#6366f1',
         }}
       />
+
+      {/* Touch-friendly selection controls. Native long-press selection also works;
+          these make it reliable in a scrolling terminal. mousedown/touchstart with
+          preventDefault so tapping them doesn't clear the selection first. */}
+      {isTouchDevice && (
+        <div className="absolute bottom-2 right-2 z-20 flex gap-1.5">
+          <button
+            onMouseDown={(e) => { e.preventDefault(); selectAllTerminal(); }}
+            onTouchStart={(e) => { e.preventDefault(); selectAllTerminal(); }}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold shadow-lg touch-manipulation active:opacity-70
+                       bg-deck-surface/90 text-deck-text-dim border border-deck-border"
+            title="터미널 내용 전체 선택"
+          >
+            전체선택
+          </button>
+          {(hasSelection || copied) && (
+            <button
+              onMouseDown={(e) => { e.preventDefault(); copySelection(); }}
+              onTouchStart={(e) => { e.preventDefault(); copySelection(); }}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold shadow-lg touch-manipulation active:opacity-70
+                         bg-deck-accent text-white"
+              title="선택 영역 복사"
+            >
+              {copied ? '복사됨 ✓' : '복사'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 });
