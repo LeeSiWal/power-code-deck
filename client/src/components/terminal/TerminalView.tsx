@@ -144,13 +144,25 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   // event so the app scrolls ITS conversation (its screen is the alternate buffer,
   // so wterm has no scrollback of its own to move). Detected by scanning output.
   const [mouseTracking, setMouseTracking] = useState(false);
+  const mouseTrackingRef = useRef(false);
+  mouseTrackingRef.current = mouseTracking;
   const sgrMouseRef = useRef(false);
-  // freeze-while-selecting: while a selection is held inside the terminal, buffer
-  // incoming output instead of writing it — a redraw would replace the DOM rows
-  // and wipe the selection mid-drag.
+  // "Jump to bottom" affordance shown when the user has scrolled up.
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+  // Freeze output ONLY during an active drag-select (mousedown → mouseup) so the
+  // selection doesn't shift under the pointer, then resume. (Holding the freeze for
+  // as long as a selection merely existed left the terminal frozen with a lingering
+  // highlight — the "뿌연 잔상".)
   const selectingRef = useRef(false);
   const pendingRef = useRef<string[]>([]);
   const pendingLenRef = useRef(0);
+  // Last non-empty terminal selection text, snapshotted so 복사 / Cmd+C still work
+  // for a moment after a redraw clears the visible highlight. hasSelectionRef mirrors
+  // the state for the touch scroll gate; selGraceRef lingers the copy button.
+  const selectionTextRef = useRef('');
+  const hasSelectionRef = useRef(false);
+  hasSelectionRef.current = hasSelection;
+  const selGraceRef = useRef(0);
 
   const resolvedFontSize = fontSize ?? (isMobile ? 13 : isTablet ? 13 : 14);
 
@@ -260,18 +272,41 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     };
   }, [agentId, maybeAttach, writeToTerm]);
 
-  // Track a terminal-scoped selection: drives the freeze + the 복사 button. When
-  // the selection clears, flush any output buffered during the freeze.
+  // Track a terminal-scoped selection for the 복사 button and touch scroll gate.
+  // Snapshot the text so copy still works right after a redraw clears the highlight;
+  // linger the button briefly (grace) instead of yanking it away on the next redraw.
   useEffect(() => {
     const onSelectionChange = () => {
       const sel = document.getSelection();
       const active = !!sel && !sel.isCollapsed && !!shellRef.current && shellRef.current.contains(sel.anchorNode);
-      setHasSelection(active);
-      if (active) selectingRef.current = true;
-      else flushPending();
+      if (active) {
+        selectionTextRef.current = sel!.toString();
+        clearTimeout(selGraceRef.current);
+        setHasSelection(true);
+      } else {
+        clearTimeout(selGraceRef.current);
+        selGraceRef.current = window.setTimeout(() => {
+          selectionTextRef.current = '';
+          setHasSelection(false);
+        }, 4000);
+      }
     };
     document.addEventListener('selectionchange', onSelectionChange);
     return () => document.removeEventListener('selectionchange', onSelectionChange);
+  }, []);
+
+  // Freeze output only while the mouse button is held (drag-selecting), then flush.
+  useEffect(() => {
+    const el = shellRef.current;
+    if (!el) return;
+    const onDown = () => { selectingRef.current = true; };
+    const onUp = () => { flushPending(); };
+    el.addEventListener('mousedown', onDown);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      el.removeEventListener('mousedown', onDown);
+      window.removeEventListener('mouseup', onUp);
+    };
   }, [flushPending]);
 
   const selectAllTerminal = useCallback(() => {
@@ -282,8 +317,37 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     sel.selectAllChildren(el);
   }, []);
 
+  // Send a mouse-wheel burst to the app (alt-screen apps own scrolling). Position
+  // at the viewport centre; SGR encoding when the app enabled it.
+  const sendAppWheel = useCallback((up: boolean, steps: number) => {
+    const el = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const cols = wtRef.current?.cols || 80;
+    const rows = wtRef.current?.rows || 24;
+    const x = Math.max(1, Math.min(cols, Math.floor((rect.width / 2) / (rect.width / cols)) + 1));
+    const y = Math.max(1, Math.min(rows, Math.floor((rect.height / 2) / (rect.height / rows)) + 1));
+    const cb = up ? 64 : 65;
+    const seq = sgrMouseRef.current
+      ? `\x1b[<${cb};${x};${y}M`
+      : `\x1b[M${String.fromCharCode(32 + cb)}${String.fromCharCode(32 + x)}${String.fromCharCode(32 + y)}`;
+    let data = '';
+    for (let i = 0; i < steps; i++) data += seq;
+    if (data) agentDeckWS.send('terminal:input', { agentId, data });
+  }, [agentId]);
+
+  const scrollToBottom = useCallback(() => {
+    const el = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
+    if (mouseTrackingRef.current) {
+      sendAppWheel(false, 60); // alt-screen: burst of wheel-down toward the latest
+    } else if (el) {
+      el.scrollTop = el.scrollHeight; // native scrollback
+    }
+    setShowScrollBottom(false);
+  }, [sendAppWheel]);
+
   const copySelection = useCallback(() => {
-    const text = window.getSelection()?.toString() ?? '';
+    const text = window.getSelection()?.toString() || selectionTextRef.current;
     if (!text) return;
     writeClipboard(text).then((ok) => {
       if (!ok) return;
@@ -354,8 +418,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     const onWheel = (e: WheelEvent) => {
       if (!e.deltaY) return;
       e.preventDefault();
-      const steps = Math.max(1, Math.min(5, Math.round(Math.abs(e.deltaY) / 40)));
-      sendWheel(e.deltaY < 0, e.clientX, e.clientY, steps);
+      const steps = Math.max(1, Math.min(8, Math.round(Math.abs(e.deltaY) / 28)));
+      const up = e.deltaY < 0;
+      if (up) setShowScrollBottom(true);
+      sendWheel(up, e.clientX, e.clientY, steps);
     };
 
     let startY = 0, lastY = 0, accum = 0, decided = false, scrolling = false;
@@ -369,7 +435,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       const t = e.touches[0];
       if (!t) return;
       // Leave an active selection (handle drags) and stationary long-press alone.
-      if (selectingRef.current) return;
+      if (hasSelectionRef.current) return;
       if (!decided) {
         if (Math.abs(t.clientY - startY) < 8) return; // not yet a clear drag
         decided = true; scrolling = true; lastY = t.clientY;
@@ -378,9 +444,11 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       e.preventDefault(); // we own the gesture → scroll the app, not the DOM
       accum += t.clientY - lastY;
       lastY = t.clientY;
-      const step = rowPx();
+      // Slightly less than a full row so a drag feels responsive, not stiff.
+      const step = rowPx() * 0.8;
       while (Math.abs(accum) >= step) {
         const up = accum > 0; // finger down → reveal earlier content → wheel up
+        if (up) setShowScrollBottom(true);
         sendWheel(up, t.clientX, t.clientY, 1);
         accum += up ? -step : step;
       }
@@ -400,6 +468,25 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       wtermEl.removeEventListener('touchcancel', onTouchEnd);
     };
   }, [mouseTracking, agentId]);
+
+  // Non-alt-screen (scrollback) case: toggle the jump-to-bottom button from the
+  // native scroll position of the .wterm scroll container.
+  useEffect(() => {
+    if (!coreReady) return;
+    let el: HTMLElement | null = null;
+    let timer = 0;
+    const onScroll = () => {
+      if (!el || mouseTrackingRef.current) return;
+      setShowScrollBottom(el.scrollHeight - el.scrollTop - el.clientHeight > 12);
+    };
+    const attach = (tries: number) => {
+      el = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
+      if (el) { el.addEventListener('scroll', onScroll, { passive: true }); onScroll(); }
+      else if (tries < 20) timer = window.setTimeout(() => attach(tries + 1), 100);
+    };
+    attach(0);
+    return () => { clearTimeout(timer); el?.removeEventListener('scroll', onScroll); };
+  }, [coreReady, mouseTracking]);
 
   // Diagnostic (?debug): measure real rendered advances vs the single-char width
   // the layout assumes, plus computed-vs-actual cols. Reveals non-monospace fonts,
@@ -560,6 +647,20 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
                         pointer-events-none bg-black/80 text-green-300 border border-green-500/40 max-w-[95%] overflow-hidden">
           {debugInfo}
         </pre>
+      )}
+
+      {/* Jump to the latest — shown when scrolled up (native scrollback or an
+          alt-screen app's own scroll). */}
+      {showScrollBottom && (
+        <button
+          onMouseDown={(e) => { e.preventDefault(); scrollToBottom(); }}
+          onTouchStart={(e) => { e.preventDefault(); scrollToBottom(); }}
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 w-9 h-9 flex items-center justify-center
+                     rounded-full shadow-lg touch-manipulation active:opacity-70 bg-deck-accent text-white text-lg leading-none"
+          title="최하단으로 이동"
+        >
+          ↓
+        </button>
       )}
 
       {/* Touch-friendly selection controls. Native long-press selection also works;
