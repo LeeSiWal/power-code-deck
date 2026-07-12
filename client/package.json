@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/nanum-gothic-coding": "^5.2.8",
     "@wterm/dom": "^0.3.0",
     "@wterm/react": "^0.3.0",
     "react": "^18.3.1",

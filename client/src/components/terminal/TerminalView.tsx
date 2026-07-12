@@ -2,6 +2,12 @@ import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHand
 import { Terminal, type TerminalHandle as WTermReactHandle } from '@wterm/react';
 import type { WTerm } from '@wterm/dom';
 import '@wterm/react/css';
+// Bundled fixed-width coding font with Latin AND Hangul at a 1:2 advance ratio.
+// System fonts (JetBrains Mono etc.) lack Hangul, so Korean fell back to a font
+// that isn't 2× the Latin width — breaking the terminal grid's CJK=2-cell model
+// (uneven spacing + overflow). Bundling guarantees 한/0 == 2.0 on every device.
+import '@fontsource/nanum-gothic-coding/400.css';
+import '@fontsource/nanum-gothic-coding/700.css';
 import { agentDeckWS } from '../../lib/ws';
 import { useDevice } from '../../hooks/useDevice';
 
@@ -115,6 +121,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
   const [hasSelection, setHasSelection] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<string>('');
+  const debug = typeof window !== 'undefined' && window.location.search.includes('debug');
   // Whether the running app has mouse tracking on (Claude Code and other TUIs do).
   // When on, the app owns scrolling — a wheel/drag must be forwarded as a mouse
   // event so the app scrolls ITS conversation (its screen is the alternate buffer,
@@ -348,6 +356,63 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     };
   }, [mouseTracking, agentId]);
 
+  // Diagnostic (?debug): measure real rendered advances vs the single-char width
+  // the layout assumes, plus computed-vs-actual cols. Reveals non-monospace fonts,
+  // wide-char drift, and PTY/grid size mismatches.
+  useEffect(() => {
+    if (!debug) return;
+    const measure = () => {
+      const wtermEl = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
+      const gridEl = shellRef.current?.querySelector('.term-grid') as HTMLElement | null;
+      if (!wtermEl) return;
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;left:-9999px;top:0;';
+      wtermEl.appendChild(probe);
+      const widthOf = (s: string) => { probe.textContent = s; return probe.getBoundingClientRect().width; };
+      const one = widthOf('0');
+      const ten0 = widthOf('0000000000') / 10;
+      const tenM = widthOf('MMMMMMMMMM') / 10;
+      const tenI = widthOf('iiiiiiiiii') / 10;
+      const tenKo = widthOf('가나다라마바사아자차') / 10;
+      probe.remove();
+      const cs = getComputedStyle(wtermEl);
+      const contentW = wtermEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const computedCols = one > 0 ? Math.floor(contentW / one) : 0;
+      const gridW = gridEl ? gridEl.getBoundingClientRect().width : 0;
+      const info = [
+        `font: ${cs.fontFamily.split(',')[0]} ${cs.fontSize}`,
+        `'0'=${one.toFixed(2)} 0x10=${ten0.toFixed(2)} M=${tenM.toFixed(2)} i=${tenI.toFixed(2)} 한=${tenKo.toFixed(2)}`,
+        `mono: ${Math.abs(ten0 - one) < 0.15 && Math.abs(tenM - one) < 0.15 && Math.abs(tenI - one) < 0.15 ? 'YES' : 'NO ⚠'}`,
+        `한/0 ratio=${(tenKo / one).toFixed(2)} (want ~2.0)`,
+        `contentW=${contentW.toFixed(0)} gridW=${gridW.toFixed(0)} computedCols=${computedCols} wt.cols=${wtRef.current?.cols ?? '?'} wt.rows=${wtRef.current?.rows ?? '?'}`,
+      ].join('\n');
+      setDebugInfo(info);
+    };
+    const id = window.setInterval(measure, 1000);
+    const t = window.setTimeout(measure, 400);
+    return () => { window.clearInterval(id); window.clearTimeout(t); };
+  }, [debug]);
+
+  // The bundled font loads async; wterm measures char width at init (fallback
+  // font) and won't re-measure until the container resizes. After the font (incl.
+  // the Hangul subset) is ready, nudge the width by 1px to fire wterm's
+  // ResizeObserver so it re-measures and re-fits cols to the real glyph advances.
+  useEffect(() => {
+    let disposed = false;
+    const refit = () => {
+      if (disposed) return;
+      const el = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
+      if (!el) return;
+      const restore = el.style.width;
+      el.style.width = Math.max(0, el.clientWidth - 1) + 'px';
+      requestAnimationFrame(() => { if (!disposed) el.style.width = restore; });
+    };
+    const fonts = (document as any).fonts;
+    fonts?.ready?.then?.(() => refit());
+    fonts?.load?.('400 14px "Nanum Gothic Coding"', '가나다ABC').then(() => refit()).catch(() => {});
+    return () => { disposed = true; };
+  }, []);
+
   const onData = useCallback((data: string) => {
     if (onHangulDirectRef.current && HANGUL_RE.test(data)) onHangulDirectRef.current();
     agentDeckWS.send('terminal:input', { agentId, data });
@@ -413,15 +478,24 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         onClick={() => { if (!isTouchDevice) onFocusTerminal?.(); }}
         className="wterm-embed w-full h-full"
         style={{
-          // App dark palette + CJK-capable monospace (cells are sized in ch, so a
-          // fixed-width CJK font keeps Hangul aligned to the grid).
-          ['--term-font-family' as any]: "'JetBrains Mono', 'D2Coding', 'NanumGothicCoding', 'Noto Sans Mono CJK KR', 'Sarasa Mono K', monospace",
+          // Bundled Nanum Gothic Coding — Latin AND Hangul from ONE fixed-width
+          // font at a 1:2 advance ratio, so the terminal grid (which assumes
+          // CJK = 2 cells) stays aligned on every device. monospace is only a
+          // last-resort fallback for glyphs the font lacks.
+          ['--term-font-family' as any]: "'Nanum Gothic Coding', monospace",
           ['--term-font-size' as any]: `${resolvedFontSize}px`,
           ['--term-bg' as any]: '#0a0a0f',
           ['--term-fg' as any]: '#e2e8f0',
           ['--term-cursor' as any]: '#6366f1',
         }}
       />
+
+      {debug && debugInfo && (
+        <pre className="absolute top-1 left-1 z-30 px-2 py-1 rounded text-[9px] leading-tight whitespace-pre
+                        pointer-events-none bg-black/80 text-green-300 border border-green-500/40 max-w-[95%] overflow-hidden">
+          {debugInfo}
+        </pre>
+      )}
 
       {/* Touch-friendly selection controls. Native long-press selection also works;
           these make it reliable in a scrolling terminal. mousedown/touchstart with
