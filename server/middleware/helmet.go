@@ -12,10 +12,13 @@ func Helmet(next http.Handler) http.Handler {
 		// X-Frame-Options: SAMEORIGIN allows the app to iframe its own pages.
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 
-		// CSP: add frame-src to allow localhost iframes
+		// CSP: add frame-src to allow localhost iframes.
+		// 'wasm-unsafe-eval' lets the terminal (wterm) instantiate its WebAssembly
+		// core — without it the browser blocks WebAssembly.instantiate and the
+		// terminal renders nothing. It permits WASM compilation only, not JS eval.
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self' 'unsafe-inline'; "+
+				"script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; "+
 				"style-src 'self' 'unsafe-inline'; "+
 				"connect-src 'self' ws: wss:; "+
 				"img-src 'self' data: blob:; "+
