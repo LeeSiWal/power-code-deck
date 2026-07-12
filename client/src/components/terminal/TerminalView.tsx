@@ -115,6 +115,12 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
   const [hasSelection, setHasSelection] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Whether the running app has mouse tracking on (Claude Code and other TUIs do).
+  // When on, the app owns scrolling — a wheel/drag must be forwarded as a mouse
+  // event so the app scrolls ITS conversation (its screen is the alternate buffer,
+  // so wterm has no scrollback of its own to move). Detected by scanning output.
+  const [mouseTracking, setMouseTracking] = useState(false);
+  const sgrMouseRef = useRef(false);
   // freeze-while-selecting: while a selection is held inside the terminal, buffer
   // incoming output instead of writing it — a redraw would replace the DOM rows
   // and wipe the selection mid-drag.
@@ -141,7 +147,20 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     }
   }, []);
 
+  // Track mouse-tracking / SGR mode from the output stream (apps toggle it with
+  // DECSET/DECRST). Cheap early-out when no CSI ? is present.
+  const scanMouseMode = useCallback((data: string) => {
+    if (data.indexOf('\x1b[?') === -1) return;
+    for (const m of ['1000', '1002', '1003']) {
+      if (data.includes(`\x1b[?${m}h`)) setMouseTracking(true);
+      else if (data.includes(`\x1b[?${m}l`)) setMouseTracking(false);
+    }
+    if (data.includes('\x1b[?1006h')) sgrMouseRef.current = true;
+    else if (data.includes('\x1b[?1006l')) sgrMouseRef.current = false;
+  }, []);
+
   const writeToTerm = useCallback((data: string) => {
+    scanMouseMode(data);
     if (selectingRef.current) {
       pendingRef.current.push(data);
       pendingLenRef.current += data.length;
@@ -149,7 +168,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       return;
     }
     handleRef.current?.write(data);
-  }, [flushPending]);
+  }, [flushPending, scanMouseMode]);
 
   // Attach ONLY once wterm is ready AND the socket is open. The server replies to
   // attach with the current screen buffer immediately; attaching before wterm's
@@ -242,6 +261,92 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [selectAllTerminal]);
+
+  // Forward wheel / touch-drag as mouse-wheel events when the app has mouse
+  // tracking on (Claude Code etc.). wterm itself doesn't report mouse events, so
+  // without this the app never scrolls its conversation. Only attached while
+  // tracking is on — a plain shell keeps wterm's native scrollback scroll.
+  useEffect(() => {
+    if (!mouseTracking) return;
+    const shell = shellRef.current;
+    const wtermEl = shell?.querySelector('.wterm') as HTMLElement | null;
+    if (!shell || !wtermEl) return;
+
+    const cellAt = (clientX: number, clientY: number) => {
+      const rect = wtermEl.getBoundingClientRect();
+      const cols = wtRef.current?.cols || 80;
+      const rows = wtRef.current?.rows || 24;
+      const x = Math.min(cols, Math.max(1, Math.floor((clientX - rect.left) / (rect.width / cols)) + 1));
+      const y = Math.min(rows, Math.max(1, Math.floor((clientY - rect.top) / (rect.height / rows)) + 1));
+      return { x, y };
+    };
+    const rowPx = () => {
+      const rect = wtermEl.getBoundingClientRect();
+      return rect.height / (wtRef.current?.rows || 24) || 18;
+    };
+    // SGR (1006) wheel: ESC[<64;x;yM = up, ESC[<65;x;yM = down. Fallback X10 when
+    // the app only enabled legacy tracking.
+    const wheelSeq = (up: boolean, x: number, y: number) => {
+      const cb = up ? 64 : 65;
+      if (sgrMouseRef.current) return `\x1b[<${cb};${x};${y}M`;
+      return `\x1b[M${String.fromCharCode(32 + cb)}${String.fromCharCode(32 + x)}${String.fromCharCode(32 + y)}`;
+    };
+    const sendWheel = (up: boolean, clientX: number, clientY: number, steps: number) => {
+      const { x, y } = cellAt(clientX, clientY);
+      let data = '';
+      for (let i = 0; i < steps; i++) data += wheelSeq(up, x, y);
+      if (data) agentDeckWS.send('terminal:input', { agentId, data });
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      if (!e.deltaY) return;
+      e.preventDefault();
+      const steps = Math.max(1, Math.min(5, Math.round(Math.abs(e.deltaY) / 40)));
+      sendWheel(e.deltaY < 0, e.clientX, e.clientY, steps);
+    };
+
+    let startY = 0, lastY = 0, accum = 0, decided = false, scrolling = false;
+    const onTouchStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      startY = lastY = t.clientY;
+      accum = 0; decided = false; scrolling = false;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      // Leave an active selection (handle drags) and stationary long-press alone.
+      if (selectingRef.current) return;
+      if (!decided) {
+        if (Math.abs(t.clientY - startY) < 8) return; // not yet a clear drag
+        decided = true; scrolling = true; lastY = t.clientY;
+      }
+      if (!scrolling) return;
+      e.preventDefault(); // we own the gesture → scroll the app, not the DOM
+      accum += t.clientY - lastY;
+      lastY = t.clientY;
+      const step = rowPx();
+      while (Math.abs(accum) >= step) {
+        const up = accum > 0; // finger down → reveal earlier content → wheel up
+        sendWheel(up, t.clientX, t.clientY, 1);
+        accum += up ? -step : step;
+      }
+    };
+    const onTouchEnd = () => { decided = false; scrolling = false; };
+
+    shell.addEventListener('wheel', onWheel, { passive: false });
+    wtermEl.addEventListener('touchstart', onTouchStart, { passive: false });
+    wtermEl.addEventListener('touchmove', onTouchMove, { passive: false });
+    wtermEl.addEventListener('touchend', onTouchEnd);
+    wtermEl.addEventListener('touchcancel', onTouchEnd);
+    return () => {
+      shell.removeEventListener('wheel', onWheel);
+      wtermEl.removeEventListener('touchstart', onTouchStart);
+      wtermEl.removeEventListener('touchmove', onTouchMove);
+      wtermEl.removeEventListener('touchend', onTouchEnd);
+      wtermEl.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [mouseTracking, agentId]);
 
   const onData = useCallback((data: string) => {
     if (onHangulDirectRef.current && HANGUL_RE.test(data)) onHangulDirectRef.current();
