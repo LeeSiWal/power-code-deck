@@ -67,8 +67,8 @@ fi
 # compiler requirement, and tmux is not used.
 if [ "$OS" = "Linux" ] && command -v apt-get &>/dev/null; then
     echo "  Installing base dependencies (git, curl, ca-certificates)..."
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq git curl ca-certificates
+    sudo apt-get update
+    sudo apt-get install -y git curl ca-certificates
     echo "  ✓ Base dependencies installed"
 fi
 
@@ -78,7 +78,7 @@ if ! command -v go &>/dev/null; then
     if [ "$OS" = "Darwin" ]; then
         brew install go
     else
-        sudo apt-get install -y -qq golang
+        sudo apt-get install -y golang
     fi
     echo "  ✓ Go installed"
 else
@@ -92,7 +92,7 @@ if ! command -v node &>/dev/null; then
         brew install node
     else
         curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - 2>/dev/null
-        sudo apt-get install -y -qq nodejs 2>/dev/null || {
+        sudo apt-get install -y nodejs 2>/dev/null || {
             # Fallback: use nvm
             curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
             export NVM_DIR="$HOME/.nvm"
