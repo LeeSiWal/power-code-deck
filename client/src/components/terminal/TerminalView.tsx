@@ -244,6 +244,16 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       if (statusRef.current !== 'connected') setStatus('connected');
     });
     const unsubOpen = agentDeckWS.on('open', () => {
+      // A fresh socket is a clean slate on the server: new viewerID, attached to
+      // nothing, no eviction record. So auto-reclaim — clear any stale eviction
+      // from the PREVIOUS connection and re-attach without the user tapping
+      // "다시 열기". iOS/iPadOS freezes background sockets, so a phone/iPad
+      // returning to the foreground reconnects here; this is what makes the
+      // handoff between two touch devices feel automatic. Note this only fires
+      // on a genuine (re)connect — a device evicted while its socket stays live
+      // gets no 'open', so two simultaneously-foreground devices don't ping-pong.
+      setEvicted(false);
+      evictedRef.current = false;
       attachedRef.current = false;
       setStatus('connected');
       maybeAttach();
