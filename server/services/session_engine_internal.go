@@ -40,6 +40,7 @@ type internalPtySession struct {
 	pty       pty.Pty
 	cmd       *pty.Cmd
 	buffer    *RingBuffer
+	modes     *terminalModes
 	viewers   map[string]struct{}
 	status    string
 	closeOnce sync.Once
@@ -124,6 +125,7 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 		pty:     p,
 		cmd:     cmd,
 		buffer:  NewRingBuffer(e.scrollbackBytes),
+		modes:   newTerminalModes(),
 		viewers: make(map[string]struct{}),
 		status:  SessionRunning,
 	}
@@ -174,6 +176,7 @@ func (e *InternalPtySessionEngine) readPump(s *internalPtySession) {
 		data := make([]byte, len(b))
 		copy(data, b)
 		s.buffer.Write(data)
+		s.modes.scan(data) // remember alt-screen / mouse / cursor-key state for reattach
 		if h := e.outputHandler(); h != nil {
 			h(s.info.ID, data)
 		}
@@ -228,7 +231,15 @@ func (e *InternalPtySessionEngine) Attach(sessionID, viewerID string) (*AttachRe
 	s.viewers[viewerID] = struct{}{}
 	s.mu.Unlock()
 
-	return &AttachResult{SessionID: sessionID, Replay: s.buffer.Snapshot()}, nil
+	// Prepend the current DEC private modes (alt-screen, mouse tracking, SGR,
+	// application cursor keys, bracketed paste) so a reattaching viewer restores
+	// them even when the bounded ring has evicted the app's original enable
+	// sequences — otherwise a long "이어하기" session scrolls/renders wrong.
+	replay := s.buffer.Snapshot()
+	if prefix := s.modes.prefix(); len(prefix) > 0 {
+		replay = append(prefix, replay...)
+	}
+	return &AttachResult{SessionID: sessionID, Replay: replay}, nil
 }
 
 // Detach removes a viewer. It MUST NOT close the PTY or kill the process — even

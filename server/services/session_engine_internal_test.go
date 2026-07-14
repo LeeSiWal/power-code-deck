@@ -205,3 +205,58 @@ func TestRingBufferCap(t *testing.T) {
 		t.Fatalf("ring buffer len = %d, want 10", r.Len())
 	}
 }
+
+// A long session evicts the app's original mode-enable sequences from the
+// bounded ring, but Attach must still restore them (the resume-scroll bug):
+// the reconnecting viewer has to learn the app owns the mouse + is in alt-screen.
+func TestInternalAttachRestoresEvictedModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell")
+	}
+	cap := newCapture()
+	e := NewInternalPtySessionEngine(2 * 1024) // tiny ring so the front is evicted
+	e.SetOutputHandler(cap.handle)
+
+	id := "int-modes"
+	// Enable alt-screen + mouse tracking + SGR up front, then flood far past 2KB.
+	script := `printf '\033[?1049h\033[?1000h\033[?1002h\033[?1003h\033[?1006h'; ` +
+		`i=0; while [ $i -lt 400 ]; do printf 'padding padding padding line %d\n' $i; i=$((i+1)); done; sleep 5`
+	newInternalSession(t, e, id, "sh", "-c", script)
+	defer e.Kill(id)
+
+	// Wait until enough output has flowed to overflow the ring and evict the front.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(cap.get(id), "line 399") {
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	res, err := e.Attach(id, "viewer-1")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	replay := string(res.Replay)
+
+	// The raw ring must have dropped the original enable sequence (proves eviction).
+	if strings.Contains(replay[len(res.Replay)-2*1024:], "line 0\n") {
+		// (sanity: front content is gone — not strictly required, informational)
+	}
+	// Yet the replay must OPEN with the restored modes so the client turns on
+	// wheel-forwarding and alt-screen rendering.
+	wantPrefix := "\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h"
+	if !strings.HasPrefix(replay, wantPrefix) {
+		t.Fatalf("replay must start with restored modes %q; got prefix %q", wantPrefix, replay[:min(len(replay), 40)])
+	}
+	// And the original front sequence must actually be gone from the ring tail
+	// (otherwise the test isn't exercising eviction). The ring is 2KB; the
+	// enable bytes were the very first written.
+	if bytes.Count(res.Replay, []byte("\x1b[?1049h")) != 1 {
+		t.Fatalf("expected exactly one (restored) alt-screen enable, ring still holds the original")
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
