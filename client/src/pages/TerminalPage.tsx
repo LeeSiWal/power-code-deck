@@ -34,11 +34,11 @@ export function TerminalPage() {
   const [handoffOpen, setHandoffOpen] = useState(false);
   const [handoffToast, setHandoffToast] = useState(false);
 
-  // Single interactive terminal + a device-aware Prompt Bar for Korean / long
-  // prompts. Touch devices (mobile / iPad) can't reliably compose Korean in
-  // the terminal, so the Prompt Bar is mandatory there — it can only be collapsed, not
-  // closed. On desktop it is an optional overlay toggled by shortcut / button.
-  const forcePromptBar = isTouchDevice;
+  // The Prompt Bar is the primary text input on EVERY device. The terminal's own
+  // (hidden textarea) IME can't reliably compose Korean — jamo split even on macOS —
+  // so Korean / long text is always composed in the Prompt Bar and pasted in. The
+  // terminal still takes direct keys (arrows, y/n, Ctrl+C) via a tap or the key bar.
+  const forcePromptBar = true;
   const terminalApiRef = useRef<TerminalHandle | null>(null);
   const promptFocusedRef = useRef(false); // suspends terminal auto-focus while typing in the Prompt Bar
   const [promptOpen, setPromptOpen] = useState(forcePromptBar);
@@ -48,7 +48,18 @@ export function TerminalPage() {
 
   const focusTerminal = useCallback(() => {
     promptFocusedRef.current = false;
+    // Drop any lingering terminal selection when focus moves back to the terminal
+    // (e.g. after Prompt Bar Send) so a stale highlight doesn't leave a "잔상".
+    window.getSelection()?.removeAllRanges();
     terminalApiRef.current?.focus();
+  }, []);
+
+  // Prompt Bar focus/blur. On focus, clear any leftover terminal selection — the
+  // Prompt Bar buttons preventDefault (to keep focus), which would otherwise keep a
+  // stale terminal selection painted.
+  const handlePromptFocusChange = useCallback((focused: boolean) => {
+    promptFocusedRef.current = focused;
+    if (focused) window.getSelection()?.removeAllRanges();
   }, []);
 
   // Send a control / navigation key via the terminal so arrow keys are translated
@@ -308,7 +319,7 @@ export function TerminalPage() {
               onToggleCollapse={() => setPromptCollapsed((c) => !c)}
               onClose={() => {}}
               onFocusTerminal={focusTerminal}
-              onFocusChange={(f) => { promptFocusedRef.current = f; }}
+              onFocusChange={handlePromptFocusChange}
             />
             <MobileToolbar agentId={agentId} onOpenPrompt={openPrompt} sendKey={sendTerminalKey} />
           </>
@@ -544,7 +555,7 @@ export function TerminalPage() {
                   onToggleCollapse={() => setPromptCollapsed((c) => !c)}
                   onClose={() => { setPromptOpen(false); focusTerminal(); }}
                   onFocusTerminal={focusTerminal}
-                  onFocusChange={(f) => { promptFocusedRef.current = f; }}
+                  onFocusChange={handlePromptFocusChange}
                   autoFocus={!forcePromptBar}
                 />
               )}
