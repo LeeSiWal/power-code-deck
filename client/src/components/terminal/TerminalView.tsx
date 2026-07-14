@@ -147,8 +147,12 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const mouseTrackingRef = useRef(false);
   mouseTrackingRef.current = mouseTracking;
   const sgrMouseRef = useRef(false);
-  // "Jump to bottom" affordance shown when the user has scrolled up.
+  // "Jump to bottom" affordance shown when the user has scrolled up. For a
+  // mouse-tracking app (Claude Code owns its scroll, so we can't read its
+  // position) we track net wheel direction: up increments, down decrements,
+  // clamped — the button shows while we're a few lines up and hides near bottom.
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const scrollUpAccumRef = useRef(0);
   // Freeze output ONLY during an active drag-select (mousedown → mouseup) so the
   // selection doesn't shift under the pointer, then resume. (Holding the freeze for
   // as long as a selection merely existed left the terminal frozen with a lingering
@@ -163,6 +167,11 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const hasSelectionRef = useRef(false);
   hasSelectionRef.current = hasSelection;
   const selGraceRef = useRef(0);
+  // True only while a selection is genuinely non-collapsed inside the terminal (no
+  // grace). Gates the renderer's force-redraw so a held selection isn't re-rendered
+  // under (which orphans its highlight paint on Safari — the drag "잔상"), and
+  // force-redraw resumes the instant it clears to sweep any leftover.
+  const selectionActiveRef = useRef(false);
 
   const resolvedFontSize = fontSize ?? (isMobile ? 13 : isTablet ? 13 : 14);
 
@@ -170,7 +179,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   useEffect(() => {
     let disposed = false;
     GhosttyCore.load({ wasmPath: ghosttyWasmUrl, scrollbackLimit: 10000 })
-      .then((gc) => { if (!disposed) setCore(wideAwareCore(gc)); })
+      .then((gc) => { if (!disposed) setCore(wideAwareCore(gc, () => !selectionActiveRef.current)); })
       .catch((err) => {
         console.error('[terminal] ghostty core load failed, using built-in core', err);
         if (!disposed) setCoreFailed(true);
@@ -289,6 +298,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     const onSelectionChange = () => {
       const sel = document.getSelection();
       const active = !!sel && !sel.isCollapsed && !!shellRef.current && shellRef.current.contains(sel.anchorNode);
+      selectionActiveRef.current = active; // immediate — gates the renderer force-redraw
       if (active) {
         selectionTextRef.current = sel!.toString();
         clearTimeout(selGraceRef.current);
@@ -353,6 +363,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     } else if (el) {
       el.scrollTop = el.scrollHeight; // native scrollback
     }
+    scrollUpAccumRef.current = 0;
     setShowScrollBottom(false);
   }, [sendAppWheel]);
 
@@ -423,15 +434,35 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       let data = '';
       for (let i = 0; i < steps; i++) data += wheelSeq(up, x, y);
       if (data) agentDeckWS.send('terminal:input', { agentId, data });
+      // Net wheel direction → jump-to-bottom visibility (we can't read the app's
+      // own scroll position). Clamped so it returns to 0 within a screen or two.
+      scrollUpAccumRef.current = Math.max(0, Math.min(40, scrollUpAccumRef.current + (up ? steps : -steps)));
+      setShowScrollBottom(scrollUpAccumRef.current > 1);
     };
 
+    // Coalesce wheel events to ONE controlled send per frame. A trackpad fires
+    // dozens of wheel events per second; forwarding each one floods the app with
+    // scroll requests → it scrolls wildly and redraws every frame (janky + leaves
+    // paint trails). Accumulating and flushing on rAF keeps scrolling smooth.
+    let wheelAccum = 0;
+    let wheelX = 0;
+    let wheelY = 0;
+    let wheelRaf = 0;
+    const flushWheel = () => {
+      wheelRaf = 0;
+      if (Math.abs(wheelAccum) < 1) return;
+      const up = wheelAccum < 0;
+      const steps = Math.max(1, Math.min(3, Math.round(Math.abs(wheelAccum) / 50)));
+      wheelAccum = 0;
+      sendWheel(up, wheelX, wheelY, steps);
+    };
     const onWheel = (e: WheelEvent) => {
       if (!e.deltaY) return;
       e.preventDefault();
-      const steps = Math.max(1, Math.min(8, Math.round(Math.abs(e.deltaY) / 28)));
-      const up = e.deltaY < 0;
-      if (up) setShowScrollBottom(true);
-      sendWheel(up, e.clientX, e.clientY, steps);
+      wheelAccum += e.deltaY;
+      wheelX = e.clientX;
+      wheelY = e.clientY;
+      if (!wheelRaf) wheelRaf = requestAnimationFrame(flushWheel);
     };
 
     let startY = 0, lastY = 0, accum = 0, decided = false, scrolling = false;
@@ -458,7 +489,6 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       const step = rowPx() * 0.8;
       while (Math.abs(accum) >= step) {
         const up = accum > 0; // finger down → reveal earlier content → wheel up
-        if (up) setShowScrollBottom(true);
         sendWheel(up, t.clientX, t.clientY, 1);
         accum += up ? -step : step;
       }
@@ -471,6 +501,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     wtermEl.addEventListener('touchend', onTouchEnd);
     wtermEl.addEventListener('touchcancel', onTouchEnd);
     return () => {
+      if (wheelRaf) cancelAnimationFrame(wheelRaf);
       shell.removeEventListener('wheel', onWheel);
       wtermEl.removeEventListener('touchstart', onTouchStart);
       wtermEl.removeEventListener('touchmove', onTouchMove);

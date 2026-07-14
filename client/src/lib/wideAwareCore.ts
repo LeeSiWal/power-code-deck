@@ -31,7 +31,14 @@ function isWide(cp: number): boolean {
  * continuation space into a zero-width space so the wide glyph itself fills the
  * pair. A continuation cell is a space whose immediately preceding cell is wide.
  */
-export function wideAwareCore(base: TerminalCore): TerminalCore {
+/**
+ * @param forceDirty optional gate: when it returns true the renderer redraws every
+ * row (clears stale colored-cell backgrounds); when false it defers to the core's
+ * real dirty tracking. Callers pass `() => noActiveSelection` so a held selection's
+ * DOM isn't replaced each frame (which orphans its highlight paint on Safari — the
+ * "커서 잔상").
+ */
+export function wideAwareCore(base: TerminalCore, forceDirty?: () => boolean): TerminalCore {
   const fix = (cell: CellData, prev: CellData | null): CellData =>
     cell.char === 32 && prev !== null && isWide(prev.char) ? { ...cell, char: ZWSP } : cell;
 
@@ -45,12 +52,13 @@ export function wideAwareCore(base: TerminalCore): TerminalCore {
         return (offset: number, col: number) =>
           fix(target.getScrollbackCell(offset, col), col > 0 ? target.getScrollbackCell(offset, col - 1) : null);
       }
-      // Force every visible row to re-render each frame. wterm's dirty-row
-      // optimization misses some background-only changes during CJK-heavy
-      // redraws, leaving stale colored cell backgrounds ("잔류") behind. Redrawing
-      // the whole grid from the current core state each frame keeps the DOM honest.
+      // Force every visible row to re-render each frame so stale colored cell
+      // backgrounds can't linger (wterm's dirty-row optimization misses some
+      // background-only changes during CJK redraws). But NOT while a selection is
+      // held — re-rendering under it orphans the highlight paint on Safari — then
+      // defer to the core's real dirty tracking.
       if (prop === 'isDirtyRow') {
-        return (_row: number) => true;
+        return (row: number) => (!forceDirty || forceDirty()) ? true : target.isDirtyRow(row);
       }
       const value = Reflect.get(target, prop, receiver);
       return typeof value === 'function' ? value.bind(target) : value;
