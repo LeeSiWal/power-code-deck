@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { Terminal, type TerminalHandle as WTermReactHandle } from '@wterm/react';
-import type { WTerm } from '@wterm/dom';
+import { CustomTerminal, type CustomTerminalHandle } from './CustomTerminal';
+import type { CustomTerm } from '../../lib/customTerm/CustomTerm';
 import type { TerminalCore } from '@wterm/core';
 import { GhosttyCore } from '@wterm/ghostty';
 import ghosttyWasmUrl from '../../assets/ghostty-vt.wasm?url';
-import '@wterm/react/css';
+import '../../styles/customTerm.css';
 import { wideAwareCore } from '../../lib/wideAwareCore';
 // Bundled fixed-width coding font with Latin AND Hangul at a 1:2 advance ratio.
 // System fonts (JetBrains Mono etc.) lack Hangul, so Korean fell back to a font
@@ -111,8 +111,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 ) {
   const { isMobile, isTablet, isTouchDevice } = useDevice();
   const shellRef = useRef<HTMLDivElement>(null);
-  const handleRef = useRef<WTermReactHandle | null>(null);
-  const wtRef = useRef<WTerm | null>(null);
+  const handleRef = useRef<CustomTerminalHandle | null>(null);
+  const wtRef = useRef<CustomTerm | null>(null);
   const attachedRef = useRef(false);
   const readyRef = useRef(false);
   const colsRef = useRef(80);
@@ -190,7 +190,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   useImperativeHandle(ref, () => ({
     focus: () => handleRef.current?.focus(),
     sendKey: (data: string) => {
-      const app = wtRef.current?.bridge?.cursorKeysApp?.() ?? false;
+      const app = wtRef.current?.core?.cursorKeysApp?.() ?? false;
       agentDeckWS.send('terminal:input', { agentId, data: app ? (APP_CURSOR_MAP[data] ?? data) : data });
     },
   }), [agentId]);
@@ -216,45 +216,6 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     else if (data.includes('\x1b[?1006l')) sgrMouseRef.current = false;
   }, []);
 
-  // Force WebKit to drop stale paint ("잔상"). Safari keeps a compositing backing
-  // store for the row grid that it only partially invalidates when we rewrite rows
-  // during a scroll/resize/stream — old glyphs and background blocks linger. Toggle
-  // the grid's `display` synchronously (none → force reflow → restore): that
-  // destroys and rebuilds its layer so it repaints from scratch. It's all in one JS
-  // task so no blank frame is ever shown (flicker-free), and it targets .term-grid
-  // (inner) — NOT .wterm — so wterm's own ResizeObserver (which watches .wterm)
-  // doesn't fire. scrollTop is preserved (the grid collapses to 0 height while off).
-  const forceRepaint = useCallback(() => {
-    const wt = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
-    const grid = wt?.querySelector('.term-grid') as HTMLElement | null;
-    if (!wt || !grid) return;
-    const st = wt.scrollTop;
-    grid.style.display = 'none';
-    void grid.offsetHeight;
-    grid.style.display = '';
-    if (wt.scrollTop !== st) wt.scrollTop = st;
-  }, []);
-
-  // Anti-잔상 pump. WebKit strands the grid's old paint whenever the screen CHANGES
-  // — not just on scroll/resize but also while a response streams in and pushes the
-  // conversation up (esp. around colored blocks like the user's own message box,
-  // where the ghost "번진다"). So repaint every frame while the terminal is actively
-  // changing, and stop ~300ms after the last change so we never churn when idle.
-  // markActive() is pinged from output, scroll, and resize.
-  const activeUntilRef = useRef(0);
-  const pumpingRef = useRef(false);
-  const markActive = useCallback(() => {
-    activeUntilRef.current = performance.now() + 300;
-    if (pumpingRef.current) return;
-    pumpingRef.current = true;
-    const tick = () => {
-      forceRepaint();
-      if (performance.now() < activeUntilRef.current) requestAnimationFrame(tick);
-      else pumpingRef.current = false;
-    };
-    requestAnimationFrame(tick);
-  }, [forceRepaint]);
-
   const writeToTerm = useCallback((data: string) => {
     scanMouseMode(data);
     if (selectingRef.current) {
@@ -264,8 +225,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       return;
     }
     handleRef.current?.write(data);
-    markActive(); // repaint while output is changing the screen (kills 잔상)
-  }, [flushPending, scanMouseMode, markActive]);
+  }, [flushPending, scanMouseMode]);
 
   // Attach ONLY once wterm is ready AND the socket is open. The server replies to
   // attach with the current screen buffer immediately; attaching before wterm's
@@ -481,7 +441,6 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       let data = '';
       for (let i = 0; i < steps; i++) data += wheelSeq(up, x, y);
       if (data) agentDeckWS.send('terminal:input', { agentId, data });
-      markActive(); // keep repainting while the app's scroll redraws stream in
       // Net wheel direction → jump-to-bottom visibility (we can't read the app's
       // own scroll position). Clamped so it returns to 0 within a screen or two.
       scrollUpAccumRef.current = Math.max(0, Math.min(40, scrollUpAccumRef.current + (up ? steps : -steps)));
@@ -556,7 +515,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       wtermEl.removeEventListener('touchend', onTouchEnd);
       wtermEl.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [mouseTracking, agentId, markActive]);
+  }, [mouseTracking, agentId]);
 
   // Non-alt-screen (scrollback) case: toggle the jump-to-bottom button from the
   // native scroll position of the .wterm scroll container.
@@ -640,13 +599,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       // 자간/cols: fire wterm's ResizeObserver so it re-measures char width.
       const restore = el.style.width;
       el.style.width = `${Math.max(0, el.clientWidth - 1)}px`;
-      requestAnimationFrame(() => {
-        if (disposed) return;
-        el.style.width = restore;
-        // Reflow of the grid on resize is the other place WebKit strands old paint;
-        // pump repaints for a moment once the new width has been applied.
-        requestAnimationFrame(() => { if (!disposed) markActive(); });
-      });
+      requestAnimationFrame(() => { if (!disposed) el.style.width = restore; });
     };
     const debouncedRefit = () => { clearTimeout(t); t = window.setTimeout(refit, 80); };
 
@@ -660,7 +613,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     refit();
 
     return () => { disposed = true; clearTimeout(t); ro?.disconnect(); };
-  }, [coreReady, markActive]);
+  }, [coreReady]);
 
   const onData = useCallback((data: string) => {
     if (onHangulDirectRef.current && HANGUL_RE.test(data)) onHangulDirectRef.current();
@@ -679,7 +632,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     }
   }, [agentId]);
 
-  const onReady = useCallback((wt: WTerm) => {
+  const onReady = useCallback((wt: CustomTerm) => {
     wtRef.current = wt;
     colsRef.current = wt.cols;
     rowsRef.current = wt.rows;
@@ -734,10 +687,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         </div>
       )}
 
-      {coreReady && (
-      <Terminal
+      {core && (
+      <CustomTerminal
         ref={handleRef}
-        {...(core ? { core } : {})}
+        core={core}
         autoResize
         cursorBlink
         onData={onData}

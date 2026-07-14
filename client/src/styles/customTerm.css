@@ -1,0 +1,86 @@
+/* Styles for CustomTerm (our layer-free DOM terminal). Replaces @wterm/react/css.
+   Deliberately NONE of the compositing hints wterm shipped — no `contain: paint`,
+   no `will-change: contents`, no per-row `box-shadow`. A plain, un-layered grid is
+   what lets WebKit repaint cleanly (no "잔상"). */
+
+.wterm {
+  --term-fg: #d4d4d4;
+  --term-bg: #1e1e1e;
+  --term-cursor: #aeafad;
+
+  --term-color-0: #1e1e1e;
+  --term-color-1: #f44747;
+  --term-color-2: #6a9955;
+  --term-color-3: #d7ba7d;
+  --term-color-4: #569cd6;
+  --term-color-5: #c586c0;
+  --term-color-6: #4ec9b0;
+  --term-color-7: #d4d4d4;
+  --term-color-8: #808080;
+  --term-color-9: #f44747;
+  --term-color-10: #6a9955;
+  --term-color-11: #d7ba7d;
+  --term-color-12: #569cd6;
+  --term-color-13: #c586c0;
+  --term-color-14: #4ec9b0;
+  --term-color-15: #ffffff;
+
+  --term-font-family: 'Menlo', 'Consolas', 'DejaVu Sans Mono', monospace;
+  --term-font-size: 14px;
+  --term-line-height: 1.2;
+  --term-row-height: 17px;
+
+  position: relative;
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font-family: var(--term-font-family);
+  font-size: var(--term-font-size);
+  line-height: var(--term-line-height);
+  outline: none;
+}
+
+.wterm:focus,
+.wterm:focus-visible { outline: none; }
+
+.term-grid {
+  display: block;
+  white-space: pre;
+}
+
+.term-row {
+  display: block;
+  height: var(--term-row-height);
+  line-height: var(--term-row-height);
+}
+
+.term-row > span {
+  display: inline-block;
+  height: var(--term-row-height);
+  vertical-align: top;
+}
+
+.term-block {
+  width: 1ch;
+  overflow: hidden;
+}
+
+.term-cursor {
+  outline: 1px solid var(--term-cursor);
+  outline-offset: -1px;
+}
+.wterm.focused .term-cursor {
+  background: var(--term-cursor);
+  color: var(--term-bg);
+  outline: none;
+}
+.wterm.focused.cursor-blink .term-cursor {
+  animation: pcd-cursor-blink 1s step-end infinite;
+}
+@keyframes pcd-cursor-blink {
+  0%, 100% { background: var(--term-cursor); color: var(--term-bg); }
+  50% { background: transparent; color: inherit; }
+}
+
+.wterm ::selection {
+  background: rgba(86, 156, 214, 0.35);
+}
