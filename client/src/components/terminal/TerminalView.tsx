@@ -227,6 +227,24 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     handleRef.current?.write(data);
   }, [flushPending, scanMouseMode]);
 
+  // Force the running app to repaint the WHOLE screen. The server's replay is
+  // 512KB of raw history; ghostty replaying its accumulated scroll operations
+  // leaves some cells with stale colour/bg attributes — the cross-browser "잔상"
+  // (it lives in the core's grid, not the DOM/CSS, which is why no paint/CSS fix
+  // touched it). A SIGWINCH makes Claude Code rewrite every visible cell with the
+  // correct attributes, clearing the stale ones. Nudge rows by 1 and back so it
+  // fires even when the effective size is unchanged.
+  const requestFullRepaint = useCallback(() => {
+    const c = colsRef.current, r = rowsRef.current;
+    if (!c || r < 2 || !agentDeckWS.connected || evictedRef.current) return;
+    agentDeckWS.send('terminal:resize', { agentId, cols: c, rows: r - 1 });
+    window.setTimeout(() => {
+      if (agentDeckWS.connected && !evictedRef.current) {
+        agentDeckWS.send('terminal:resize', { agentId, cols: colsRef.current, rows: rowsRef.current });
+      }
+    }, 60);
+  }, [agentId]);
+
   // Attach ONLY once wterm is ready AND the socket is open. The server replies to
   // attach with the current screen buffer immediately; attaching before wterm's
   // write handle exists would drop that first dump — leaving an idle alt-screen
@@ -241,7 +259,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     wtRef.current?.reset();
     agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current });
     attachedRef.current = true;
-  }, [agentId]);
+    // Once the replay has landed and been parsed, force a clean full repaint to
+    // sweep any stale attributes ghostty accumulated from the replayed history.
+    window.setTimeout(() => { if (attachedRef.current) requestFullRepaint(); }, 500);
+  }, [agentId, requestFullRepaint]);
 
   // Reclaim the session on this device (after being evicted by another device).
   const reclaim = useCallback(() => {
