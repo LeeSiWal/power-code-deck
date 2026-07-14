@@ -86,3 +86,11 @@
   will-change: auto;
   contain: layout style;
 }
+/* wterm draws a `box-shadow: 0 1px 0 <bg>` under every full-width COLORED row (to
+   fill the inter-row gap). A box-shadow paints OUTSIDE the element box and isn't
+   cleared when the row repaints, so on scroll it smears downward — exactly the
+   "번짐" around the user's colored message box. Kill it; with an exact row height
+   the rows are already contiguous, so no visible gap remains. */
+.wterm .term-row {
+  box-shadow: none !important;
+}
