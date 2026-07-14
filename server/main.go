@@ -36,6 +36,20 @@ func main() {
 		return
 	}
 	cfg := config.Load()
+
+	// LAN handoff without an explicit LAN_URL: adopt the auto-detected private IP
+	// as the LAN origin BEFORE anything reads AllowedOrigins/AllowedHosts, so the
+	// two guards stay in sync. Otherwise the DNS-rebinding Host guard (which does
+	// auto-detect the IP) lets the page load, but the Origin allow-list (which did
+	// NOT) rejects the anonymous-token mint and the WebSocket handshake — leaving a
+	// LAN device (iPad/phone) stuck on "Connecting…" with no token. Never overrides
+	// an explicit LAN_URL.
+	if cfg.LanHandoffEnabled && cfg.LanURL == "" {
+		if ip := services.DetectLANIP(); ip != "" {
+			cfg.LanURL = "http://" + ip + ":" + cfg.Port
+		}
+	}
+
 	database := db.Init(cfg.DBPath)
 
 	// Services
@@ -84,15 +98,9 @@ func main() {
 	r := mux.NewRouter()
 
 	// Global middleware. HostCheck runs first to block DNS-rebinding before any
-	// handler sees the request.
+	// handler sees the request. The auto-detected LAN IP is already folded into
+	// cfg.LanURL above, so AllowedHosts (and AllowedOrigins) both include it.
 	allowedHosts := cfg.AllowedHosts()
-	if cfg.LanHandoffEnabled && cfg.LanURL == "" {
-		// Bound to the LAN for handoff but no explicit LAN_URL — allow the
-		// auto-detected private IP so scanned QR links resolve.
-		if ip := services.DetectLANIP(); ip != "" {
-			allowedHosts = append(allowedHosts, ip, ip+":"+cfg.Port)
-		}
-	}
 	r.Use(middleware.Helmet)
 	r.Use(middleware.HostCheck(allowedHosts))
 	r.Use(middleware.CORS(cfg.CORSOrigins))
