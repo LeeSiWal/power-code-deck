@@ -45,6 +45,13 @@ export function wideAwareCore(base: TerminalCore): TerminalCore {
         return (offset: number, col: number) =>
           fix(target.getScrollbackCell(offset, col), col > 0 ? target.getScrollbackCell(offset, col - 1) : null);
       }
+      // Force every visible row to re-render each frame. wterm's dirty-row
+      // optimization misses some background-only changes during CJK-heavy
+      // redraws, leaving stale colored cell backgrounds ("잔류") behind. Redrawing
+      // the whole grid from the current core state each frame keeps the DOM honest.
+      if (prop === 'isDirtyRow') {
+        return (_row: number) => true;
+      }
       const value = Reflect.get(target, prop, receiver);
       return typeof value === 'function' ? value.bind(target) : value;
     },
