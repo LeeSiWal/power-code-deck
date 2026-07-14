@@ -535,25 +535,47 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     return () => { window.clearInterval(id); window.clearTimeout(t); };
   }, [debug]);
 
-  // The bundled font loads async; wterm measures char width at init (fallback
-  // font) and won't re-measure until the container resizes. After the font (incl.
-  // the Hangul subset) is ready, nudge the width by 1px to fire wterm's
-  // ResizeObserver so it re-measures and re-fits cols to the real glyph advances.
+  // Re-fit line-spacing AND letter-spacing to the container/font. wterm re-measures
+  // the char width (→ cols, "자간") on a container resize, but its row height
+  // (→ line-spacing, "줄간격") is measured only once at init and never updated —
+  // so a resize or a late-loading web font leaves the row spacing stale. Re-measure
+  // the current font's line height into --term-row-height and nudge the width to
+  // force wterm's own char re-measure, on font load AND on every container resize.
   useEffect(() => {
+    if (!coreReady) return;
     let disposed = false;
+    let t = 0;
     const refit = () => {
       if (disposed) return;
       const el = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
       if (!el) return;
+      // 줄간격: natural line height of the current font (inherits --term-font-size
+      // and the terminal's line-height).
+      const probe = document.createElement('span');
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:-9999px;left:-9999px;';
+      probe.textContent = 'Wg가';
+      el.appendChild(probe);
+      const h = probe.getBoundingClientRect().height;
+      probe.remove();
+      if (h > 0) el.style.setProperty('--term-row-height', `${Math.ceil(h)}px`);
+      // 자간/cols: fire wterm's ResizeObserver so it re-measures char width.
       const restore = el.style.width;
-      el.style.width = Math.max(0, el.clientWidth - 1) + 'px';
+      el.style.width = `${Math.max(0, el.clientWidth - 1)}px`;
       requestAnimationFrame(() => { if (!disposed) el.style.width = restore; });
     };
+    const debouncedRefit = () => { clearTimeout(t); t = window.setTimeout(refit, 80); };
+
     const fonts = (document as any).fonts;
     fonts?.ready?.then?.(() => refit());
     fonts?.load?.('400 14px "Nanum Gothic Coding"', '가나다ABC').then(() => refit()).catch(() => {});
-    return () => { disposed = true; };
-  }, []);
+
+    const shell = shellRef.current;
+    const ro = shell ? new ResizeObserver(debouncedRefit) : null;
+    ro?.observe(shell!);
+    refit();
+
+    return () => { disposed = true; clearTimeout(t); ro?.disconnect(); };
+  }, [coreReady]);
 
   const onData = useCallback((data: string) => {
     if (onHangulDirectRef.current && HANGUL_RE.test(data)) onHangulDirectRef.current();
