@@ -227,23 +227,28 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     handleRef.current?.write(data);
   }, [flushPending, scanMouseMode]);
 
-  // Force the running app to repaint the WHOLE screen. The server's replay is
-  // 512KB of raw history; ghostty replaying its accumulated scroll operations
-  // leaves some cells with stale colour/bg attributes — the cross-browser "잔상"
-  // (it lives in the core's grid, not the DOM/CSS, which is why no paint/CSS fix
-  // touched it). A SIGWINCH makes Claude Code rewrite every visible cell with the
-  // correct attributes, clearing the stale ones. Nudge rows by 1 and back so it
-  // fires even when the effective size is unchanged.
+  // Force the running app to repaint the WHOLE screen cleanly. Claude Code scrolls
+  // its conversation with insert-line (ESC[L), and ghostty fills the inserted lines
+  // with the CURRENT background (BCE), stranding the grey of whatever was styled at
+  // that moment — the cross-browser "잔상" that accumulates as you scroll (it's in
+  // the core's grid, not the DOM/CSS). The only clean trigger is a resize: Claude
+  // Code answers a SIGWINCH with ESC[2J (full clear) + redraw, rewriting every cell
+  // with correct attributes. So nudge rows by 1 and back. Goes through CustomTerm so
+  // the client core + PTY size stay in lock-step.
+  const repaintTimerRef = useRef(0);
   const requestFullRepaint = useCallback(() => {
-    const c = colsRef.current, r = rowsRef.current;
-    if (!c || r < 2 || !agentDeckWS.connected || evictedRef.current) return;
-    agentDeckWS.send('terminal:resize', { agentId, cols: c, rows: r - 1 });
-    window.setTimeout(() => {
-      if (agentDeckWS.connected && !evictedRef.current) {
-        agentDeckWS.send('terminal:resize', { agentId, cols: colsRef.current, rows: rowsRef.current });
-      }
-    }, 60);
-  }, [agentId]);
+    const t = wtRef.current;
+    if (!t || t.rows < 2 || !agentDeckWS.connected || evictedRef.current) return;
+    const r = t.rows;
+    t.resize(t.cols, r - 1);
+    window.setTimeout(() => { const tt = wtRef.current; if (tt) tt.resize(tt.cols, r); }, 50);
+  }, []);
+  // Debounced: clean up once the user has stopped scrolling for a beat, so the one
+  // clear-flash happens after they settle rather than on every wheel tick.
+  const scheduleRepaint = useCallback(() => {
+    clearTimeout(repaintTimerRef.current);
+    repaintTimerRef.current = window.setTimeout(requestFullRepaint, 900);
+  }, [requestFullRepaint]);
 
   // Attach ONLY once wterm is ready AND the socket is open. The server replies to
   // attach with the current screen buffer immediately; attaching before wterm's
@@ -461,6 +466,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       let data = '';
       for (let i = 0; i < steps; i++) data += wheelSeq(up, x, y);
       if (data) agentDeckWS.send('terminal:input', { agentId, data });
+      scheduleRepaint(); // sweep the stale grey ESC[L leaves, once scrolling settles
       // Net wheel direction → jump-to-bottom visibility (we can't read the app's
       // own scroll position). Clamped so it returns to 0 within a screen or two.
       scrollUpAccumRef.current = Math.max(0, Math.min(40, scrollUpAccumRef.current + (up ? steps : -steps)));
@@ -535,7 +541,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       wtermEl.removeEventListener('touchend', onTouchEnd);
       wtermEl.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [mouseTracking, agentId]);
+  }, [mouseTracking, agentId, scheduleRepaint]);
 
   // Non-alt-screen (scrollback) case: toggle the jump-to-bottom button from the
   // native scroll position of the .wterm scroll container.
