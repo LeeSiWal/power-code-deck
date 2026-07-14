@@ -233,13 +233,12 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   // app (Claude Code) blank forever.
   const maybeAttach = useCallback(() => {
     if (evictedRef.current || !readyRef.current || attachedRef.current || !agentDeckWS.connected) return;
-    // Reset the terminal BEFORE the server's replay lands. On a reconnect wterm
+    // Reset the terminal BEFORE the server's replay lands. On a reconnect the core
     // still holds the pre-disconnect grid; replaying the log on top of it (a TUI's
-    // absolute cursor moves applied over stale content, possibly at a different
-    // size) is what shifts/garbles the text ("글자 밀림"). RIS (ESC c) clears the
-    // grid + scrollback + cursor so the replay redraws from a clean slate. Harmless
-    // on the first attach (terminal is already empty).
-    handleRef.current?.write('\x1bc');
+    // absolute cursor moves over stale content, possibly at a different size) is
+    // what garbles the text ("글자가 안 붙음"). reset() blanks the core + DOM so the
+    // replay redraws from a clean slate. Harmless on the first attach.
+    wtRef.current?.reset();
     agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current });
     attachedRef.current = true;
   }, [agentId]);
@@ -573,49 +572,19 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     return () => { window.clearInterval(id); window.clearTimeout(t); };
   }, [debug]);
 
-  // Re-fit line-spacing AND letter-spacing to the container/font. wterm re-measures
-  // the char width (→ cols, "자간") on a container resize, but its row height
-  // (→ line-spacing, "줄간격") is measured only once at init and never updated —
-  // so a resize or a late-loading web font leaves the row spacing stale. Re-measure
-  // the current font's line height into --term-row-height and nudge the width to
-  // force wterm's own char re-measure, on font load AND on every container resize.
+  // Container resizes are handled by CustomTerm's own ResizeObserver. But an async
+  // web-font load changes the char metrics WITHOUT a size change, so nothing would
+  // re-fit cols/rows — text would misalign after the font swaps in. Re-fit the
+  // terminal once each weight of D2Coding has loaded (and on the generic ready).
   useEffect(() => {
     if (!coreReady) return;
     let disposed = false;
-    let t = 0;
-    const refit = () => {
-      if (disposed) return;
-      const el = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
-      if (!el) return;
-      // 줄간격: natural line height of the current font (inherits --term-font-size
-      // and the terminal's line-height).
-      const probe = document.createElement('span');
-      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:-9999px;left:-9999px;';
-      probe.textContent = 'Wg가';
-      el.appendChild(probe);
-      const h = probe.getBoundingClientRect().height;
-      probe.remove();
-      if (h > 0) el.style.setProperty('--term-row-height', `${Math.ceil(h)}px`);
-      // 자간/cols: fire wterm's ResizeObserver so it re-measures char width.
-      const restore = el.style.width;
-      el.style.width = `${Math.max(0, el.clientWidth - 1)}px`;
-      requestAnimationFrame(() => { if (!disposed) el.style.width = restore; });
-    };
-    const debouncedRefit = () => { clearTimeout(t); t = window.setTimeout(refit, 80); };
-
+    const refit = () => { if (!disposed) wtRef.current?.refit(); };
     const fonts = (document as any).fonts;
     fonts?.ready?.then?.(() => refit());
-    // Re-fit once the terminal font actually loads (its metrics differ from the
-    // fallback), for both weights so bold rows measure right too.
-    fonts?.load?.('400 14px "D2Coding"', '가나다ABC').then(() => refit()).catch(() => {});
-    fonts?.load?.('700 14px "D2Coding"', '가나다ABC').then(() => refit()).catch(() => {});
-
-    const shell = shellRef.current;
-    const ro = shell ? new ResizeObserver(debouncedRefit) : null;
-    ro?.observe(shell!);
-    refit();
-
-    return () => { disposed = true; clearTimeout(t); ro?.disconnect(); };
+    fonts?.load?.('400 14px "D2Coding"', '가나다ABC').then(refit).catch(() => {});
+    fonts?.load?.('700 14px "D2Coding"', '가나다ABC').then(refit).catch(() => {});
+    return () => { disposed = true; };
   }, [coreReady]);
 
   const onData = useCallback((data: string) => {
@@ -700,13 +669,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         onResize={onResize}
         onReady={onReady}
         onClick={() => { if (!isTouchDevice) onFocusTerminal?.(); }}
-        // alt-noscroll: a mouse-tracking app (Claude Code) owns its own scrolling and
-        // its screen exactly fills the viewport, so .wterm needs no scroll container.
-        // Dropping overflow:auto removes the scroll COMPOSITING LAYER that WebKit
-        // strands stale paint in during scroll (the "잔상" that survives a full grid
-        // re-render, because it lives on .wterm — not .term-grid). Plain shells keep
-        // overflow:auto for native scrollback.
-        className={`wterm-embed w-full h-full${mouseTracking ? ' alt-noscroll' : ''}`}
+        className="wterm-embed w-full h-full"
         style={{
           // D2Coding (pretty, readable Korean coding font) with Hangul at a 1:2
           // advance so the grid (CJK = 2 cells) stays aligned. Falls back to the

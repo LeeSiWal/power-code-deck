@@ -47,13 +47,13 @@
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
-  /* the .wterm element is wterm's own scroll container (it sets scrollTop) */
-  overflow-y: auto;
-  overflow-x: hidden;                /* never let a long line push past the viewport */
-  /* NOTE: no `-webkit-overflow-scrolling: touch`. That deprecated momentum flag
-     promotes the scroll container to a GPU layer whose backing store WebKit fails
-     to fully invalidate while rows are rewritten mid-scroll — the "잔상" ghost
-     trails. Modern iOS has momentum without it. */
+  /* Default: NOT a scroll container. A scrollable overflow makes WebKit composite
+     the terminal into its own layer, and that layer strands stale paint ("잔상")
+     while rows are rewritten in place — which is exactly what an alt-screen app
+     (Claude Code) does every frame. It owns its own scrolling and fills the
+     viewport, so it never needs one. Only a plain shell WITH real scrollback turns
+     the scroll container on (below). */
+  overflow: hidden;
   overscroll-behavior-y: contain;
   touch-action: pan-y;               /* one-finger vertical scroll; long-press still selects */
   /* native text selection (drag / long-press → OS copy menu) */
@@ -61,11 +61,12 @@
   user-select: text;
   -webkit-touch-callout: default;
 }
-/* Alt-screen app (Claude Code) owns scrolling and fills the viewport exactly, so
-   kill the scroll container entirely — no overflow layer for WebKit to strand paint
-   in. (This is the layer a full grid re-render can't clear, since it's on .wterm.) */
-.wterm.wterm-embed.alt-noscroll {
-  overflow: hidden;
+/* Only a real scrollback (plain shell) makes .wterm a scroll container. CustomTerm
+   toggles .has-scrollback when the core actually has scrollback lines — alt-screen
+   never does, so the ghost-prone scroll layer never exists there. */
+.wterm.wterm-embed.has-scrollback {
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .wterm.wterm-embed::-webkit-scrollbar {
@@ -76,21 +77,3 @@
   border-radius: 2px;
 }
 
-/* Scroll/stream "잔상" is a WebKit repaint bug (stale compositing paint even though
-   the row DOM is correct) — CSS can't force the invalidation (de-layer, re-layer,
-   and opaque rows all failed / the opaque bg even made colored blocks "번지다"). It
-   is fixed in JS by forceRepaint() (see TerminalView). Here we only drop wterm's
-   `will-change: contents` on the grid, a content-optimized backing store WebKit
-   invalidates only partially — leaving forceRepaint less stale paint to sweep. */
-.wterm .term-grid {
-  will-change: auto;
-  contain: layout style;
-}
-/* wterm draws a `box-shadow: 0 1px 0 <bg>` under every full-width COLORED row (to
-   fill the inter-row gap). A box-shadow paints OUTSIDE the element box and isn't
-   cleared when the row repaints, so on scroll it smears downward — exactly the
-   "번짐" around the user's colored message box. Kill it; with an exact row height
-   the rows are already contiguous, so no visible gap remains. */
-.wterm .term-row {
-  box-shadow: none !important;
-}

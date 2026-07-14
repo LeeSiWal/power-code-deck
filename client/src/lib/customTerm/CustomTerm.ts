@@ -69,7 +69,7 @@ export class CustomTerm {
 
   init(): this {
     this.core.init(this.cols, this.rows);
-    this.measureRowHeight();
+    this.measure();
     this.setupGrid();
     this.input = new InputHandler(
       this.element,
@@ -116,6 +116,34 @@ export class CustomTerm {
   }
 
   focus(): void { this.input?.focus(); }
+
+  /** Re-measure the font metrics and re-fit cols/rows to the container. Call this
+   *  when the FONT changes (async web-font load) — the container size doesn't
+   *  change then, so the ResizeObserver won't fire, but the char width does. */
+  refit(): void {
+    const m = this.measure();
+    if (!m) return;
+    const rect = this.element.getBoundingClientRect();
+    const cs = getComputedStyle(this.element);
+    const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    const cols = Math.max(1, Math.floor((rect.width - padX) / m.charW));
+    const rows = Math.max(1, Math.floor((rect.height - padY) / m.rowH));
+    this.resize(cols, rows);
+  }
+
+  /** Blank the core + DOM so an incoming replay redraws from a clean slate — used
+   *  on reconnect, where the old grid would otherwise shift under the replay's
+   *  absolute cursor moves ("글자가 안 붙음"). */
+  reset(): void {
+    // RIS (full reset) plus explicit clears as a fallback in case the core doesn't
+    // implement RIS: clear scrollback + screen, home the cursor, reset attributes.
+    this.core.writeString('\x1bc\x1b[3J\x1b[2J\x1b[H\x1b[m');
+    this.core.resize(this.cols, this.rows); // RIS may reset the size — restore ours
+    this.sbCount = 0;
+    this.setupGrid();
+    this.scheduleRender();
+  }
 
   private scheduleRender() {
     // Render on the very next animation frame — no setTimeout hop. Writes that
@@ -178,46 +206,34 @@ export class CustomTerm {
     el.scrollTop = max > 0 ? max : 0;
   }
 
-  private measureRowHeight() {
-    // Natural line box of the terminal font (NOT a .term-row — that's constrained
-    // to --term-row-height, which would make this circular). TerminalView's refit
-    // later re-measures the same way on font load / resize.
+  /** Measure the CURRENT font's char advance and natural line height, and publish
+   *  the row height as --term-row-height. Char width is averaged over many glyphs
+   *  so sub-pixel advances don't round-compound into cols drift. */
+  private measure(): { charW: number; rowH: number } | null {
     const probe = document.createElement('span');
-    probe.style.cssText = 'visibility:hidden;position:absolute;white-space:pre;';
-    probe.textContent = 'Wg가';
+    probe.style.cssText = 'visibility:hidden;position:absolute;top:0;left:0;white-space:pre;';
+    probe.textContent = 'W'.repeat(50);
     this.grid.appendChild(probe);
-    const h = probe.getBoundingClientRect().height;
+    const charW = probe.getBoundingClientRect().width / 50;
+    probe.textContent = 'Wg가';
+    const rowH = probe.getBoundingClientRect().height;
     probe.remove();
-    if (h > 0) { this.rowHeight = Math.ceil(h); this.element.style.setProperty('--term-row-height', `${this.rowHeight}px`); }
-  }
-
-  private measureChar(): { w: number; h: number } | null {
-    const row = document.createElement('div');
-    row.className = 'term-row';
-    row.style.cssText = 'visibility:hidden;position:absolute;';
-    const span = document.createElement('span');
-    span.textContent = 'W';
-    row.appendChild(span);
-    this.grid.appendChild(row);
-    const w = span.getBoundingClientRect().width;
-    const h = row.getBoundingClientRect().height;
-    row.remove();
-    if (!w || !h) return null;
-    this.rowHeight = h;
-    return { w, h };
+    if (!charW || !rowH) return null;
+    this.rowHeight = Math.ceil(rowH);
+    this.element.style.setProperty('--term-row-height', `${this.rowHeight}px`);
+    return { charW, rowH: this.rowHeight };
   }
 
   private setupResizeObserver() {
-    const initial = this.measureChar();
-    if (!initial) return;
-    let { w, h } = initial;
+    let m = this.measure();
     this.ro = new ResizeObserver((entries) => {
-      const m = this.measureChar();
-      if (m) { w = m.w; h = m.h; }
+      const nm = this.measure();
+      if (nm) m = nm;
+      if (!m) return;
       for (const e of entries) {
         const { width, height } = e.contentRect;
-        const cols = Math.max(1, Math.floor(width / w));
-        const rows = Math.max(1, Math.floor(height / h));
+        const cols = Math.max(1, Math.floor(width / m.charW));
+        const rows = Math.max(1, Math.floor(height / m.rowH));
         if (cols !== this.cols || rows !== this.rows) this.resize(cols, rows);
       }
     });
