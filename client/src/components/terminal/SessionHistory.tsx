@@ -76,6 +76,17 @@ export function SessionHistory({ agentId, onClose }: SessionHistoryProps) {
     }
   }, [agentId, navigate, onClose]);
 
+  const startNew = useCallback(async () => {
+    setBusy(true);
+    try {
+      const a = await api.newSession(agentId);
+      onClose();
+      navigate(`/agents/${a.id}`);
+    } catch {
+      setBusy(false);
+    }
+  }, [agentId, navigate, onClose]);
+
   return (
     <div className="flex flex-col h-full min-h-0 bg-deck-surface">
       <header className="flex items-center gap-2 px-3 py-2 border-b border-deck-border shrink-0">
@@ -93,6 +104,15 @@ export function SessionHistory({ agentId, onClose }: SessionHistoryProps) {
       {/* List */}
       {!selected && (
         <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="p-2 border-b border-deck-border/50">
+            <button
+              disabled={busy}
+              onClick={startNew}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-deck-accent text-white text-sm font-medium touch-manipulation active:opacity-70 disabled:opacity-50"
+            >
+              <span className="text-base leading-none">+</span> 새 세션 시작
+            </button>
+          </div>
           {sessions === null && <div className="p-4 text-xs text-deck-text-dim">불러오는 중…</div>}
           {sessions?.length === 0 && <div className="p-4 text-xs text-deck-text-dim">이 프로젝트의 지난 세션이 없습니다.</div>}
           {sessions?.map((s) => (

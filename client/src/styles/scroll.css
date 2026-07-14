@@ -50,7 +50,10 @@
   /* the .wterm element is wterm's own scroll container (it sets scrollTop) */
   overflow-y: auto;
   overflow-x: hidden;                /* never let a long line push past the viewport */
-  -webkit-overflow-scrolling: touch; /* iOS momentum */
+  /* NOTE: no `-webkit-overflow-scrolling: touch`. That deprecated momentum flag
+     promotes the scroll container to a GPU layer whose backing store WebKit fails
+     to fully invalidate while rows are rewritten mid-scroll — the "잔상" ghost
+     trails. Modern iOS has momentum without it. */
   overscroll-behavior-y: contain;
   touch-action: pan-y;               /* one-finger vertical scroll; long-press still selects */
   /* native text selection (drag / long-press → OS copy menu) */
@@ -66,13 +69,19 @@
   border-radius: 2px;
 }
 
-/* Safari leaves stale paint ("잔상") when a will-change / contain compositing layer
-   is updated rapidly — which is exactly what fast terminal scrolling does. Drop the
-   compositing hints wterm sets on the grid/rows so each frame repaints cleanly. */
+/* Kill the scroll "잔상" (stale paint trails). wterm sets `will-change: contents`
+   + `contain: paint` on the grid; WebKit then keeps a content-optimized backing
+   store that it invalidates only partially when we rewrite every row each frame
+   during a scroll → ghosts. Merely dropping those hints wasn't enough, so instead
+   force the grid onto its OWN simple compositing layer (translateZ) that WebKit
+   re-rasterizes wholesale every frame — no partial-invalidation ghost survives. */
 .wterm .term-grid {
   will-change: auto;
-  contain: none;
+  contain: layout style;          /* keep layout/style isolation; drop the paint layer */
+  transform: translateZ(0);       /* clean own layer → full repaint each frame */
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 .wterm .term-row {
-  contain: none;
+  contain: layout style;
 }

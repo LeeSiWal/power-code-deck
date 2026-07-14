@@ -60,6 +60,32 @@ func DeleteSession(agentSvc *services.AgentService) http.HandlerFunc {
 	}
 }
 
+// NewSession launches a new agent running a fresh Claude Code session
+// (plain `claude`, no --resume) in the same project/working dir as agent {id}.
+func NewSession(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		agent, err := agentSvc.Get(mux.Vars(r)["id"])
+		if err != nil {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		newAgent, err := agentSvc.Create(services.CreateAgentRequest{
+			Preset:     agent.Preset,
+			Name:       agent.Name,
+			WorkingDir: agent.WorkingDir,
+			Command:    "claude",
+			Args:       nil,
+		})
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		hub.BroadcastAll(ws.EventAgentCreated, newAgent)
+		w.WriteHeader(http.StatusCreated)
+		jsonResponse(w, newAgent)
+	}
+}
+
 // ResumeSession launches a new agent that resumes a past session
 // (claude --resume <sid>) in the same working dir.
 func ResumeSession(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc {
