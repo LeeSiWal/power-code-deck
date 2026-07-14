@@ -115,7 +115,14 @@ export function TerminalPage() {
 
   useEffect(() => {
     if (agentId) {
-      api.getAgent(agentId).then(setAgent).catch(() => navigate('/dashboard'));
+      api.getAgent(agentId)
+        .then((a) => {
+          setAgent(a);
+          // Remember this as the session to auto-resume on the next fresh app load
+          // / refresh (see ProjectSelectPage).
+          try { localStorage.setItem('pcd:lastAgentId', agentId); } catch { /* ignore */ }
+        })
+        .catch(() => navigate('/dashboard'));
     }
   }, [agentId, navigate]);
 

@@ -153,8 +153,6 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   // clamped — the button shows while we're a few lines up and hides near bottom.
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const scrollUpAccumRef = useRef(0);
-  // True during an active scroll burst — gates the per-frame anti-잔상 repaint pump.
-  const scrollingRef = useRef(false);
   // Freeze output ONLY during an active drag-select (mousedown → mouseup) so the
   // selection doesn't shift under the pointer, then resume. (Holding the freeze for
   // as long as a selection merely existed left the terminal frozen with a lingering
@@ -218,6 +216,45 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     else if (data.includes('\x1b[?1006l')) sgrMouseRef.current = false;
   }, []);
 
+  // Force WebKit to drop stale paint ("잔상"). Safari keeps a compositing backing
+  // store for the row grid that it only partially invalidates when we rewrite rows
+  // during a scroll/resize/stream — old glyphs and background blocks linger. Toggle
+  // the grid's `display` synchronously (none → force reflow → restore): that
+  // destroys and rebuilds its layer so it repaints from scratch. It's all in one JS
+  // task so no blank frame is ever shown (flicker-free), and it targets .term-grid
+  // (inner) — NOT .wterm — so wterm's own ResizeObserver (which watches .wterm)
+  // doesn't fire. scrollTop is preserved (the grid collapses to 0 height while off).
+  const forceRepaint = useCallback(() => {
+    const wt = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
+    const grid = wt?.querySelector('.term-grid') as HTMLElement | null;
+    if (!wt || !grid) return;
+    const st = wt.scrollTop;
+    grid.style.display = 'none';
+    void grid.offsetHeight;
+    grid.style.display = '';
+    if (wt.scrollTop !== st) wt.scrollTop = st;
+  }, []);
+
+  // Anti-잔상 pump. WebKit strands the grid's old paint whenever the screen CHANGES
+  // — not just on scroll/resize but also while a response streams in and pushes the
+  // conversation up (esp. around colored blocks like the user's own message box,
+  // where the ghost "번진다"). So repaint every frame while the terminal is actively
+  // changing, and stop ~300ms after the last change so we never churn when idle.
+  // markActive() is pinged from output, scroll, and resize.
+  const activeUntilRef = useRef(0);
+  const pumpingRef = useRef(false);
+  const markActive = useCallback(() => {
+    activeUntilRef.current = performance.now() + 300;
+    if (pumpingRef.current) return;
+    pumpingRef.current = true;
+    const tick = () => {
+      forceRepaint();
+      if (performance.now() < activeUntilRef.current) requestAnimationFrame(tick);
+      else pumpingRef.current = false;
+    };
+    requestAnimationFrame(tick);
+  }, [forceRepaint]);
+
   const writeToTerm = useCallback((data: string) => {
     scanMouseMode(data);
     if (selectingRef.current) {
@@ -227,25 +264,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       return;
     }
     handleRef.current?.write(data);
-  }, [flushPending, scanMouseMode]);
-
-  // Force WebKit to drop stale paint ("잔상"). Safari keeps a compositing backing
-  // store for the row grid that it only partially invalidates when we rewrite rows
-  // during a scroll/resize — old glyphs and background blocks linger. Toggling the
-  // grid's `display` synchronously (set none → force reflow → restore) destroys and
-  // rebuilds its layer, so it repaints from scratch. It's all in one JS task so no
-  // blank frame is ever shown (flicker-free), and it targets .term-grid (inner) —
-  // NOT .wterm — so wterm's own ResizeObserver (which watches .wterm) doesn't fire.
-  const forceRepaint = useCallback(() => {
-    const wt = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
-    const grid = wt?.querySelector('.term-grid') as HTMLElement | null;
-    if (!wt || !grid) return;
-    const st = wt.scrollTop; // grid collapses to 0 height while hidden → preserve scrollback pos
-    grid.style.display = 'none';
-    void grid.offsetHeight; // force synchronous reflow while hidden
-    grid.style.display = '';
-    if (wt.scrollTop !== st) wt.scrollTop = st;
-  }, []);
+    markActive(); // repaint while output is changing the screen (kills 잔상)
+  }, [flushPending, scanMouseMode, markActive]);
 
   // Attach ONLY once wterm is ready AND the socket is open. The server replies to
   // attach with the current screen buffer immediately; attaching before wterm's
@@ -437,24 +457,6 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     const wtermEl = shell?.querySelector('.wterm') as HTMLElement | null;
     if (!shell || !wtermEl) return;
 
-    // While the user is actively scrolling, repaint the grid every frame so the
-    // app's scroll redraws don't leave WebKit paint trails. Runs only during a
-    // scroll burst (stops ~250ms after the last wheel/drag) so we don't churn when
-    // idle.
-    let pumpRaf = 0;
-    let stopTimer = 0;
-    const pump = () => {
-      if (!scrollingRef.current) { pumpRaf = 0; return; }
-      forceRepaint();
-      pumpRaf = requestAnimationFrame(pump);
-    };
-    const markScrolling = () => {
-      scrollingRef.current = true;
-      if (!pumpRaf) pumpRaf = requestAnimationFrame(pump);
-      clearTimeout(stopTimer);
-      stopTimer = window.setTimeout(() => { scrollingRef.current = false; forceRepaint(); }, 250);
-    };
-
     const cellAt = (clientX: number, clientY: number) => {
       const rect = wtermEl.getBoundingClientRect();
       const cols = wtRef.current?.cols || 80;
@@ -479,7 +481,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       let data = '';
       for (let i = 0; i < steps; i++) data += wheelSeq(up, x, y);
       if (data) agentDeckWS.send('terminal:input', { agentId, data });
-      markScrolling(); // keep repainting while the app's scroll redraws stream in
+      markActive(); // keep repainting while the app's scroll redraws stream in
       // Net wheel direction → jump-to-bottom visibility (we can't read the app's
       // own scroll position). Clamped so it returns to 0 within a screen or two.
       scrollUpAccumRef.current = Math.max(0, Math.min(40, scrollUpAccumRef.current + (up ? steps : -steps)));
@@ -548,16 +550,13 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     wtermEl.addEventListener('touchcancel', onTouchEnd);
     return () => {
       if (wheelRaf) cancelAnimationFrame(wheelRaf);
-      if (pumpRaf) cancelAnimationFrame(pumpRaf);
-      clearTimeout(stopTimer);
-      scrollingRef.current = false;
       shell.removeEventListener('wheel', onWheel);
       wtermEl.removeEventListener('touchstart', onTouchStart);
       wtermEl.removeEventListener('touchmove', onTouchMove);
       wtermEl.removeEventListener('touchend', onTouchEnd);
       wtermEl.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [mouseTracking, agentId, forceRepaint]);
+  }, [mouseTracking, agentId, markActive]);
 
   // Non-alt-screen (scrollback) case: toggle the jump-to-bottom button from the
   // native scroll position of the .wterm scroll container.
@@ -645,8 +644,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         if (disposed) return;
         el.style.width = restore;
         // Reflow of the grid on resize is the other place WebKit strands old paint;
-        // repaint once the new width has been applied.
-        requestAnimationFrame(() => { if (!disposed) forceRepaint(); });
+        // pump repaints for a moment once the new width has been applied.
+        requestAnimationFrame(() => { if (!disposed) markActive(); });
       });
     };
     const debouncedRefit = () => { clearTimeout(t); t = window.setTimeout(refit, 80); };
@@ -661,7 +660,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     refit();
 
     return () => { disposed = true; clearTimeout(t); ro?.disconnect(); };
-  }, [coreReady, forceRepaint]);
+  }, [coreReady, markActive]);
 
   const onData = useCallback((data: string) => {
     if (onHangulDirectRef.current && HANGUL_RE.test(data)) onHangulDirectRef.current();

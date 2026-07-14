@@ -69,22 +69,13 @@
   border-radius: 2px;
 }
 
-/* Kill the scroll "잔상" (stale paint trails), incl. macOS Safari. Root cause:
-   wterm's rows are TRANSPARENT, so when a row's innerHTML is rewritten mid-scroll
-   and the new text is shorter/shifted, WebKit doesn't always repaint the vacated
-   area — the old glyphs bleed through. Neither de-layering (contain:none) nor
-   forcing a layer (translateZ) fixes that, because it's a repaint-coverage bug,
-   not a compositing bug. The fix: give every row an OPAQUE background so each row
-   is its own opaque paint box that fully clears on every update. Colored cells
-   draw their own bg on top, and full-width colored lines get an inline row bg from
-   the renderer that overrides this — so it's visually invisible.
-   We also drop wterm's `will-change: contents` on the grid (a content-optimized
-   backing store WebKit only partially invalidates). */
+/* Scroll/stream "잔상" is a WebKit repaint bug (stale compositing paint even though
+   the row DOM is correct) — CSS can't force the invalidation (de-layer, re-layer,
+   and opaque rows all failed / the opaque bg even made colored blocks "번지다"). It
+   is fixed in JS by forceRepaint() (see TerminalView). Here we only drop wterm's
+   `will-change: contents` on the grid, a content-optimized backing store WebKit
+   invalidates only partially — leaving forceRepaint less stale paint to sweep. */
 .wterm .term-grid {
   will-change: auto;
   contain: layout style;
-}
-.wterm .term-row {
-  contain: layout style;
-  background: var(--term-bg);     /* opaque → repaint fully clears old glyphs */
 }

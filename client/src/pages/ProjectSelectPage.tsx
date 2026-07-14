@@ -22,10 +22,20 @@ export function ProjectSelectPage() {
 
     api.listAgents()
       .then((agents) => {
-        if (Array.isArray(agents) && agents.some((a: any) => a.status === 'running')) {
-          navigate('/dashboard', { replace: true });
-        } else {
+        const running = Array.isArray(agents) ? agents.filter((a: any) => a.status === 'running') : [];
+        if (running.length === 0) {
           setReady(true);
+          return;
+        }
+        // Resume straight into the last session worked on (if it's still running)
+        // instead of stopping at the agent list — so opening / refreshing the app
+        // drops you back where you left off.
+        let last = '';
+        try { last = localStorage.getItem('pcd:lastAgentId') || ''; } catch { /* ignore */ }
+        if (last && running.some((a: any) => a.id === last)) {
+          navigate(`/agents/${last}`, { replace: true });
+        } else {
+          navigate('/dashboard', { replace: true });
         }
       })
       .catch(() => setReady(true));
