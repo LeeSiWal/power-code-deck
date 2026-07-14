@@ -1,5 +1,4 @@
 import { useRef, useCallback, useImperativeHandle, forwardRef, type CSSProperties, type HTMLAttributes } from 'react';
-import type { TerminalCore } from '@wterm/core';
 import { CustomTerm } from '../../lib/customTerm/CustomTerm';
 
 export interface CustomTerminalHandle {
@@ -9,7 +8,6 @@ export interface CustomTerminalHandle {
 }
 
 interface CustomTerminalProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onResize'> {
-  core: TerminalCore;
   cols?: number;
   rows?: number;
   autoResize?: boolean;
@@ -23,12 +21,11 @@ interface CustomTerminalProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onRe
 }
 
 /**
- * Drop-in for @wterm/react's <Terminal> but backed by our own CustomTerm (ghostty
- * core + our layer-free DOM renderer). Same handle (write/resize/focus) and
- * onReady(term) contract so TerminalView is unchanged apart from the import.
+ * React wrapper around CustomTerm (xterm-headless parser + our own DOM renderer).
+ * Same handle (write/resize/focus) and onReady(term) contract TerminalView expects.
  */
 export const CustomTerminal = forwardRef<CustomTerminalHandle, CustomTerminalProps>(function CustomTerminal(
-  { core, cols = 80, rows = 24, autoResize = false, cursorBlink = false, onData, onResize, onTitle, onReady, className, style, ...htmlProps },
+  { cols = 80, rows = 24, autoResize = false, cursorBlink = false, onData, onResize, onTitle, onReady, className, style, ...htmlProps },
   ref,
 ) {
   const termRef = useRef<CustomTerm | null>(null);
@@ -44,7 +41,7 @@ export const CustomTerminal = forwardRef<CustomTerminalHandle, CustomTerminalPro
   const containerRef = useCallback((el: HTMLDivElement | null) => {
     if (!el) return;
     const term = new CustomTerm(el, {
-      core, cols, rows, autoResize, cursorBlink,
+      cols, rows, autoResize, cursorBlink,
       onData: (d) => cbRef.current.onData?.(d),
       onResize: (c, r) => cbRef.current.onResize?.(c, r),
       onTitle: (t) => cbRef.current.onTitle?.(t),
@@ -53,9 +50,8 @@ export const CustomTerminal = forwardRef<CustomTerminalHandle, CustomTerminalPro
     term.init();
     cbRef.current.onReady?.(term);
     return () => { term.destroy(); termRef.current = null; };
-    // Re-create only if the core instance changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [core]);
+  }, []);
 
   return (
     <div

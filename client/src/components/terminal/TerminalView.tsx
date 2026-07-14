@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { CustomTerminal, type CustomTerminalHandle } from './CustomTerminal';
 import type { CustomTerm } from '../../lib/customTerm/CustomTerm';
-import type { TerminalCore } from '@wterm/core';
-import { GhosttyCore } from '@wterm/ghostty';
-import ghosttyWasmUrl from '../../assets/ghostty-vt.wasm?url';
 import '../../styles/customTerm.css';
-import { wideAwareCore } from '../../lib/wideAwareCore';
 // Bundled fixed-width coding font with Latin AND Hangul at a 1:2 advance ratio.
 // System fonts (JetBrains Mono etc.) lack Hangul, so Korean fell back to a font
 // that isn't 2× the Latin width — breaking the terminal grid's CJK=2-cell model
@@ -132,13 +128,9 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const [copied, setCopied] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>('');
   const debug = typeof window !== 'undefined' && window.location.search.includes('debug');
-  // Terminal core: the ghostty (libghostty) VT core measures CJK as 2 cells like
-  // Claude Code does, unlike wterm's built-in Zig core (1 cell) which drifts and
-  // garbles Korean. Wrapped so the renderer draws wide glyphs across both cells.
-  // Loaded async; the terminal mounts once it's ready (or falls back to built-in).
-  const [core, setCore] = useState<TerminalCore | null>(null);
-  const [coreFailed, setCoreFailed] = useState(false);
-  const coreReady = core !== null || coreFailed;
+  // The terminal (CustomTerm, xterm-headless parser + our DOM renderer) is created
+  // synchronously on mount; `ready` flips in onReady so the wiring effects run.
+  const [ready, setReady] = useState(false);
   // Whether the running app has mouse tracking on (Claude Code and other TUIs do).
   // When on, the app owns scrolling — a wheel/drag must be forwarded as a mouse
   // event so the app scrolls ITS conversation (its screen is the alternate buffer,
@@ -175,22 +167,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
   const resolvedFontSize = fontSize ?? (isMobile ? 13 : isTablet ? 13 : 14);
 
-  // Load the ghostty core once. On failure, fall back to wterm's built-in core.
-  useEffect(() => {
-    let disposed = false;
-    GhosttyCore.load({ wasmPath: ghosttyWasmUrl, scrollbackLimit: 10000 })
-      .then((gc) => { if (!disposed) setCore(wideAwareCore(gc, () => !selectionActiveRef.current)); })
-      .catch((err) => {
-        console.error('[terminal] ghostty core load failed, using built-in core', err);
-        if (!disposed) setCoreFailed(true);
-      });
-    return () => { disposed = true; };
-  }, []);
-
   useImperativeHandle(ref, () => ({
     focus: () => handleRef.current?.focus(),
     sendKey: (data: string) => {
-      const app = wtRef.current?.core?.cursorKeysApp?.() ?? false;
+      const app = wtRef.current?.applicationCursorKeys ?? false;
       agentDeckWS.send('terminal:input', { agentId, data: app ? (APP_CURSOR_MAP[data] ?? data) : data });
     },
   }), [agentId]);
@@ -330,7 +310,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     const onSelectionChange = () => {
       const sel = document.getSelection();
       const active = !!sel && !sel.isCollapsed && !!shellRef.current && shellRef.current.contains(sel.anchorNode);
-      selectionActiveRef.current = active; // immediate — gates the renderer force-redraw
+      selectionActiveRef.current = active;
+      wtRef.current?.setRenderPaused(active); // hold the DOM so output doesn't drop the selection
       if (active) {
         selectionTextRef.current = sel!.toString();
         clearTimeout(selGraceRef.current);
@@ -546,7 +527,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   // Non-alt-screen (scrollback) case: toggle the jump-to-bottom button from the
   // native scroll position of the .wterm scroll container.
   useEffect(() => {
-    if (!coreReady) return;
+    if (!ready) return;
     let el: HTMLElement | null = null;
     let timer = 0;
     const onScroll = () => {
@@ -560,7 +541,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     };
     attach(0);
     return () => { clearTimeout(timer); el?.removeEventListener('scroll', onScroll); };
-  }, [coreReady, mouseTracking]);
+  }, [ready, mouseTracking]);
 
   // Diagnostic (?debug): measure real rendered advances vs the single-char width
   // the layout assumes, plus computed-vs-actual cols. Reveals non-monospace fonts,
@@ -604,7 +585,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   // re-fit cols/rows — text would misalign after the font swaps in. Re-fit the
   // terminal once each weight of D2Coding has loaded (and on the generic ready).
   useEffect(() => {
-    if (!coreReady) return;
+    if (!ready) return;
     let disposed = false;
     const refit = () => { if (!disposed) wtRef.current?.refit(); };
     const fonts = (document as any).fonts;
@@ -612,7 +593,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     fonts?.load?.('400 14px "D2Coding"', '가나다ABC').then(refit).catch(() => {});
     fonts?.load?.('700 14px "D2Coding"', '가나다ABC').then(refit).catch(() => {});
     return () => { disposed = true; };
-  }, [coreReady]);
+  }, [ready]);
 
   const onData = useCallback((data: string) => {
     if (onHangulDirectRef.current && HANGUL_RE.test(data)) onHangulDirectRef.current();
@@ -636,6 +617,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     colsRef.current = wt.cols;
     rowsRef.current = wt.rows;
     readyRef.current = true;
+    setReady(true);
     // wterm focuses its hidden textarea on init, popping the iOS soft keyboard over
     // the panel on mount. On touch we type via the Prompt Bar, so blur it — a real
     // tap still focuses to type, but scroll / long-press selection aren't fighting a
@@ -686,10 +668,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         </div>
       )}
 
-      {core && (
       <CustomTerminal
         ref={handleRef}
-        core={core}
         autoResize
         cursorBlink
         onData={onData}
@@ -709,7 +689,6 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
           ['--term-cursor' as any]: '#6366f1',
         }}
       />
-      )}
 
       {debug && debugInfo && (
         <pre className="absolute top-1 left-1 z-30 px-2 py-1 rounded text-[9px] leading-tight whitespace-pre

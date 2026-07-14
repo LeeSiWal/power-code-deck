@@ -3,6 +3,13 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      // @xterm/headless ships a broken `module` field (points at a nonexistent
+      // lib/xterm.mjs); point the bundler at the real ESM build.
+      '@xterm/headless': '@xterm/headless/lib-headless/xterm-headless.mjs',
+    },
+  },
   server: {
     port: 5173,
     proxy: {
