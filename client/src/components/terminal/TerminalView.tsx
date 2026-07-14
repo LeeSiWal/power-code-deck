@@ -744,7 +744,13 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         onResize={onResize}
         onReady={onReady}
         onClick={() => { if (!isTouchDevice) onFocusTerminal?.(); }}
-        className="wterm-embed w-full h-full"
+        // alt-noscroll: a mouse-tracking app (Claude Code) owns its own scrolling and
+        // its screen exactly fills the viewport, so .wterm needs no scroll container.
+        // Dropping overflow:auto removes the scroll COMPOSITING LAYER that WebKit
+        // strands stale paint in during scroll (the "잔상" that survives a full grid
+        // re-render, because it lives on .wterm — not .term-grid). Plain shells keep
+        // overflow:auto for native scrollback.
+        className={`wterm-embed w-full h-full${mouseTracking ? ' alt-noscroll' : ''}`}
         style={{
           // Bundled Nanum Gothic Coding — Latin AND Hangul from ONE fixed-width
           // font at a 1:2 advance ratio, so the terminal grid (which assumes

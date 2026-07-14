@@ -61,6 +61,13 @@
   user-select: text;
   -webkit-touch-callout: default;
 }
+/* Alt-screen app (Claude Code) owns scrolling and fills the viewport exactly, so
+   kill the scroll container entirely — no overflow layer for WebKit to strand paint
+   in. (This is the layer a full grid re-render can't clear, since it's on .wterm.) */
+.wterm.wterm-embed.alt-noscroll {
+  overflow: hidden;
+}
+
 .wterm.wterm-embed::-webkit-scrollbar {
   width: 4px;
 }
