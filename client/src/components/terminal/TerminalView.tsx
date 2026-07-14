@@ -605,7 +605,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
     const fonts = (document as any).fonts;
     fonts?.ready?.then?.(() => refit());
-    fonts?.load?.('400 14px "Nanum Gothic Coding"', '가나다ABC').then(() => refit()).catch(() => {});
+    // Re-fit once the terminal font actually loads (its metrics differ from the
+    // fallback), for both weights so bold rows measure right too.
+    fonts?.load?.('400 14px "D2Coding"', '가나다ABC').then(() => refit()).catch(() => {});
+    fonts?.load?.('700 14px "D2Coding"', '가나다ABC').then(() => refit()).catch(() => {});
 
     const shell = shellRef.current;
     const ro = shell ? new ResizeObserver(debouncedRefit) : null;
@@ -705,11 +708,11 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         // overflow:auto for native scrollback.
         className={`wterm-embed w-full h-full${mouseTracking ? ' alt-noscroll' : ''}`}
         style={{
-          // Bundled Nanum Gothic Coding — Latin AND Hangul from ONE fixed-width
-          // font at a 1:2 advance ratio, so the terminal grid (which assumes
-          // CJK = 2 cells) stays aligned on every device. monospace is only a
-          // last-resort fallback for glyphs the font lacks.
-          ['--term-font-family' as any]: "'Nanum Gothic Coding', monospace",
+          // D2Coding (pretty, readable Korean coding font) with Hangul at a 1:2
+          // advance so the grid (CJK = 2 cells) stays aligned. Falls back to the
+          // bundled Nanum Gothic Coding — also 1:2 — for any glyph the D2Coding
+          // subset lacks, so alignment holds; monospace is the last resort.
+          ['--term-font-family' as any]: "'D2Coding', 'Nanum Gothic Coding', monospace",
           ['--term-font-size' as any]: `${resolvedFontSize}px`,
           ['--term-bg' as any]: '#0a0a0f',
           ['--term-fg' as any]: '#e2e8f0',

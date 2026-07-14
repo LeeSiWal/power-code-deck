@@ -3,6 +3,26 @@
    no `will-change: contents`, no per-row `box-shadow`. A plain, un-layered grid is
    what lets WebKit repaint cleanly (no "잔상"). */
 
+/* D2Coding — a polished Korean coding font (Naver, OFL). Fixed-width with Hangul
+   at exactly 2× the Latin advance, so the grid stays aligned. We bundle the
+   완성형 subset (~350KB); rare syllables fall back to Nanum Gothic Coding, which is
+   also 1:2, so alignment holds either way. Non-ligature build (ligatures would
+   break the terminal's one-glyph-per-cell layout). */
+@font-face {
+  font-family: 'D2Coding';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/D2Coding.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'D2Coding';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../assets/fonts/D2Coding-Bold.woff2') format('woff2');
+}
+
 .wterm {
   --term-fg: #d4d4d4;
   --term-bg: #1e1e1e;
