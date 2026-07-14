@@ -85,6 +85,6 @@
   contain: layout style;
 }
 .wterm .term-row {
-  contain: layout paint style;   /* paint-clip each row to its own box */
+  contain: layout style;
   background: var(--term-bg);     /* opaque → repaint fully clears old glyphs */
 }
