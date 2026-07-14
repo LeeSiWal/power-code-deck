@@ -126,6 +126,16 @@ export const api = {
   deleteAgent: (id: string) => apiFetch(`/agents/${id}`, { method: 'DELETE' }),
   restartAgent: (id: string) => apiFetch(`/agents/${id}/restart`, { method: 'POST' }),
 
+  // Past-session history (Claude Code transcripts for the agent's project).
+  listSessions: (id: string) =>
+    apiFetch<{ id: string; startedAt: string; lastAt: string; messageCount: number; preview: string }[]>(
+      `/agents/${id}/sessions`,
+    ),
+  getSession: (id: string, sid: string) =>
+    apiFetch<{ role: 'user' | 'assistant'; text: string; timestamp: string }[]>(`/agents/${id}/sessions/${sid}`),
+  deleteSession: (id: string, sid: string) => apiFetch(`/agents/${id}/sessions/${sid}`, { method: 'DELETE' }),
+  resumeSession: (id: string, sid: string) => apiFetch(`/agents/${id}/sessions/${sid}/resume`, { method: 'POST' }),
+
   // Session Handoff — issue a one-time "Continue on Mobile" token + QR URLs.
   createHandoff: (id: string) =>
     apiFetch<{

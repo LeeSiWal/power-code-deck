@@ -142,6 +142,12 @@ func main() {
 	api.HandleFunc("/agents/{id}", handlers.DeleteAgent(agentSvc, hub)).Methods("DELETE")
 	api.HandleFunc("/agents/{id}/restart", handlers.RestartAgent(agentSvc, hub)).Methods("POST")
 
+	// Past-session history (Claude Code transcripts for the agent's project).
+	api.HandleFunc("/agents/{id}/sessions", handlers.ListSessions(agentSvc)).Methods("GET")
+	api.HandleFunc("/agents/{id}/sessions/{sid}", handlers.GetSession(agentSvc)).Methods("GET")
+	api.HandleFunc("/agents/{id}/sessions/{sid}", handlers.DeleteSession(agentSvc)).Methods("DELETE")
+	api.HandleFunc("/agents/{id}/sessions/{sid}/resume", handlers.ResumeSession(agentSvc, hub)).Methods("POST")
+
 	// Files
 	api.HandleFunc("/files/tree", handlers.FileTree(fileSvc, agentSvc, projectSvc, cfg)).Methods("GET")
 	api.HandleFunc("/files/read", handlers.ReadFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("GET")

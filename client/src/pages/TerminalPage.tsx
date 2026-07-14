@@ -5,6 +5,7 @@ import { MobileToolbar } from '../components/terminal/MobileToolbar';
 import { TerminalKeyBar } from '../components/terminal/TerminalKeyBar';
 import { PromptBar } from '../components/terminal/PromptBar';
 import { HandoffModal } from '../components/terminal/HandoffModal';
+import { SessionHistory } from '../components/terminal/SessionHistory';
 import { FileExplorer } from '../components/file/FileExplorer';
 import { FilePreview } from '../components/file/FilePreview';
 import { FileEditor } from '../components/file/FileEditor';
@@ -33,6 +34,7 @@ export function TerminalPage() {
   const [activeTab, setActiveTab] = useState<CenterTab>('terminal');
   const [handoffOpen, setHandoffOpen] = useState(false);
   const [handoffToast, setHandoffToast] = useState(false);
+  const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
 
   // The Prompt Bar is the primary text input on EVERY device. The terminal's own
   // (hidden textarea) IME can't reliably compose Korean — jamo split even on macOS —
@@ -92,7 +94,7 @@ export function TerminalPage() {
   // Panels
   const [leftPanelOpen, setLeftPanelOpen] = useState(!isMobile);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [rightTab, setRightTab] = useState<'subagent' | 'browser'>('subagent');
+  const [rightTab, setRightTab] = useState<'subagent' | 'browser' | 'sessions'>('subagent');
   const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
   const [mobileAnimOpen, setMobileAnimOpen] = useState(false);
   const [mobileBrowserOpen, setMobileBrowserOpen] = useState(false);
@@ -216,6 +218,13 @@ export function TerminalPage() {
           {AgentIcon && <AgentIcon size={18} />}
           <span className="font-medium text-sm truncate flex-1">{agent.name}</span>
           <StatusBadge status={agent.status} />
+          <button
+            onClick={() => setMobileSessionsOpen(true)}
+            className="p-1.5 rounded active:bg-deck-border/30 text-sm"
+            title="지난 세션 기록"
+          >
+            🗂
+          </button>
           {handoffEnabled && (
             <button
               onClick={() => setHandoffOpen(true)}
@@ -345,6 +354,19 @@ export function TerminalPage() {
           <HandoffModal agentId={agentId} agentName={agent.name} onClose={() => setHandoffOpen(false)} />
         )}
 
+        {/* Past-session history bottom sheet */}
+        {mobileSessionsOpen && (
+          <>
+            <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setMobileSessionsOpen(false)} />
+            <div className="fixed bottom-0 left-0 right-0 z-50 rounded-t-xl safe-bottom bg-deck-surface border-t border-deck-border animate-slide-up"
+                 style={{ height: '80dvh' }}>
+              <div className="h-full overflow-hidden rounded-t-xl">
+                <SessionHistory agentId={agentId} onClose={() => setMobileSessionsOpen(false)} />
+              </div>
+            </div>
+          </>
+        )}
+
         {/* File bottom sheet */}
         <FileBottomSheet
           open={mobileFilesOpen}
@@ -404,6 +426,16 @@ export function TerminalPage() {
         <span className="font-medium text-sm truncate">{agent.name}</span>
         <StatusBadge status={agent.status} />
         <span className="text-xs ml-auto truncate text-deck-text-dim">{agent.workingDir}</span>
+
+        <button
+          onClick={() => { if (rightPanelOpen && rightTab === 'sessions') { setRightPanelOpen(false); } else { setRightPanelOpen(true); setRightTab('sessions'); } }}
+          className={`text-xs px-2 py-0.5 rounded transition-colors ${
+            rightPanelOpen && rightTab === 'sessions' ? 'bg-deck-accent/20 text-deck-accent' : 'bg-deck-bg text-deck-text-dim'
+          }`}
+          title="지난 세션 기록 보기 · 이어하기 · 삭제"
+        >
+          🗂 세션 기록
+        </button>
 
         {handoffEnabled && (
           <button
@@ -578,6 +610,8 @@ export function TerminalPage() {
             <div className="shrink-0 flex flex-col overflow-hidden min-h-0 border-l border-deck-border" style={{ width: `${rightWidth}px` }}>
               {rightTab === 'browser' ? (
                 <BrowserPanel agentId={agentId} onClose={() => setRightPanelOpen(false)} />
+              ) : rightTab === 'sessions' ? (
+                <SessionHistory agentId={agentId} onClose={() => setRightPanelOpen(false)} />
               ) : (
                 <SubAgentPanel activity={activity} palette={generatePalette(agent?.colorHue ?? 220)} onClose={() => setRightPanelOpen(false)} />
               )}
