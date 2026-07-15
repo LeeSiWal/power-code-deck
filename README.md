@@ -1,21 +1,23 @@
 # PowerCodeDeck
 
-**PowerCodeDeck v0.2.4** — 브라우저에서 서버 프로젝트를 열고, 터미널과 AI 코딩 에이전트를 실행하는 개인용 웹 콘솔입니다.
+**PowerCodeDeck v0.2.5** — 브라우저에서 서버 프로젝트를 열고, 터미널과 AI 코딩 에이전트를 실행하는 개인용 웹 콘솔입니다.
 *PowerCodeDeck is a self-hosted web console for project terminals and AI coding agents.*
 
 Claude Code, Gemini CLI, Codex CLI 등 AI 코딩 에이전트를 한 화면에서 실행하고 모니터링합니다.
 Go 단일 바이너리(`pcd`)로 빌드되어 설치가 간편합니다.
 
-> **새 소식 (v0.2.4)**
-> - 🔒 **보안 강화** — WebSocket Origin/토큰 검증, 파일 경로 검증 상시 적용, Host 헤더 검증(DNS rebinding 방지), 토큰 타입 분리, graceful shutdown ([CHANGELOG](CHANGELOG.md#v024--보안-강화-security-hardening)). **v0.2.3 이하는 취약점이 있으므로 업그레이드를 권장합니다.**
+> **새 소식 (v0.2.5)**
+> - 🖥️ **자체 터미널 렌더러** — xterm.js를 걷어내고 `@xterm/headless` 파서 위에 **자체 DOM 렌더러**를 올렸습니다. 스크롤/스트리밍 잔상을 없애고, 한글을 **2셀 고정폭**으로 정확히 그립니다. 번들된 **D2Coding** 폰트 사용(희귀 음절은 Nanum Gothic Coding 폴백) ([기술 스택](#기술-스택))
+> - 🕘 **세션 히스토리** — 프로젝트별 과거 Claude Code 세션(트랜스크립트)을 열람·재개(resume)·삭제 ([세션 히스토리](#세션-히스토리))
+> - 🔒 **보안 강화 (v0.2.4)** — WebSocket Origin/토큰 검증, 파일 경로 검증 상시 적용, Host 헤더 검증(DNS rebinding 방지), 토큰 타입 분리, graceful shutdown ([CHANGELOG](CHANGELOG.md#v024--보안-강화-security-hardening)). **v0.2.3 이하는 취약점이 있으므로 업그레이드를 권장합니다.**
+> - 🩹 **리버스 프록시 접속 복구 (v0.2.5)** — 도메인을 `CORS_ORIGINS`에만 설정한 배포가 v0.2.4에서 403으로 깨지던 문제 수정 ([CHANGELOG](CHANGELOG.md))
 > - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
 > - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
-> - 🪟 **Windows 지원** — **WSL2 한 줄 설치**가 권장. cgo 없는 네이티브 `pcd.exe` 빌드도 지원(실험적 — Smart App Control 해제 또는 서명 필요) ([Windows 설치](#windows-설치-wsl2-권장) · [docs/windows.md](docs/windows.md))
-> - ⚙️ **cgo 없는 네이티브 빌드** — 순수 Go SQLite + go-pty로 전환. gcc/build-essential 불필요, `make build-windows`로 **네이티브 `pcd.exe`** 크로스컴파일 가능
+> - 🪟 **Windows 지원** — **WSL2 한 줄 설치**가 권장 ([Windows 설치](#windows-설치-wsl2-권장) · [docs/windows.md](docs/windows.md))
 >
 > 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
 
-![Version](https://img.shields.io/badge/version-0.2.4-6366f1)
+![Version](https://img.shields.io/badge/version-0.2.5-6366f1)
 ![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![SQLite](https://img.shields.io/badge/SQLite-embedded-003B57?logo=sqlite&logoColor=white)
@@ -85,6 +87,7 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 - [인증](#인증)
 - [보안 주의](#보안-주의)
 - [사용법](#사용법)
+- [세션 히스토리](#세션-히스토리)
 - [Session Handoff](#session-handoff)
 - [설정](#설정)
 - [CLI 커맨드](#cli-커맨드)
@@ -99,9 +102,10 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 ## 주요 기능
 
 - **멀티 에이전트** — 여러 AI 에이전트를 동시에 실행/모니터링 (Claude Code / Gemini CLI / Codex CLI / Custom)
-- **웹 터미널** — xterm.js 기반 단일 Interactive Terminal + 디바이스별 Prompt Bar(한글/긴 프롬프트), 방향키 툴바, 내부 PTY 세션 엔진으로 프로세스 유지 (브라우저를 닫아도 유지)
+- **웹 터미널** — `@xterm/headless` 파서 + **자체 DOM 렌더러**(잔상 없는 CJK 2셀 고정폭, 번들 D2Coding 폰트) 기반 단일 Interactive Terminal + 디바이스별 Prompt Bar(한글/긴 프롬프트), 방향키 툴바, 내부 PTY 세션 엔진으로 프로세스 유지 (브라우저를 닫아도 유지)
 - **대시보드** — 그리드/리스트 뷰로 전체 에이전트 상태를 한눈에, `+`로 즉시 생성
 - **에이전트 메타** — Git 브랜치·변경 여부·ahead 커밋 수, 리스닝 포트 자동 감지 표시
+- **세션 히스토리** — 프로젝트별 과거 Claude Code 세션(트랜스크립트)을 열람·재개(resume)·삭제
 - **파일 탐색기** — 프로젝트 파일 탐색/편집/생성/삭제/이름변경
 - **내장 브라우저** — 에이전트가 띄운 로컬 포트를 iframe으로 미리보기 (외부 URL은 프록시 경유)
 - **알림 센터** — 에이전트의 완료/대기/승인요청 등 이벤트를 수집·표시
@@ -123,6 +127,7 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 - Prompt Bar (한글/긴 프롬프트 — 모바일·iPad 필수, 데스크톱 선택)
 - 방향키/제어키 툴바 (데스크톱·모바일)
 - Project Sessions (프로젝트별 세션)
+- Session History (과거 Claude Code 세션 열람·재개·삭제)
 - File Explorer
 - Claude / Gemini / Codex Launcher
 - Optional Authentication (none / PIN / password)
@@ -163,7 +168,7 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 └────────────────────────────────────────────────────────────┘
 ```
 
-핵심 아이디어: **각 AI CLI 에이전트는 pcd 서버가 소유한 독립된 PTY 프로세스에서 실행**되고, Go 서버가 그 프로세스의 입출력을 WebSocket으로 xterm.js에 중계합니다. 서버가 프로세스를 계속 살려두기 때문에 브라우저를 닫아도 에이전트는 멈추지 않습니다 (**Detach is not Kill**). 재접속 시에는 스크롤백 링버퍼에 저장된 최근 출력이 재생됩니다.
+핵심 아이디어: **각 AI CLI 에이전트는 pcd 서버가 소유한 독립된 PTY 프로세스에서 실행**되고, Go 서버가 그 프로세스의 입출력을 WebSocket으로 브라우저 터미널(자체 DOM 렌더러)에 중계합니다. 서버가 프로세스를 계속 살려두기 때문에 브라우저를 닫아도 에이전트는 멈추지 않습니다 (**Detach is not Kill**). 재접속 시에는 스크롤백 링버퍼에 저장된 최근 출력이 재생됩니다.
 
 ---
 
@@ -296,7 +301,7 @@ make build    # client 빌드 → server/static/ 복사 → go build (→ ./pcd)
 (터미널이 아닌 방식 — PM2, `.app` 더블클릭 등 — 으로 실행되면 자동으로 인증 없음으로 설정됩니다.)
 
 ```
-  PowerCodeDeck v0.2.0 first run
+  PowerCodeDeck v0.2.5 first run
   ------------------------------------------------
   인증을 사용할까요?  (Choose authentication)
     [1] 사용 안 함 / none   (기본값, default)
@@ -309,7 +314,7 @@ make build    # client 빌드 → server/static/ 복사 → go build (→ ./pcd)
 
 ```
   ================================================
-     PowerCodeDeck v0.2.0
+     PowerCodeDeck v0.2.5
      AI Coding Terminal Console
   ================================================
 
@@ -428,7 +433,7 @@ PowerCodeDeck은 하나의 **Interactive Terminal**을 기본으로 사용합니
 - **Send** — 붙여넣고 Enter까지 전송 (Cmd/Ctrl+Enter) · **Paste** — 붙여넣기만 (Enter 없음) · **Clear** — 지우기 · **터미널 조작** — 터미널로 포커스 이동
 - `Shift+Enter`로 줄바꿈. 한글 조합 중 Enter는 Send로 처리되지 않습니다.
 - **데스크톱**: 선택형 — 상단 **Prompt** 버튼(모든 OS) 또는 `⌘K` / `⌘P`(macOS)로 열고, `Esc`로 닫습니다.
-- **모바일 / iPad**: 항상 표시(접기만 가능) — xterm에 한글을 직접 입력하면 자모가 분리되므로 Prompt Bar 사용을 기본으로 합니다.
+- **모바일 / iPad**: 항상 표시(접기만 가능) — 터미널에 한글을 직접 입력하면 자모가 분리되므로 Prompt Bar 사용을 기본으로 합니다.
 
 > Terminal은 명령·방향키·승인 조작, Prompt Bar는 한글·긴 문장·멀티라인 — 라는 단순한 역할 분리입니다.
 
@@ -451,6 +456,20 @@ PowerCodeDeck은 하나의 **Interactive Terminal**을 기본으로 사용합니
 
 - **알림 센터** — 에이전트 완료/대기/승인요청 등 이벤트를 모아 표시, 읽음 처리
 - **로그 뷰어** — 에이전트별 출력 로그 검색 (SQLite 저장)
+
+---
+
+## 세션 히스토리
+
+프로젝트별로 지난 **Claude Code 세션(트랜스크립트)** 을 다시 열어보고 이어서 작업할 수 있습니다.
+Claude Code가 `~/.claude/projects/`에 남기는 세션 기록(JSONL)을 서버가 프로젝트 기준으로 읽어 목록화합니다.
+
+- **목록** — 현재 에이전트의 프로젝트에 속한 과거 세션을 최신순으로 보여줍니다 (우측 패널 탭 · 모바일은 하단 시트).
+- **열람** — 세션을 선택하면 대화 내용을 그대로 다시 볼 수 있습니다.
+- **재개(resume)** — 선택한 세션을 이어서 재개합니다 (`claude --resume` 경유). 새 세션 시작도 지원합니다.
+- **삭제** — 더 이상 필요 없는 세션 기록을 지웁니다.
+
+> 세션 기록은 Claude Code가 로컬 디스크에 남기는 파일을 읽는 것으로, PowerCodeDeck의 SQLite DB에 별도 저장하지 않습니다.
 
 ---
 
@@ -574,7 +593,7 @@ pcd status [id]        # 상태 확인
 pcd delete <id>        # 에이전트 삭제
 pcd open               # 브라우저 열기
 pcd ping               # 서버 상태 확인
-pcd version            # 버전 (pcd v0.2.3)
+pcd version            # 버전 (pcd v0.2.5)
 pcd help               # 도움말
 ```
 
@@ -598,7 +617,7 @@ CLI 토큰 저장 위치: macOS `~/Library/Application Support/powercodedeck/`, 
 - **Vite 6** — 빌드 도구 (`eruda`로 모바일 디버깅)
 - **React Router v6** — 클라이언트 라우팅
 - **Zustand** — 상태 관리 (`appStore`)
-- **xterm.js** (@xterm/xterm + addon-fit / unicode11 / web-links) — 웹 터미널
+- **터미널** — `@xterm/headless`(VT 파서 엔진) + **자체 DOM 렌더러**(`lib/customTerm/CustomTerm`). 레이어 없는 DOM 렌더링으로 스크롤/스트리밍 잔상을 제거하고, CJK를 2셀 고정폭으로 정확히 그립니다. 폰트는 번들된 **D2Coding** 완성형 subset(희귀 음절은 Nanum Gothic Coding 폴백)
 - **react-markdown + remark-gfm** — 마크다운 렌더링
 - **Tailwind CSS** — 스타일링
 - **Web Audio API** — 효과음 (`soundManager`, `subAgentSounds`)
@@ -618,12 +637,14 @@ power-code-deck/
 │   ├── main.go            # 엔트리포인트: 서비스 조립, 라우터, static 임베드, 배너
 │   ├── cli/               # 서브커맨드 CLI (root, agents, auth)
 │   ├── auth/              # JWT 발급/검증, HTTP·WS 인증 미들웨어
-│   ├── version/           # 제품명/버전 상수 (PowerCodeDeck v0.2.3)
+│   ├── version/           # 제품명/버전 상수 (PowerCodeDeck v0.2.5)
 │   ├── config/            # 이중 prefix env 로드 + 최초 실행 인증 마법사
 │   ├── db/                # SQLite 초기화 + 마이그레이션
 │   ├── handlers/          # HTTP 핸들러
 │   │   ├── agents.go      #   에이전트 CRUD, send, slash-commands
-│   │   ├── auth_handler.go#   login / refresh
+│   │   ├── sessions.go    #   세션 히스토리 목록/열람/재개/삭제 (Claude 트랜스크립트)
+│   │   ├── handoff.go     #   Session Handoff 토큰 발급/교환
+│   │   ├── auth_handler.go#   login / refresh / anonymous(무인증 모드용 익명 토큰)
 │   │   ├── files.go       #   파일 tree/read/write/mkdir/delete/rename/stat
 │   │   ├── projects.go    #   최근/탐색/검색/생성/삭제/이름변경
 │   │   ├── logs.go        #   로그 검색/조회
@@ -660,7 +681,7 @@ power-code-deck/
 │       │   └── LoginPage.tsx
 │       ├── components/
 │       │   ├── agent/     # 에이전트 카드, 런처, 생성 시트
-│       │   ├── terminal/  # 터미널 뷰, 입력, 모바일 툴바
+│       │   ├── terminal/  # 터미널 뷰, 자체 렌더러(CustomTerminal), Prompt Bar, 세션 히스토리, 핸드오프, 모바일 툴바
 │       │   ├── file/      # 파일 탐색기, 에디터, 프리뷰
 │       │   ├── browser/   # 내장 브라우저 패널
 │       │   ├── animation/ # 도트 캐릭터, 오비탈, 타임라인, sprites
@@ -673,7 +694,7 @@ power-code-deck/
 │       │   ├── CommandPalette.tsx
 │       │   └── icons.tsx
 │       ├── hooks/         # React 훅
-│       ├── lib/           # api.ts, ws.ts, soundManager, subAgentSounds, paletteGenerator
+│       ├── lib/           # api.ts, ws.ts, customTerm/(자체 터미널 렌더러), soundManager, subAgentSounds, paletteGenerator
 │       ├── stores/        # appStore.ts (Zustand)
 │       └── styles/        # 전역 스타일
 ├── install.sh                # 설치 스크립트 (macOS·Linux)
@@ -695,8 +716,8 @@ power-code-deck/
 │  Browser                                                     │
 │                                                              │
 │  ┌──────────┐    ┌──────────────┐    ┌───────────────────┐  │
-│  │ React    │    │ AgentDeckWS  │    │ xterm.js          │  │
-│  │ App      │───▶│ (WebSocket)  │◀──▶│ Terminal Emulator │  │
+│  │ React    │    │ AgentDeckWS  │    │ CustomTerm        │  │
+│  │ App      │───▶│ (WebSocket)  │◀──▶│ headless파서+DOM  │  │
 │  │ Zustand  │    │ ws.ts        │    │ TerminalView.tsx  │  │
 │  └──────────┘    └──────┬───────┘    └───────────────────┘  │
 └─────────────────────────┼───────────────────────────────────┘
@@ -746,7 +767,7 @@ PTY:     session.Ptmx.Write() → Claude Code stdin
 ```
 PTY:     session.Ptmx.Read() → ReadPump callback
 Server:  hub.BroadcastToAgent(agentId, 'terminal:output', data)
-Browser: agentDeckWS.on('terminal:output') → xterm.write(data)
+Browser: agentDeckWS.on('terminal:output') → CustomTerm.write(data)
 ```
 
 출력은 동시에 SQLite `logs` 테이블에도 저장되어 로그 뷰어에서 검색됩니다.
@@ -765,8 +786,9 @@ Browser: agentDeckWS.on('terminal:output') → xterm.write(data)
 모든 `/api/*`는 `Authorization: Bearer <JWT>` 필요 (auth·health 제외).
 
 ```
-POST /api/auth/login            PIN → JWT + Refresh Token
+POST /api/auth/login            PIN/비밀번호 → JWT + Refresh Token
 POST /api/auth/refresh          토큰 갱신
+POST /api/auth/anonymous        무인증 모드용 익명 토큰 (로컬 Origin 한정)
 GET  /api/auth/health           헬스체크 (무인증)
 
 GET    /api/agents              에이전트 목록
@@ -776,7 +798,17 @@ DELETE /api/agents/{id}         삭제
 POST   /api/agents/{id}/restart 재시작
 POST   /api/agents/{id}/send    텍스트 전송
 GET    /api/agents/{id}/meta    git/포트 메타
+POST   /api/agents/{id}/handoff Session Handoff 토큰 발급
 GET    /api/agents/slash-commands  슬래시 커맨드 목록
+
+GET    /api/agents/{id}/sessions           세션 히스토리 목록
+POST   /api/agents/{id}/sessions/new       새 세션 시작
+GET    /api/agents/{id}/sessions/{sid}     세션 트랜스크립트 조회
+DELETE /api/agents/{id}/sessions/{sid}     세션 삭제
+POST   /api/agents/{id}/sessions/{sid}/resume  세션 재개
+
+GET  /api/handoff/{token}       핸드오프 토큰 조회
+POST /api/handoff/exchange      핸드오프 토큰 교환 → 세션 접속
 
 GET  /api/files/tree|read|stat            파일 조회
 PUT  /api/files/write   POST /api/files/mkdir
@@ -797,7 +829,7 @@ GET  /ws?token=<JWT>                               WebSocket
 | 방향 | 이벤트 | 설명 |
 |------|--------|------|
 | C→S | `terminal:attach` / `terminal:detach` | 터미널 연결/해제 (agentId, cols, rows) |
-| C→S | `terminal:input` | 키 입력 전송 (xterm 직접 입력) |
+| C→S | `terminal:input` | 키 입력 전송 (터미널 직접 입력) |
 | C→S | `terminal:pasteSubmit` | Prompt Bar 텍스트를 붙여넣고 Enter 전송 (서버가 bracketed paste로 래핑) |
 | C→S | `terminal:pasteOnly` | Prompt Bar 텍스트를 붙여넣기만 (Enter 없음) |
 | C→S | `terminal:resize` | 터미널 크기 변경 |
@@ -847,7 +879,7 @@ server/*.go + server/static/ ──(go build + embed.FS)──▶ ./pcd
 ### v0.3.0 — Control Room
 
 PowerCodeDeck의 다음 주요 기능은 **멀티 에이전트 관제실(Control Room)**입니다.
-(이번 v0.2.3에서는 구현하지 않고 로드맵으로만 정의합니다.)
+(현재 v0.2.x에서는 구현하지 않고 로드맵으로만 정의합니다.)
 
 목표:
 - 여러 에이전트 세션을 한 화면에서 관리
@@ -858,7 +890,7 @@ PowerCodeDeck의 다음 주요 기능은 **멀티 에이전트 관제실(Control
 - 세션 종료 / 재시작 / 로그 보기
 - 승인 대기나 장시간 무응답 같은 주의 상태 표시
 
-v0.2.3에서는 기존 멀티 에이전트 대시보드를 크게 수정하지 않고(Experimental로 분류), Control Room은 다음 버전 작업으로 남깁니다. 상세 로드맵은 [ROADMAP.md](ROADMAP.md) 참고.
+현재 버전에서는 기존 멀티 에이전트 대시보드를 크게 수정하지 않고(Experimental로 분류), Control Room은 다음 버전 작업으로 남깁니다. 상세 로드맵은 [ROADMAP.md](ROADMAP.md) 참고.
 
 ---
 
