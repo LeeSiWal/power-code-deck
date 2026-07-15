@@ -12,6 +12,8 @@ interface CustomTerminalProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onRe
   rows?: number;
   autoResize?: boolean;
   cursorBlink?: boolean;
+  /** Skip the built-in hidden-textarea input (an external UnifiedInput owns it). */
+  disableInput?: boolean;
   onData?: (data: string) => void;
   onResize?: (cols: number, rows: number) => void;
   onTitle?: (title: string) => void;
@@ -25,7 +27,7 @@ interface CustomTerminalProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onRe
  * Same handle (write/resize/focus) and onReady(term) contract TerminalView expects.
  */
 export const CustomTerminal = forwardRef<CustomTerminalHandle, CustomTerminalProps>(function CustomTerminal(
-  { cols = 80, rows = 24, autoResize = false, cursorBlink = false, onData, onResize, onTitle, onReady, className, style, ...htmlProps },
+  { cols = 80, rows = 24, autoResize = false, cursorBlink = false, disableInput = false, onData, onResize, onTitle, onReady, className, style, ...htmlProps },
   ref,
 ) {
   const termRef = useRef<CustomTerm | null>(null);
@@ -41,7 +43,7 @@ export const CustomTerminal = forwardRef<CustomTerminalHandle, CustomTerminalPro
   const containerRef = useCallback((el: HTMLDivElement | null) => {
     if (!el) return;
     const term = new CustomTerm(el, {
-      cols, rows, autoResize, cursorBlink,
+      cols, rows, autoResize, cursorBlink, disableInput,
       onData: (d) => cbRef.current.onData?.(d),
       onResize: (c, r) => cbRef.current.onResize?.(c, r),
       onTitle: (t) => cbRef.current.onTitle?.(t),

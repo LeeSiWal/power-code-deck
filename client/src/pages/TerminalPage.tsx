@@ -24,6 +24,11 @@ import { useAppStore } from '../stores/appStore';
 
 type CenterTab = 'terminal' | 'editor';
 
+// Experiment flag (?unifiedInput): the terminal owns a single cursor-anchored input
+// (UnifiedInput), so the separate Prompt Bar is hidden. Without the flag everything
+// behaves exactly as before — the Prompt Bar stays the fallback.
+const UNIFIED_INPUT = typeof window !== 'undefined' && window.location.search.includes('unifiedInput');
+
 export function TerminalPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -328,15 +333,17 @@ export function TerminalPage() {
             pasted into the terminal; direct typing into the terminal would split jamo. */}
         {activeTab === 'terminal' && (
           <>
-            <PromptBar
-              agentId={agentId}
-              forced
-              collapsed={promptCollapsed}
-              onToggleCollapse={() => setPromptCollapsed((c) => !c)}
-              onClose={() => {}}
-              onFocusTerminal={focusTerminal}
-              onFocusChange={handlePromptFocusChange}
-            />
+            {!UNIFIED_INPUT && (
+              <PromptBar
+                agentId={agentId}
+                forced
+                collapsed={promptCollapsed}
+                onToggleCollapse={() => setPromptCollapsed((c) => !c)}
+                onClose={() => {}}
+                onFocusTerminal={focusTerminal}
+                onFocusChange={handlePromptFocusChange}
+              />
+            )}
             <MobileToolbar agentId={agentId} onOpenPrompt={openPrompt} sendKey={sendTerminalKey} />
           </>
         )}
@@ -586,7 +593,7 @@ export function TerminalPage() {
               iPad + touch, plus PTY control keys (arrows / Enter / Esc / …). */}
           {activeTab === 'terminal' && (
             <>
-              {(forcePromptBar || promptOpen) && (
+              {!UNIFIED_INPUT && (forcePromptBar || promptOpen) && (
                 <PromptBar
                   agentId={agentId}
                   forced={forcePromptBar}

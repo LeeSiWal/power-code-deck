@@ -23,8 +23,11 @@ export function MobileToolbar({ agentId, onOpenPrompt, sendKey }: MobileToolbarP
   return (
     <div className="flex gap-2 px-3 py-2 overflow-x-auto scrollbar-hide safe-bottom bg-deck-surface border-t border-deck-border">
       <button
-        onTouchStart={(e) => { e.preventDefault(); onOpenPrompt(); }}
-        onMouseDown={(e) => { e.preventDefault(); onOpenPrompt(); }}
+        // A single pointerdown fires once for both touch and mouse. Having both
+        // onTouchStart AND onMouseDown fired twice per tap on touch (touchstart +
+        // the synthesized mousedown) — the "여러번 눌림". preventDefault keeps focus
+        // on the input so the soft keyboard stays up.
+        onPointerDown={(e) => { e.preventDefault(); onOpenPrompt(); }}
         className="shrink-0 px-4 py-2.5 rounded-lg text-sm font-medium select-none touch-manipulation active:opacity-70 bg-deck-accent/20 text-deck-accent"
         title="한글/긴 프롬프트 입력"
       >
@@ -33,8 +36,7 @@ export function MobileToolbar({ agentId, onOpenPrompt, sendKey }: MobileToolbarP
       {KEYS.map((key) => (
         <button
           key={key.label}
-          onTouchStart={(e) => { e.preventDefault(); send(key.data); }}
-          onMouseDown={(e) => { e.preventDefault(); send(key.data); }}
+          onPointerDown={(e) => { e.preventDefault(); send(key.data); }}
           className={`shrink-0 px-4 py-2.5 rounded-lg text-sm font-mono select-none touch-manipulation active:opacity-70 ${
             (key as any).accent ? 'bg-deck-accent/20 text-deck-accent' : 'bg-deck-bg text-deck-text'
           }`}

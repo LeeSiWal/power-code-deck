@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { CustomTerminal, type CustomTerminalHandle } from './CustomTerminal';
 import type { CustomTerm } from '../../lib/customTerm/CustomTerm';
+import { UnifiedInput, type UnifiedInputHandle } from './UnifiedInput';
 import '../../styles/customTerm.css';
 // Bundled fixed-width coding font with Latin AND Hangul at a 1:2 advance ratio.
 // System fonts (JetBrains Mono etc.) lack Hangul, so Korean fell back to a font
@@ -32,6 +33,10 @@ const APP_CURSOR_MAP: Record<string, string> = {
 };
 
 const HANGUL_RE = /[ᄀ-ᇿ㄰-㆏가-힣]/;
+
+// Experiment flag (?unifiedInput): graft a single cursor-anchored input onto the
+// terminal (UnifiedInput) instead of the hidden textarea + separate Prompt Bar.
+const UNIFIED_INPUT = typeof window !== 'undefined' && window.location.search.includes('unifiedInput');
 
 /** Bound the freeze-while-selecting buffer so a long-held selection can't grow it
  * without limit; past this we give up the freeze and let output through. */
@@ -109,6 +114,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const shellRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<CustomTerminalHandle | null>(null);
   const wtRef = useRef<CustomTerm | null>(null);
+  const unifiedInputRef = useRef<UnifiedInputHandle | null>(null);
   const attachedRef = useRef(false);
   const readyRef = useRef(false);
   const colsRef = useRef(80);
@@ -170,6 +176,12 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   useImperativeHandle(ref, () => ({
     focus: () => handleRef.current?.focus(),
     sendKey: (data: string) => {
+      // In unified-input mode the Enter key bar button submits the draft (bracketed
+      // paste), matching the keyboard Enter — a raw CR would ignore the buffered text.
+      if (UNIFIED_INPUT && data === '\r' && unifiedInputRef.current) {
+        unifiedInputRef.current.submit();
+        return;
+      }
       const app = wtRef.current?.applicationCursorKeys ?? false;
       agentDeckWS.send('terminal:input', { agentId, data: app ? (APP_CURSOR_MAP[data] ?? data) : data });
     },
@@ -672,6 +684,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         ref={handleRef}
         autoResize
         cursorBlink
+        disableInput={UNIFIED_INPUT}
         onData={onData}
         onResize={onResize}
         onReady={onReady}
@@ -689,6 +702,11 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
           ['--term-cursor' as any]: '#6366f1',
         }}
       />
+
+      {/* Experiment: one cursor-anchored input for text + IME + control keys. */}
+      {UNIFIED_INPUT && ready && wtRef.current && (
+        <UnifiedInput ref={unifiedInputRef} term={wtRef.current} agentId={agentId} autoFocus={!isTouchDevice} touch={isTouchDevice} />
+      )}
 
       {debug && debugInfo && (
         <pre className="absolute top-1 left-1 z-30 px-2 py-1 rounded text-[9px] leading-tight whitespace-pre

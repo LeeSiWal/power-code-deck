@@ -11,7 +11,16 @@ export interface CustomTermOptions {
   onData?: (data: string) => void;
   onResize?: (cols: number, rows: number) => void;
   onTitle?: (title: string) => void;
+  /**
+   * Skip creating the built-in InputHandler (the hidden off-screen textarea).
+   * Used when an external, visible input surface (UnifiedInput) owns keyboard
+   * and IME instead — so the two textareas don't fight for focus/keystrokes.
+   */
+  disableInput?: boolean;
 }
+
+/** Pixel rect of the cursor cell, relative to the terminal element's visible box. */
+export interface CursorRect { left: number; top: number; height: number }
 
 /**
  * A DOM terminal built on @xterm/headless — the SAME VT engine VS Code's terminal
@@ -38,6 +47,9 @@ export class CustomTerm {
   private ro: ResizeObserver | null = null;
   private rafId: number | null = null;
   private rowHeight = 0;
+  private charWidth = 0;
+  private disableInput: boolean;
+  private cursorListener: ((rect: CursorRect | null) => void) | null = null;
   private destroyed = false;
   private stickBottom = true;
   private modeShim: { cursorKeysApp(): boolean; bracketedPaste(): boolean };
@@ -45,6 +57,7 @@ export class CustomTerm {
   constructor(element: HTMLElement, opts: CustomTermOptions) {
     this.element = element;
     this.autoResize = opts.autoResize !== false;
+    this.disableInput = opts.disableInput === true;
     this.onDataCb = opts.onData;
     this.onResizeCb = opts.onResize;
     this.onTitleCb = opts.onTitle;
@@ -82,16 +95,44 @@ export class CustomTerm {
   init(): this {
     this.measure();
     this.setupGrid();
-    this.input = new InputHandler(
-      this.element,
-      (data) => { this.onDataCb ? this.onDataCb(data) : this.write(data); this.stickBottom = true; this.scrollToBottom(); },
-      // InputHandler only calls .cursorKeysApp()/.bracketedPaste() on the bridge.
-      (() => this.modeShim) as unknown as () => never,
-    );
+    // When an external UnifiedInput owns the keyboard we skip the built-in hidden
+    // textarea entirely (otherwise both would grab focus / duplicate keystrokes).
+    if (!this.disableInput) {
+      this.input = new InputHandler(
+        this.element,
+        (data) => { this.onDataCb ? this.onDataCb(data) : this.write(data); this.stickBottom = true; this.scrollToBottom(); },
+        // InputHandler only calls .cursorKeysApp()/.bracketedPaste() on the bridge.
+        (() => this.modeShim) as unknown as () => never,
+      );
+    }
     if (this.autoResize) this.setupResizeObserver();
-    this.input.focus();
+    this.input?.focus();
     this.render();
     return this;
+  }
+
+  /** Whether the built-in hidden-textarea input was created. */
+  get hasBuiltInInput(): boolean { return this.input != null; }
+
+  /** Register a callback fired on every render with the cursor's pixel rect (or
+   *  null when it can't be located). Used by an external cursor-anchored input. */
+  setCursorListener(cb: ((rect: CursorRect | null) => void) | null): void {
+    this.cursorListener = cb;
+  }
+
+  /** Pixel rect of the cursor cell relative to the terminal element's visible box
+   *  (already accounts for scroll). Null when the cursor row isn't in the DOM. */
+  cursorRect(): CursorRect | null {
+    const buf = this.term.buffer.active;
+    const rowEl = this.rowEls[buf.cursorY];
+    if (!rowEl) return null;
+    const wrect = this.element.getBoundingClientRect();
+    const rrect = rowEl.getBoundingClientRect();
+    return {
+      left: rrect.left - wrect.left + buf.cursorX * this.charWidth,
+      top: rrect.top - wrect.top,
+      height: this.rowHeight,
+    };
   }
 
   private setupGrid() {
@@ -178,6 +219,8 @@ export class CustomTerm {
     const hasSb = buf.type === 'normal' && base > 0;
     this.element.classList.toggle('has-scrollback', hasSb);
     if (this.stickBottom) this.scrollToBottom();
+    // Let an external cursor-anchored input follow the cursor as the app redraws.
+    if (this.cursorListener) this.cursorListener(this.cursorRect());
   }
 
   private syncScrollback(base: number) {
@@ -223,6 +266,7 @@ export class CustomTerm {
     const rowH = probe.getBoundingClientRect().height;
     probe.remove();
     if (!charW || !rowH) return null;
+    this.charWidth = charW;
     this.rowHeight = Math.ceil(rowH);
     this.element.style.setProperty('--term-row-height', `${this.rowHeight}px`);
     return { charW, rowH: this.rowHeight };
