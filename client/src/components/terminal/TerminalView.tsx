@@ -34,9 +34,12 @@ const APP_CURSOR_MAP: Record<string, string> = {
 
 const HANGUL_RE = /[ᄀ-ᇿ㄰-㆏가-힣]/;
 
-// Experiment flag (?unifiedInput): graft a single cursor-anchored input onto the
-// terminal (UnifiedInput) instead of the hidden textarea + separate Prompt Bar.
-const UNIFIED_INPUT = typeof window !== 'undefined' && window.location.search.includes('unifiedInput');
+// Unified input is the default: one cursor-anchored input (UnifiedInput) instead
+// of the hidden textarea + separate Prompt Bar. `?classicInput` is the escape
+// hatch back to the Prompt Bar (kept as a fallback for any device where the
+// in-terminal IME misbehaves).
+const CLASSIC_INPUT = typeof window !== 'undefined' && window.location.search.includes('classicInput');
+const UNIFIED_INPUT = !CLASSIC_INPUT;
 
 /** Bound the freeze-while-selecting buffer so a long-held selection can't grow it
  * without limit; past this we give up the freeze and let output through. */

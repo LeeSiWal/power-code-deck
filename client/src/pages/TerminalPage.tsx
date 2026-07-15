@@ -24,10 +24,10 @@ import { useAppStore } from '../stores/appStore';
 
 type CenterTab = 'terminal' | 'editor';
 
-// Experiment flag (?unifiedInput): the terminal owns a single cursor-anchored input
-// (UnifiedInput), so the separate Prompt Bar is hidden. Without the flag everything
-// behaves exactly as before — the Prompt Bar stays the fallback.
-const UNIFIED_INPUT = typeof window !== 'undefined' && window.location.search.includes('unifiedInput');
+// Unified input is the default: the terminal owns a single cursor-anchored input
+// (UnifiedInput), so the separate Prompt Bar is hidden. `?classicInput` is the
+// escape hatch that brings the Prompt Bar back as a fallback.
+const UNIFIED_INPUT = typeof window === 'undefined' || !window.location.search.includes('classicInput');
 
 export function TerminalPage() {
   const { id } = useParams<{ id: string }>();
