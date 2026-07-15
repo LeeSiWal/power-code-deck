@@ -609,6 +609,7 @@ export function TerminalPage() {
                 agentId={agentId}
                 onKeySent={() => terminalApiRef.current?.focus()}
                 sendKey={sendTerminalKey}
+                isTouch={isTouchDevice}
               />
             </>
           )}

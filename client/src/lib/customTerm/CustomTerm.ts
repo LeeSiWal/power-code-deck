@@ -135,6 +135,55 @@ export class CustomTerm {
     };
   }
 
+  // Matches an http(s) URL. Excludes whitespace, quotes and bracket chars so a link
+  // printed in prose stops at the surrounding punctuation; trailing sentence
+  // punctuation is trimmed off the match separately.
+  private static readonly URL_RE = /https?:\/\/[^\s"'`<>()[\]{}|^\\]+/g;
+
+  /**
+   * The URL under a viewport pixel, or null. Maps the pixel to a buffer cell by the
+   * uniform row height / char width, then reconstructs the WHOLE logical line across
+   * xterm's soft-wrap boundaries — so a link that wrapped over several rows is matched
+   * as one string and opens fully — and returns the URL spanning the clicked cell.
+   * Builds the text one entry per cell (wide-char placeholder → space) so column N
+   * maps to a fixed string offset regardless of CJK width; URLs are ASCII so none of
+   * that ever falls inside the match.
+   */
+  linkAt(clientX: number, clientY: number): string | null {
+    if (this.rowHeight <= 0 || this.charWidth <= 0) return null;
+    const buf = this.term.buffer.active;
+    const rect = this.grid.getBoundingClientRect();
+    const lineIdx = Math.floor((clientY - rect.top) / this.rowHeight);
+    const col = Math.floor((clientX - rect.left) / this.charWidth);
+    if (lineIdx < 0 || col < 0 || col >= this.term.cols || lineIdx >= buf.length) return null;
+    // Extend to the full wrapped logical line: back to the first row that isn't a
+    // wrap continuation, forward through every continuation row.
+    let start = lineIdx;
+    while (start > 0 && buf.getLine(start)?.isWrapped) start--;
+    let end = lineIdx;
+    while (end + 1 < buf.length && buf.getLine(end + 1)?.isWrapped) end++;
+    let text = '';
+    let hit = -1;
+    for (let y = start; y <= end; y++) {
+      const line = buf.getLine(y);
+      if (!line) continue;
+      for (let c = 0; c < this.term.cols; c++) {
+        if (y === lineIdx && c === col) hit = text.length;
+        const chars = line.getCell(c)?.getChars();
+        text += chars && chars.length ? chars : ' ';
+      }
+    }
+    if (hit < 0) return null;
+    CustomTerm.URL_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = CustomTerm.URL_RE.exec(text))) {
+      if (hit >= m.index && hit < m.index + m[0].length) {
+        return m[0].replace(/[.,;:!?)\]}'"]+$/, '');
+      }
+    }
+    return null;
+  }
+
   private setupGrid() {
     this.grid.innerHTML = '';
     this.rowEls = [];

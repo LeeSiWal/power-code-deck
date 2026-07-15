@@ -55,20 +55,27 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
   const valueRef = useRef('');
   valueRef.current = value;
   const composingRef = useRef(false);
-  const [style, setStyle] = useState<{ family: string; size: string; color: string }>({
-    family: 'monospace', size: '14px', color: 'var(--term-fg, #e2e8f0)',
+  const [style, setStyle] = useState<{ family: string; size: string; color: string; bg: string }>({
+    family: 'monospace', size: '14px', color: 'var(--term-fg, #e2e8f0)', bg: 'var(--term-bg, #0a0a0f)',
   });
 
-  // Match the terminal's rendered font/color so the draft aligns with the grid.
+  // Match the terminal's rendered font/color/background so the draft aligns with the
+  // grid AND (when it has text) can paint an opaque box over the terminal cells behind
+  // it — otherwise the app's own placeholder / prompt text shows THROUGH the draft.
   useEffect(() => {
     const cs = getComputedStyle(term.element);
-    setStyle({ family: cs.fontFamily, size: cs.fontSize, color: cs.color });
+    setStyle({ family: cs.fontFamily, size: cs.fontSize, color: cs.color, bg: cs.backgroundColor });
   }, [term]);
 
-  // Follow the cursor: CustomTerm calls this on every render (output redraw).
+  // Follow the cursor: CustomTerm calls this on every render (output redraw). But
+  // ONLY while the draft is empty — once the user starts typing, freeze the box where
+  // they began. Otherwise an app redraw (e.g. Claude Code printing a question) drags
+  // the floating input across the screen, mixing it into the output and appearing to
+  // swallow the half-typed text; freezing also keeps it mounted/focused if the cursor
+  // scrolls out of view (cursorRect → null would otherwise blank the textarea).
   useEffect(() => {
     setRect(term.cursorRect());
-    term.setCursorListener((r) => setRect(r));
+    term.setCursorListener((r) => { if (!valueRef.current) setRect(r); });
     return () => term.setCursorListener(null);
   }, [term]);
 
@@ -98,10 +105,11 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
     if (text) {
       agentDeckWS.send('terminal:pasteSubmit', { agentId, text, mode: 'bracketed-paste' });
       setValue('');
+      setRect(term.cursorRect()); // unfreeze: resume tracking from the live cursor
     } else {
       sendInput('\r');
     }
-  }, [agentId, sendInput]);
+  }, [agentId, sendInput, term]);
 
   useImperativeHandle(ref, () => ({ submit }), [submit]);
 
@@ -171,7 +179,10 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
     border: 'none',
     outline: 'none',
     resize: 'none',
-    background: 'transparent',
+    // Opaque box only while drafting, so the terminal's underlying text (the app's
+    // placeholder / prompt) is hidden behind the draft instead of bleeding through;
+    // transparent when empty so the live cursor and prompt stay visible.
+    background: value ? style.bg : 'transparent',
     color: style.color,
     caretColor: value ? 'var(--deck-accent, #6366f1)' : 'transparent',
     fontFamily: style.family,
@@ -187,7 +198,13 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
       ref={taRef}
       className="unified-input"
       value={value}
-      onChange={(e) => setValue(e.target.value)}
+      onChange={(e) => {
+        const v = e.target.value;
+        setValue(v);
+        // Draft just went empty → re-anchor to the live cursor so tracking resumes
+        // from the app's real input position (it was frozen while drafting).
+        if (!v) setRect(term.cursorRect());
+      }}
       onKeyDown={onKeyDown}
       onCompositionStart={() => { composingRef.current = true; }}
       onCompositionEnd={() => { composingRef.current = false; }}

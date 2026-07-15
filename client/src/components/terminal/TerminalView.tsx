@@ -539,6 +539,44 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     };
   }, [mouseTracking, agentId, scheduleRepaint]);
 
+  // Click / tap a URL in the terminal to open it — auth links, docs links, etc. A
+  // very long link that xterm soft-wrapped across several rows still opens whole
+  // (linkAt stitches the logical line back together). Pointer cursor on hover
+  // advertises it on desktop; on touch a plain tap opens it (no click is otherwise
+  // forwarded to the app, so this is purely additive).
+  useEffect(() => {
+    if (!ready) return;
+    let el: HTMLElement | null = null;
+    let timer = 0;
+    let lastCursor = '';
+    const onClick = (e: MouseEvent) => {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) return; // a drag-select, not a link tap
+      const url = wtRef.current?.linkAt(e.clientX, e.clientY);
+      if (!url) return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(url, '_blank', 'noopener,noreferrer');
+    };
+    const onMove = (e: MouseEvent) => {
+      if (!el) return;
+      const next = wtRef.current?.linkAt(e.clientX, e.clientY) ? 'pointer' : '';
+      if (next !== lastCursor) { el.style.cursor = next; lastCursor = next; }
+    };
+    const attach = (tries: number) => {
+      el = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
+      if (el) {
+        el.addEventListener('click', onClick);
+        if (!isTouchDevice) el.addEventListener('mousemove', onMove);
+      } else if (tries < 20) timer = window.setTimeout(() => attach(tries + 1), 100);
+    };
+    attach(0);
+    return () => {
+      clearTimeout(timer);
+      if (el) { el.removeEventListener('click', onClick); el.removeEventListener('mousemove', onMove); }
+    };
+  }, [ready, isTouchDevice]);
+
   // Non-alt-screen (scrollback) case: toggle the jump-to-bottom button from the
   // native scroll position of the .wterm scroll container.
   useEffect(() => {
