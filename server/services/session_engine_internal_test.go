@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -169,6 +170,52 @@ func TestBootstrapInstallCommand(t *testing.T) {
 		if !strings.Contains(args[1], "exec claude") {
 			t.Fatalf("missing exec claude in %q", args[1])
 		}
+		// The freshly-installed binary must be reachable: the global npm bin dir
+		// (only ever on PATH via ~/.bashrc, which `bash -l` doesn't source) is
+		// prepended before exec, else the run-after-install fails "not found".
+		if !strings.Contains(args[1], `export PATH="$(npm prefix -g)/bin:$PATH"`) {
+			t.Fatalf("missing global-bin PATH prepend in %q", args[1])
+		}
+	}
+}
+
+// Codex is carried from install straight into its login flow; a plain CLI (or
+// one whose first run handles auth, like gemini) is not.
+func TestBootstrapInstallCommandLogin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("login snippet asserted on unix")
+	}
+	_, codexArgs := bootstrapInstallCommand("codex", nil, "@openai/codex")
+	if !strings.Contains(codexArgs[1], "codex login") {
+		t.Fatalf("codex bootstrap should chain login, got %q", codexArgs[1])
+	}
+	// Skip login when already authenticated.
+	if !strings.Contains(codexArgs[1], "codex login status") {
+		t.Fatalf("codex bootstrap should guard on login status, got %q", codexArgs[1])
+	}
+	_, geminiArgs := bootstrapInstallCommand("gemini", nil, "@google/gemini-cli")
+	if strings.Contains(geminiArgs[1], "login") {
+		t.Fatalf("gemini bootstrap must not chain a login command, got %q", geminiArgs[1])
+	}
+}
+
+// withAgentPath prepends the npm global bin dir to PATH without dropping the
+// existing PATH entries.
+func TestWithAgentPath(t *testing.T) {
+	dir := npmGlobalBin()
+	if dir == "" {
+		t.Skip("npm not available; global bin dir unknown")
+	}
+	out := withAgentPath([]string{"FOO=bar", "PATH=/usr/bin"})
+	var gotPath string
+	for _, kv := range out {
+		if strings.HasPrefix(kv, "PATH=") {
+			gotPath = strings.TrimPrefix(kv, "PATH=")
+		}
+	}
+	want := dir + string(os.PathListSeparator) + "/usr/bin"
+	if gotPath != want {
+		t.Fatalf("PATH = %q, want %q", gotPath, want)
 	}
 }
 

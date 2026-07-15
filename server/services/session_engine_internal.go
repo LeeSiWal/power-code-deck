@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -99,11 +100,11 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 	command, cmdArgs := resolveLaunchCommand(req.Command, req.Args)
 	cmd := p.Command(command, cmdArgs...)
 	cmd.Dir = req.Cwd
-	cmd.Env = append(os.Environ(),
+	cmd.Env = withAgentPath(append(os.Environ(),
 		"TERM=xterm-256color",
 		"LANG=ko_KR.UTF-8",
 		"LC_ALL=ko_KR.UTF-8",
-	)
+	))
 	if err := cmd.Start(); err != nil {
 		p.Close()
 		return nil, fmt.Errorf("failed to start process: %w", err)
@@ -374,14 +375,104 @@ var npmCLIPackages = map[string]string{
 	"codex":  "@openai/codex",
 }
 
+// loginCommands maps an agent CLI to the shell snippet that ensures it's signed
+// in, chained right after a fresh install so the user is taken straight through
+// auth. An entry is only needed for CLIs that expose an explicit, separate login
+// command: codex has `codex login` (and `codex login status` to skip it when
+// already authenticated). Gemini has no standalone login command — it shows its
+// "Login with Google" picker the first time the CLI itself starts — so simply
+// exec-ing it (below) already flows into sign-in and it needs no entry here.
+var loginCommands = map[string]string{
+	"codex": "{ codex login status >/dev/null 2>&1 || codex login; }",
+}
+
+// npmGlobalBin resolves the directory npm installs global CLIs into (e.g.
+// ~/.npm-global/bin), computed once via `npm prefix -g`. The server's own PATH
+// frequently omits this dir because the user's `export PATH=...:$HOME/.npm-global/bin`
+// lives in ~/.bashrc, which a non-interactive server (and `bash -l`, a login
+// shell) never sources. Looking here explicitly lets us (a) detect an
+// already-installed agent CLI instead of reinstalling it on every launch, and
+// (b) run the binary we just installed.
+var (
+	npmGlobalBinOnce sync.Once
+	npmGlobalBinDir  string
+)
+
+func npmGlobalBin() string {
+	npmGlobalBinOnce.Do(func() {
+		npm, err := exec.LookPath("npm")
+		if err != nil {
+			return
+		}
+		out, err := exec.Command(npm, "prefix", "-g").Output()
+		if err != nil {
+			return
+		}
+		prefix := strings.TrimSpace(string(out))
+		if prefix == "" {
+			return
+		}
+		if runtime.GOOS == "windows" {
+			npmGlobalBinDir = prefix // .cmd shims live in the prefix root on Windows
+		} else {
+			npmGlobalBinDir = filepath.Join(prefix, "bin")
+		}
+	})
+	return npmGlobalBinDir
+}
+
+// withAgentPath prepends the npm global bin dir to PATH in a copy of env, so the
+// spawned CLI (and anything it launches) resolves globally-installed agents even
+// when the server was started without that dir on PATH.
+func withAgentPath(env []string) []string {
+	dir := npmGlobalBin()
+	if dir == "" {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	replaced := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") && !replaced {
+			out = append(out, "PATH="+dir+string(os.PathListSeparator)+strings.TrimPrefix(kv, "PATH="))
+			replaced = true
+			continue
+		}
+		out = append(out, kv)
+	}
+	if !replaced {
+		out = append(out, "PATH="+dir)
+	}
+	return out
+}
+
+// findAgentCommand returns an absolute path to command if it's installed — either
+// on PATH or in the npm global bin dir — or "" if it genuinely isn't.
+func findAgentCommand(command string) string {
+	if p, err := exec.LookPath(command); err == nil {
+		return p
+	}
+	if dir := npmGlobalBin(); dir != "" {
+		cand := filepath.Join(dir, command)
+		if runtime.GOOS == "windows" {
+			cand += ".cmd"
+		}
+		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+			return cand
+		}
+	}
+	return ""
+}
+
 // resolveLaunchCommand decides what to actually spawn for a requested command:
-//   - if it's already on PATH, run it (with the Windows .cmd shim + absolute path);
-//   - if it's a known agent CLI that isn't installed, install it via npm first and
-//     then exec it, all inside the session so the user sees the progress;
+//   - if it's already installed (on PATH or npm global bin), run it (with the
+//     Windows .cmd shim + absolute path);
+//   - if it's a known agent CLI that isn't installed, install it via npm, chain
+//     its login flow, then exec it — all inside the session so the user sees the
+//     progress and is carried straight through sign-in;
 //   - otherwise run it as-is (it will fail with "not found", as before).
 func resolveLaunchCommand(command string, args []string) (string, []string) {
-	if _, err := exec.LookPath(command); err == nil {
-		return normalizeCommand(command, args)
+	if resolved := findAgentCommand(command); resolved != "" {
+		return normalizeCommand(resolved, args)
 	}
 	if pkg, ok := npmCLIPackages[command]; ok {
 		return bootstrapInstallCommand(command, args, pkg)
@@ -399,20 +490,39 @@ func normalizeCommand(command string, args []string) (string, []string) {
 	return command, args
 }
 
-// bootstrapInstallCommand builds a command that installs the CLI (npm -g) and then
-// runs it, so the npm output streams into the terminal and the CLI starts once
-// installed. Requires Node/npm to be available.
+// bootstrapInstallCommand builds a command that installs the CLI (npm -g), makes
+// the freshly-installed binary reachable, chains its login flow, and then runs
+// it — so the npm output streams into the terminal and the user is carried from
+// install → sign-in → running CLI in one go. Requires Node/npm to be available.
+//
+// The PATH step is essential: `npm install -g` drops the binary into
+// `$(npm prefix -g)/bin` (e.g. ~/.npm-global/bin), and that dir is usually only
+// added to PATH from ~/.bashrc — which the `bash -l` login shell here does NOT
+// source — so a bare `exec gemini` right after install would fail "command not
+// found". Prepending the global bin dir guarantees the just-installed CLI runs.
 func bootstrapInstallCommand(command string, args []string, pkg string) (string, []string) {
 	run := strings.TrimSpace(command + " " + strings.Join(args, " "))
 	if runtime.GOOS == "windows" {
-		line := "echo Installing " + command + " (first run)... && npm install -g " + pkg + " && " + run
+		login := ""
+		if snip, ok := loginCommands[command]; ok {
+			login = " && " + strings.NewReplacer(">/dev/null", ">nul", "{ ", "(", "; }", ")").Replace(snip)
+		}
+		line := "echo Installing " + command + " (first run)... && npm install -g " + pkg +
+			" && for /f \"delims=\" %g in ('npm prefix -g') do set \"PATH=%g;%PATH%\"" +
+			login + " && " + run
 		shell := "cmd"
 		if resolved, err := exec.LookPath("cmd"); err == nil {
 			shell = resolved
 		}
 		return shell, []string{"/c", line}
 	}
-	line := "echo 'Installing " + command + " (first run)...'; npm install -g " + pkg + " && exec " + run
+	login := ""
+	if snip, ok := loginCommands[command]; ok {
+		login = " && " + snip
+	}
+	line := "echo 'Installing " + command + " (first run)...'; npm install -g " + pkg +
+		" && export PATH=\"$(npm prefix -g)/bin:$PATH\"" +
+		login + " && exec " + run
 	shell := "bash"
 	if resolved, err := exec.LookPath("bash"); err == nil {
 		shell = resolved
