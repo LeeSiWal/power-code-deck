@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { TerminalView, type TerminalHandle } from '../components/terminal/TerminalView';
+import { NativeChat } from '../components/native/NativeChat';
 import { MobileToolbar } from '../components/terminal/MobileToolbar';
 import { TerminalKeyBar } from '../components/terminal/TerminalKeyBar';
 import { PromptBar } from '../components/terminal/PromptBar';
@@ -29,6 +30,14 @@ type CenterTab = 'terminal' | 'editor';
 // (UnifiedInput), so the separate Prompt Bar is hidden. `?classicInput` is the
 // escape hatch that brings the Prompt Bar back as a fallback.
 const UNIFIED_INPUT = typeof window === 'undefined' || !window.location.search.includes('classicInput');
+
+/**
+ * `?native` renders the agent as a chat driven by Claude's stream-json events
+ * instead of a terminal. Opt-in on purpose: the terminal path stays the default
+ * until the native one has earned it, and having both lets you compare them on the
+ * same agent by just changing the URL.
+ */
+const NATIVE_UI = typeof window !== 'undefined' && window.location.search.includes('native');
 
 export function TerminalPage() {
   const { id } = useParams<{ id: string }>();
@@ -322,13 +331,17 @@ export function TerminalPage() {
         {/* Content — no absolute positioning, flex fills remaining space */}
         {activeTab === 'terminal' && (
           <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
-            <TerminalView
-              key={agentId}
-              ref={terminalApiRef}
-              agentId={agentId}
-              onFocusTerminal={focusTerminal}
-              onHangulDirect={handleHangulDirectInput}
-            />
+            {NATIVE_UI ? (
+              <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} />
+            ) : (
+              <TerminalView
+                key={agentId}
+                ref={terminalApiRef}
+                agentId={agentId}
+                onFocusTerminal={focusTerminal}
+                onHangulDirect={handleHangulDirectInput}
+              />
+            )}
           </div>
         )}
         {selectedFile && fileContent !== null && activeTab === 'editor' && (
