@@ -32,6 +32,7 @@ func (s *NotificationService) Create(agentID, reason, message string) (*Notifica
 		return nil, err
 	}
 	id, _ := result.LastInsertId()
+	insertAgentLog(s.db, agentID, "🔔 "+reason+": "+message)
 	return &Notification{
 		ID:        int(id),
 		AgentID:   agentID,

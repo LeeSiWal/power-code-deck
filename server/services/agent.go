@@ -88,11 +88,13 @@ func (s *AgentService) List() ([]Agent, error) {
 			if a.Status != "running" {
 				a.Status = "running"
 				s.db.Exec("UPDATE agents SET status = 'running', updated_at = datetime('now') WHERE id = ?", a.ID)
+				insertAgentLog(s.db, a.ID, "실행 시작됨")
 			}
 		} else {
 			if a.Status == "running" {
 				a.Status = "stopped"
 				s.db.Exec("UPDATE agents SET status = 'stopped', updated_at = datetime('now') WHERE id = ?", a.ID)
+				insertAgentLog(s.db, a.ID, "세션 종료됨")
 			}
 		}
 	}
@@ -220,6 +222,7 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 		return nil, err
 	}
 
+	insertAgentLog(s.db, agent.ID, "세션 생성됨 · "+agent.Name+" ("+agent.Command+")")
 	s.startActivity(agent)
 	return agent, nil
 }
@@ -260,6 +263,7 @@ func (s *AgentService) Restart(id string) (*Agent, error) {
 
 	s.db.Exec("UPDATE agents SET status = 'running', updated_at = datetime('now') WHERE id = ?", id)
 	agent.Status = "running"
+	insertAgentLog(s.db, id, "재시작됨")
 	s.startActivity(agent)
 	return agent, nil
 }

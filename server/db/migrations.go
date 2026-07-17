@@ -42,6 +42,19 @@ const ftsMigration = `
 CREATE VIRTUAL TABLE IF NOT EXISTS logs_fts USING fts5(data, content='logs', content_rowid='id');
 `
 
+// logs_fts is an external-content FTS5 index, so it only stays in sync with the
+// logs table through triggers. Without these the FTS MATCH search returns nothing
+// even when rows exist. logs are append-only; the delete trigger keeps search
+// consistent when an agent (and its logs, via ON DELETE CASCADE) is removed.
+const logsFtsTriggerMigration = `
+CREATE TRIGGER IF NOT EXISTS logs_ai AFTER INSERT ON logs BEGIN
+  INSERT INTO logs_fts(rowid, data) VALUES (new.id, new.data);
+END;
+CREATE TRIGGER IF NOT EXISTS logs_ad AFTER DELETE ON logs BEGIN
+  INSERT INTO logs_fts(logs_fts, rowid, data) VALUES('delete', old.id, old.data);
+END;
+`
+
 const colorMigration = `
 ALTER TABLE agents ADD COLUMN color_hue INTEGER DEFAULT 220;
 ALTER TABLE agents ADD COLUMN color_name TEXT DEFAULT 'blue';
@@ -83,6 +96,9 @@ func Migrate(db *sql.DB) error {
 	}
 	// FTS5 creation may fail on some builds, non-fatal
 	db.Exec(ftsMigration)
+	// Keep the FTS index in sync with the logs table (no-op / non-fatal if FTS
+	// isn't available on this build).
+	db.Exec(logsFtsTriggerMigration)
 
 	// Color columns — may already exist, non-fatal
 	for _, stmt := range []string{
