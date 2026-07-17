@@ -42,6 +42,7 @@ type internalPtySession struct {
 	cmd       *pty.Cmd
 	buffer    *RingBuffer
 	modes     *terminalModes
+	queries   *ptyQueryResponder
 	viewers   map[string]struct{}
 	status    string
 	closeOnce sync.Once
@@ -127,6 +128,7 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 		cmd:     cmd,
 		buffer:  NewRingBuffer(e.scrollbackBytes),
 		modes:   newTerminalModes(),
+		queries: &ptyQueryResponder{},
 		viewers: make(map[string]struct{}),
 		status:  SessionRunning,
 	}
@@ -178,6 +180,12 @@ func (e *InternalPtySessionEngine) readPump(s *internalPtySession) {
 		copy(data, b)
 		s.buffer.Write(data)
 		s.modes.scan(data) // remember alt-screen / mouse / cursor-key state for reattach
+		// Answer terminal capability queries (DECRQM 2026/2027) the app blocks on.
+		// Without this a TUI like Antigravity's `agy` clears the screen and waits
+		// forever for a reply that our pass-through PTY never sent — a blank terminal.
+		if reply := s.queries.respond(data); len(reply) > 0 {
+			_, _ = s.pty.Write(reply)
+		}
 		if h := e.outputHandler(); h != nil {
 			h(s.info.ID, data)
 		}
