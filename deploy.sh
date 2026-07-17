@@ -52,6 +52,10 @@ ls -1t "$INSTALL_DIR"/pcd.bak.* 2>/dev/null | tail -n +6 | xargs -r rm -f
 
 echo "[6/6] trigger redeploy"
 TRIGGER="$INSTALL_DIR/.redeploy"
+if [ "${PCD_NO_TRIGGER:-0}" = "1" ]; then
+  echo "  (trigger skipped — PCD_NO_TRIGGER; binary staged, run: date +%s%N > $TRIGGER)"
+  exit 0
+fi
 if systemctl is-enabled pcd-redeploy.path >/dev/null 2>&1; then
   # Write (not just touch) so systemd's PathModified fires reliably. The out-of-cgroup
   # pcd-redeploy.service does the privileged `systemctl restart pcd` — no sudo here.
