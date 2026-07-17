@@ -81,6 +81,13 @@ func main() {
 	hub := ws.NewHub(sessionEngine, watcherSvc, agentSvc, gitSvc, portScanner, notifSvc, cfg.AllowedOrigins())
 	go hub.Run()
 
+	// Native track: Claude driven as a structured stream (no PTY). The base URL is
+	// where the permission bridge calls back — always loopback, never cfg.BindHost:
+	// the bridge is our own child process on this machine, and the endpoint should
+	// not be reachable from the LAN even when the deck itself is.
+	nativeSvc := services.NewNativeService("http://127.0.0.1:" + cfg.Port)
+	hub.SetNativeService(nativeSvc)
+
 	// Session output → broadcast to every viewer of that session.
 	sessionEngine.SetOutputHandler(func(sessionID string, data []byte) {
 		hub.BroadcastToAgent(sessionID, ws.EventTerminalOutput, ws.TerminalOutputPayload{
@@ -117,6 +124,12 @@ func main() {
 			version.AppName, version.Version, cfg.AuthEnabled, cfg.AuthMethod, cfg.HandoffEnabled,
 		)
 	}
+	// The permission bridge (`pcd mcp-approve`, spawned by Claude) asks here whether
+	// a tool may run, and this call BLOCKS until a human answers on some device.
+	// Deliberately outside /api and its auth middleware: the caller is our own
+	// child process holding a per-session token, not a browser with a JWT.
+	r.HandleFunc("/internal/native/approve", handlers.NativeApprove(nativeSvc.Broker(), nativeSvc.Tokens())).Methods("POST")
+
 	r.HandleFunc("/api/auth/health", healthHandler).Methods("GET")
 	r.HandleFunc("/api/health", healthHandler).Methods("GET")
 

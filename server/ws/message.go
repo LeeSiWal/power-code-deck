@@ -19,6 +19,14 @@ const (
 	EventFileWatch           = "file:watch"
 	EventFileUnwatch         = "file:unwatch"
 	EventPing                = "ping"
+
+	// Native track — a Claude session driven as a structured stream instead of a
+	// terminal. There is no attach/resize/ack here: without a screen there is
+	// nothing to size, and nothing to meter for backpressure.
+	EventNativeOpen   = "native:open"   // start (or adopt) a session and replay its history
+	EventNativeInput  = "native:input"  // a user turn
+	EventNativeDecide = "native:decide" // answer a pending approval
+	EventNativeStop   = "native:stop"
 )
 
 // Server -> Client events
@@ -35,6 +43,14 @@ const (
 	// Sent to a viewer when another device attaches to the same session — only one
 	// device views a session at a time, so the PTY isn't resized by two viewers.
 	EventTerminalEvicted = "terminal:evicted"
+
+	// Native track. Unlike the terminal, these go to EVERY device watching the
+	// agent: a conversation has no exclusive viewer — two devices can follow the
+	// same run, and either can answer a prompt.
+	EventNativeEvent    = "native:event"    // one stream-json event, verbatim
+	EventNativeApproval = "native:approval" // the agent is blocked, waiting on a human
+	EventNativeHistory  = "native:history"  // events so far, on open
+	EventNativeState    = "native:state"    // running/stopped + pending approvals
 )
 
 // Server -> Client events (meta + notifications)
@@ -137,4 +153,66 @@ type AgentMetaLogPayload struct {
 	Level     string `json:"level"`
 	Message   string `json:"message"`
 	Timestamp string `json:"timestamp"`
+}
+
+// --- Native track payloads ---
+
+// NativeOpenPayload starts or adopts a native session. Cwd/Model are only used
+// when it isn't already running.
+type NativeOpenPayload struct {
+	AgentID string `json:"agentId"`
+	Cwd     string `json:"cwd"`
+	Model   string `json:"model"`
+	Resume  string `json:"resume"` // Claude's own session_id, to continue a past run
+}
+
+type NativeInputPayload struct {
+	AgentID string `json:"agentId"`
+	Text    string `json:"text"`
+}
+
+// NativeDecidePayload answers one approval. Behavior is allow|deny.
+//
+// UpdatedInput carries an edited tool input (approve-with-changes) and Message the
+// reason on deny — Claude reads that reason and adapts, so "not that path, use
+// ./tmp" is a far better answer than a bare no.
+type NativeDecidePayload struct {
+	AgentID      string          `json:"agentId"`
+	ID           string          `json:"id"`
+	Behavior     string          `json:"behavior"`
+	UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
+	Message      string          `json:"message,omitempty"`
+}
+
+type NativeStopPayload struct {
+	AgentID string `json:"agentId"`
+}
+
+// NativeEventPayload wraps one stream-json event for the browser. Event is the
+// CLI's raw JSON: the client renders from the same bytes the CLI produced, so a
+// field we haven't taught the server about still reaches the UI.
+type NativeEventPayload struct {
+	AgentID string          `json:"agentId"`
+	Event   json.RawMessage `json:"event"`
+}
+
+type NativeHistoryPayload struct {
+	AgentID string            `json:"agentId"`
+	Events  []json.RawMessage `json:"events"`
+	Running bool              `json:"running"`
+}
+
+// NativeApprovalPayload is one pending "may I?".
+type NativeApprovalPayload struct {
+	AgentID  string          `json:"agentId"`
+	ID       string          `json:"id"`
+	ToolName string          `json:"toolName"`
+	Input    json.RawMessage `json:"input"`
+	AskedAt  string          `json:"askedAt"`
+}
+
+type NativeStatePayload struct {
+	AgentID string                  `json:"agentId"`
+	Running bool                    `json:"running"`
+	Pending []NativeApprovalPayload `json:"pending"`
 }

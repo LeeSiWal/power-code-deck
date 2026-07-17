@@ -60,6 +60,7 @@ type Hub struct {
 	gitSvc         *services.GitService
 	portScanner    *services.PortScanner
 	notifSvc       *services.NotificationService
+	native         *services.NativeService
 	allowedOrigins map[string]bool
 	upgrader       websocket.Upgrader
 }
@@ -183,6 +184,31 @@ func (h *Hub) mayWrite(c *Client, agentID string) bool {
 	return h.engine.HasViewer(agentID, c.viewerID)
 }
 
+// SetNativeService wires the native (non-terminal) track and starts fanning its
+// events out to the devices.
+//
+// Note the difference from the terminal: native events go to EVERY client
+// watching the agent. A terminal has one exclusive viewer because a PTY has one
+// size; a conversation has no such constraint — a phone and an iPad can follow the
+// same run, and either can answer a prompt.
+func (h *Hub) SetNativeService(n *services.NativeService) {
+	h.native = n
+	n.SetHandlers(
+		func(agentID string, ev *services.StreamEvent) {
+			h.BroadcastToAgent(agentID, EventNativeEvent, NativeEventPayload{AgentID: agentID, Event: ev.Raw})
+		},
+		func(req services.PermissionRequest) {
+			h.BroadcastToAgent(req.SessionID, EventNativeApproval, NativeApprovalPayload{
+				AgentID:  req.SessionID,
+				ID:       req.ID,
+				ToolName: req.ToolName,
+				Input:    req.Input,
+				AskedAt:  req.AskedAt.Format(time.RFC3339),
+			})
+		},
+	)
+}
+
 func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 	switch msg.Event {
 	case EventTerminalAttach:
@@ -254,6 +280,50 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 			return
 		}
 		h.engine.Write(payload.AgentID, []byte(buildPasteData(payload.Text, payload.Mode, false)))
+
+	case EventNativeOpen:
+		var payload NativeOpenPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
+			return
+		}
+		// Opening is what makes this client a watcher, so it must come before the
+		// history replay — otherwise events racing the reply would be lost.
+		c.watchingAgent = payload.AgentID
+		if !h.native.Running(payload.AgentID) {
+			if err := h.native.Start(payload.AgentID, payload.Cwd, payload.Model, payload.Resume); err != nil {
+				c.sendEvent(EventNativeState, NativeStatePayload{AgentID: payload.AgentID, Running: false})
+				return
+			}
+		}
+		h.sendNativeHistory(c, payload.AgentID)
+
+	case EventNativeInput:
+		var payload NativeInputPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
+			return
+		}
+		_ = h.native.Send(payload.AgentID, payload.Text)
+
+	case EventNativeDecide:
+		var payload NativeDecidePayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
+			return
+		}
+		if payload.Behavior != "allow" && payload.Behavior != "deny" {
+			return // never guess a decision the user didn't make
+		}
+		h.native.Decide(payload.ID, services.PermissionDecision{
+			Behavior:     payload.Behavior,
+			UpdatedInput: payload.UpdatedInput,
+			Message:      payload.Message,
+		})
+
+	case EventNativeStop:
+		var payload NativeStopPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
+			return
+		}
+		h.native.Stop(payload.AgentID)
 
 	case EventFileWatch:
 		var payload FileWatchPayload
@@ -389,5 +459,41 @@ func (h *Hub) BroadcastAll(event string, payload interface{}) {
 		default:
 		}
 		return true
+	})
+}
+
+// sendNativeHistory replays the conversation to one client: the events so far,
+// plus anything the agent is currently blocked on.
+//
+// This is the native track's whole answer to terminal replay — no serializer, no
+// ring buffer, no DEC-mode reconstruction. The events ARE the state, so "replay"
+// is just sending them again.
+//
+// Pending approvals matter as much as the history: a device that connects while
+// the agent waits on a human must show the prompt, or the user sees a frozen agent
+// with no way to unblock it.
+func (h *Hub) sendNativeHistory(c *Client, agentID string) {
+	if h.native == nil {
+		return
+	}
+	evs := h.native.History(agentID)
+	raw := make([]json.RawMessage, 0, len(evs))
+	for _, ev := range evs {
+		raw = append(raw, ev.Raw)
+	}
+	c.sendEvent(EventNativeHistory, NativeHistoryPayload{
+		AgentID: agentID, Events: raw, Running: h.native.Running(agentID),
+	})
+
+	pending := h.native.Pending(agentID)
+	out := make([]NativeApprovalPayload, 0, len(pending))
+	for _, p := range pending {
+		out = append(out, NativeApprovalPayload{
+			AgentID: agentID, ID: p.ID, ToolName: p.ToolName,
+			Input: p.Input, AskedAt: p.AskedAt.Format(time.RFC3339),
+		})
+	}
+	c.sendEvent(EventNativeState, NativeStatePayload{
+		AgentID: agentID, Running: h.native.Running(agentID), Pending: out,
 	})
 }
