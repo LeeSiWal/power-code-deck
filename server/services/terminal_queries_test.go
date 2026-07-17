@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-// A single chunk carrying agy's startup DECRQM queries gets both answered, in a
+// A single chunk carrying both startup DECRQM queries gets both answered, in a
 // form the app accepts (2026 recognized/reset, 2027 not recognized). The Kitty
 // keyboard query (ESC[?u) in the same burst is deliberately left unanswered.
 func TestPtyQueryResponderStartupBurst(t *testing.T) {
 	var r ptyQueryResponder
-	// The exact prefix agy emits on launch (see session_engine_internal notes).
+	// The exact prefix a 2026/2027-probing TUI emits on launch.
 	burst := []byte("\x1b[?2026$p\x1b[?2027$p\x1b[>4m\x1b[=0;1u\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[?u\x1b[H\x1b[2J")
 	got := r.respond(burst)
 	want := []byte("\x1b[?2026;2$y\x1b[?2027;0$y")

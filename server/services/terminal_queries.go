@@ -11,15 +11,16 @@ import (
 // and such an app hung with a blank (cleared) alt-screen: the "터미널에 표시되지
 // 않는" bug.
 //
-// Antigravity's `agy` is the motivating case. On launch it enters the alt-screen,
-// clears it, and emits DECRQM requests for synchronized output (mode 2026) and
-// grapheme clustering (mode 2027) — then renders NOTHING until both are answered.
-// Claude Code / Codex render immediately and treat such replies as optional, so
-// they were never affected; only apps that gate their first paint on the reply
-// (as a real terminal always sends one) were stuck.
+// Antigravity's `agy` was the motivating case (it entered the alt-screen, cleared
+// it, queried modes 2026/2027, and rendered NOTHING until both were answered).
+// That preset is gone, but the behavior stays: this is what a real terminal does,
+// and xterm.js answers DECRQM the same way (2026 known, everything else
+// "not recognized"). Claude Code / Codex render immediately and treat the reply as
+// optional — only apps that gate their first paint on it were ever stuck, and the
+// next such app shouldn't have to be discovered the hard way.
 //
-// Our client's xterm parser does NOT reply to DECRQM (if it did, `agy` would have
-// unblocked without us), so rather than hard-code one mode per newly-broken app we
+// Our client's xterm parser only replies while a viewer is attached (the reply
+// path runs in the browser), so rather than hard-code one mode per newly-broken app we
 // answer ANY private DECRQM query `ESC[?<n>$p` generically — the structural end of
 // the "each new TUI blocks on a different mode" class. Known modes report their
 // specific value; every other mode reports "not recognized" (0), the honest answer

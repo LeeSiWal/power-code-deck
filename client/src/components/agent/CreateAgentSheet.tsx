@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { IconClaude, IconAntigravity, IconCodex, IconCustom } from '../icons';
+import { IconClaude, IconCodex, IconCustom } from '../icons';
 
 const PRESETS = [
   { id: 'claude-code', name: 'Claude Code', Icon: IconClaude },
-  { id: 'antigravity', name: 'Antigravity', Icon: IconAntigravity },
   { id: 'codex-cli', name: 'Codex CLI', Icon: IconCodex },
   { id: 'custom', name: 'Custom', Icon: IconCustom },
 ];

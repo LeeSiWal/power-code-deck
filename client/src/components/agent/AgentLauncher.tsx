@@ -1,9 +1,8 @@
 import { useState, useCallback } from 'react';
-import { IconClaude, IconAntigravity, IconCodex, IconCustom, IconRocket } from '../icons';
+import { IconClaude, IconCodex, IconCustom, IconRocket } from '../icons';
 
 const PRESETS = [
   { id: 'claude-code', name: 'Claude Code', Icon: IconClaude, command: 'claude', args: [], color: '#D97706' },
-  { id: 'antigravity', name: 'Antigravity', Icon: IconAntigravity, command: 'agy', args: [], color: '#7C3AED' },
   { id: 'codex-cli', name: 'Codex CLI', Icon: IconCodex, command: 'codex', args: [], color: '#16A34A' },
   { id: 'custom', name: 'Custom', Icon: IconCustom, command: '', args: [], color: '#9333EA' },
 ];

@@ -23,7 +23,7 @@ Browser / Mobile / iPad
   InternalPtySessionEngine    Persistent process · viewer attach/detach · ring buffer
         │
         ▼
-  PTY  →  Claude / Antigravity / Codex / Shell
+  PTY  →  Claude / Codex / Shell
 ```
 
 Handlers, the WebSocket hub, and the agent service call **only** `SessionEngine`.

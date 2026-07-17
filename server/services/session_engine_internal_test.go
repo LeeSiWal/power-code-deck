@@ -180,7 +180,7 @@ func TestBootstrapInstallCommand(t *testing.T) {
 }
 
 // Codex is carried from install straight into its login flow; a plain CLI (or
-// one whose first run handles auth, like agy) is not.
+// one whose first run handles auth, like claude) is not.
 func TestBootstrapInstallCommandLogin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("login snippet asserted on unix")
@@ -196,28 +196,6 @@ func TestBootstrapInstallCommandLogin(t *testing.T) {
 	_, claudeArgs := bootstrapInstallCommand("claude", nil, "@anthropic-ai/claude-code")
 	if strings.Contains(claudeArgs[1], "login") {
 		t.Fatalf("claude bootstrap must not chain a login command, got %q", claudeArgs[1])
-	}
-}
-
-// A non-npm CLI (Antigravity's agy) installs via its curl|bash script, puts
-// ~/.local/bin on PATH, and execs — its first run handles OAuth, so no login chain.
-func TestBootstrapScriptInstallCommand(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("script installers are unix curl|bash")
-	}
-	_, args := bootstrapScriptInstallCommand("agy", nil, "curl -fsSL https://antigravity.google/cli/install.sh | bash")
-	line := args[1]
-	if !strings.Contains(line, "antigravity.google/cli/install.sh") {
-		t.Fatalf("missing installer in %q", line)
-	}
-	if !strings.Contains(line, `export PATH="$HOME/.local/bin:$PATH"`) {
-		t.Fatalf("missing ~/.local/bin PATH prepend in %q", line)
-	}
-	if !strings.Contains(line, "exec agy") {
-		t.Fatalf("must exec agy after install, got %q", line)
-	}
-	if strings.Contains(line, "login") {
-		t.Fatalf("agy handles OAuth on first run; must not chain a login command, got %q", line)
 	}
 }
 

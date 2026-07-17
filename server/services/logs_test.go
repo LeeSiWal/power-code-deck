@@ -30,7 +30,7 @@ func TestInsertAgentLogAndSearch(t *testing.T) {
 		t.Fatalf("seed agent: %v", err)
 	}
 
-	insertAgentLog(database, "a1", "세션 생성됨 · Test (agy)")
+	insertAgentLog(database, "a1", "세션 생성됨 · Test (claude)")
 	insertAgentLog(database, "a1", "세션 종료됨")
 
 	// Default Logs view (no query) — plain table select.

@@ -21,7 +21,6 @@ export function DashboardPage() {
     try {
       const PRESET_COMMANDS: Record<string, { command: string; args: string[] }> = {
         'claude-code': { command: 'claude', args: [] },
-        'antigravity': { command: 'agy', args: [] },
         'codex-cli': { command: 'codex', args: [] },
       };
       const presetConfig = PRESET_COMMANDS[data.preset];
