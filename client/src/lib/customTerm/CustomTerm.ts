@@ -1,4 +1,7 @@
 import { Terminal } from '@xterm/headless';
+// The addon's own typings import from '@xterm/xterm' (the DOM build we don't
+// have), so pull the runtime entry directly and type it structurally below.
+import { Unicode11Addon } from '@xterm/addon-unicode11/lib/addon-unicode11.js';
 import { InputHandler } from '@wterm/dom';
 import { buildRow } from './xtermRender';
 
@@ -93,6 +96,23 @@ export class CustomTerm {
       scrollback: opts.scrollback ?? 5000,
       allowProposedApi: true,
     });
+    // Unicode 11 widths. xterm ships ONLY the Unicode 6 provider and makes the
+    // first registered one active, so the default is a 2010-era width table —
+    // wrong for a terminal whose whole point is 한글/CJK. Loading the addon only
+    // *registers* the provider; activeVersion must be set explicitly (the classic
+    // integration bug). VS Code defaults to '11' for the same reason.
+    //
+    // Width must agree end-to-end: the app computes the cursor by summing its own
+    // wcwidth and never tells us. Disagree by one cell and every later
+    // cursor-relative write lands wrong — backspace eats too much, status bars
+    // drift, and worst, the app wraps where we didn't so isWrapped becomes a lie
+    // and the next resize reflows on top of it.
+    try {
+      this.term.loadAddon(new Unicode11Addon() as unknown as Parameters<Terminal['loadAddon']>[0]);
+      this.term.unicode.activeVersion = '11';
+    } catch (e) {
+      this.lastRenderError = 'unicode11:' + e; // stay on v6 rather than fail to start
+    }
     this.modeShim = {
       cursorKeysApp: () => this.term.modes.applicationCursorKeysMode,
       bracketedPaste: () => this.term.modes.bracketedPasteMode,
