@@ -102,10 +102,11 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 	command, cmdArgs := resolveLaunchCommand(req.Command, req.Args)
 	cmd := p.Command(command, cmdArgs...)
 	cmd.Dir = req.Cwd
+	locale := utf8Locale()
 	cmd.Env = withAgentPath(append(os.Environ(),
 		"TERM=xterm-256color",
-		"LANG=ko_KR.UTF-8",
-		"LC_ALL=ko_KR.UTF-8",
+		"LANG="+locale,
+		"LC_ALL="+locale,
 	))
 	if err := cmd.Start(); err != nil {
 		p.Close()
@@ -464,6 +465,51 @@ func npmGlobalBin() string {
 		}
 	})
 	return npmGlobalBinDir
+}
+
+// localeCandidates are the UTF-8 locales we'll hand a session, best first. A
+// Korean locale is preferred (app messages in 한국어), but ANY UTF-8 locale beats
+// a nonexistent one: glibc falls back to the C/POSIX locale when LC_ALL names a
+// locale that isn't generated, and C/POSIX is ASCII (charmap ANSI_X3.4-1968) —
+// so wcwidth-based apps (vim, less, htop) then measure 한글 as the wrong width,
+// which is exactly the CJK breakage our renderer works so hard to avoid.
+var localeCandidates = []string{"ko_KR.UTF-8", "ko_KR.utf8", "C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8"}
+
+var (
+	utf8LocaleOnce sync.Once
+	utf8LocaleName string
+)
+
+// utf8Locale returns a UTF-8 locale that actually EXISTS on this host, probed
+// once via `locale -a`. We used to hard-code ko_KR.UTF-8, but a host without that
+// locale generated (Ubuntu ships only C.utf8/en_US.utf8 by default) gave every
+// session an ASCII charmap plus a `warning: setlocale` banner on each shell start.
+// Windows has no `locale` binary and ignores these vars, so it keeps the old value.
+func utf8Locale() string {
+	utf8LocaleOnce.Do(func() {
+		utf8LocaleName = localeCandidates[0]
+		if runtime.GOOS == "windows" {
+			return
+		}
+		out, err := exec.Command("locale", "-a").Output()
+		if err != nil {
+			return
+		}
+		have := make(map[string]struct{})
+		for _, l := range strings.Split(string(out), "\n") {
+			have[strings.ToLower(strings.TrimSpace(l))] = struct{}{}
+		}
+		for _, cand := range localeCandidates {
+			if _, ok := have[strings.ToLower(cand)]; ok {
+				utf8LocaleName = cand
+				return
+			}
+		}
+		// Nothing matched: C.UTF-8 is the most likely to exist on a modern glibc
+		// and is at least honest about being UTF-8.
+		utf8LocaleName = "C.UTF-8"
+	})
+	return utf8LocaleName
 }
 
 // localBinDir is $HOME/.local/bin — where non-npm agent installers (e.g. the
