@@ -3,8 +3,12 @@ import type { CustomTerm, CursorRect } from '../../lib/customTerm/CustomTerm';
 import { agentDeckWS } from '../../lib/ws';
 
 /** Imperative handle so the terminal key bar's Enter can submit this draft
- *  instead of sending a raw CR that ignores the buffered text. */
-export interface UnifiedInputHandle { submit: () => void }
+ *  instead of sending a raw CR that ignores the buffered text, and so the mobile
+ *  toolbar's 붙여넣기 can drop clipboard text into the draft at the caret. */
+export interface UnifiedInputHandle {
+  submit: () => void;
+  insert: (text: string) => void;
+}
 
 /**
  * UnifiedInput — the experiment behind `?unifiedInput`. It grafts the Prompt Bar's
@@ -111,7 +115,24 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
     }
   }, [agentId, sendInput, term]);
 
-  useImperativeHandle(ref, () => ({ submit }), [submit]);
+  // Insert text (a clipboard paste from the mobile toolbar) into the draft at the
+  // caret, then restore focus + caret. Goes through the same draft the user submits.
+  const insert = useCallback((text: string) => {
+    if (!text) return;
+    const ta = taRef.current;
+    const base = valueRef.current;
+    const start = ta ? ta.selectionStart : base.length;
+    const end = ta ? ta.selectionEnd : base.length;
+    const next = base.slice(0, start) + text + base.slice(end);
+    setValue(next);
+    const caret = start + text.length;
+    requestAnimationFrame(() => {
+      const t = taRef.current;
+      if (t) { t.focus({ preventScroll: true }); t.setSelectionRange(caret, caret); }
+    });
+  }, []);
+
+  useImperativeHandle(ref, () => ({ submit, insert }), [submit, insert]);
 
   // Mobile soft keyboards don't emit a keydown Enter — the return key arrives as a
   // beforeinput 'insertLineBreak'. Intercept it to submit (there's no Shift on

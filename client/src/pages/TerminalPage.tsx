@@ -19,6 +19,7 @@ import { useFileExplorer } from '../hooks/useFileExplorer';
 import { useAgentActivity } from '../hooks/useAgentActivity';
 import { IconBack, IconFiles, IconClose, IconTerminal, AGENT_ICON_MAP } from '../components/icons';
 import { api } from '../lib/api';
+import { writeClipboard, readClipboard } from '../lib/clipboard';
 import { generatePalette } from '../lib/paletteGenerator';
 import { useAppStore } from '../stores/appStore';
 
@@ -74,6 +75,23 @@ export function TerminalPage() {
   // hardcoded ESC [ x bytes don't drive arrow menus in apps like Claude Code.
   const sendTerminalKey = useCallback((data: string) => {
     terminalApiRef.current?.sendKey(data);
+  }, []);
+
+  // Copy the current terminal selection to the clipboard (mobile toolbar 복사).
+  const handleCopy = useCallback(async () => {
+    const text = window.getSelection()?.toString() || '';
+    if (!text) return false;
+    return writeClipboard(text);
+  }, []);
+
+  // Read the clipboard and paste into the input (mobile toolbar 붙여넣기). The read
+  // is kicked off synchronously inside the tap so the clipboard permission gesture
+  // isn't lost; the pasted text lands in the unified-input draft.
+  const handlePaste = useCallback(async () => {
+    const text = await readClipboard();
+    if (!text) return false;
+    terminalApiRef.current?.paste(text);
+    return true;
   }, []);
 
   // Expand + focus the Prompt Bar (Prompt button / shortcut).
@@ -344,7 +362,7 @@ export function TerminalPage() {
                 onFocusChange={handlePromptFocusChange}
               />
             )}
-            <MobileToolbar agentId={agentId} onOpenPrompt={openPrompt} sendKey={sendTerminalKey} />
+            <MobileToolbar agentId={agentId} sendKey={sendTerminalKey} onCopy={handleCopy} onPaste={handlePaste} />
           </>
         )}
 

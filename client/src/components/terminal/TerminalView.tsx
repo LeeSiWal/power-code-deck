@@ -10,6 +10,7 @@ import '../../styles/customTerm.css';
 import '@fontsource/nanum-gothic-coding/400.css';
 import '@fontsource/nanum-gothic-coding/700.css';
 import { agentDeckWS } from '../../lib/ws';
+import { writeClipboard } from '../../lib/clipboard';
 import { useDevice } from '../../hooks/useDevice';
 
 export interface TerminalHandle {
@@ -22,6 +23,12 @@ export interface TerminalHandle {
    * arrow menus, where the normal-mode CSI form does nothing.
    */
   sendKey: (data: string) => void;
+  /**
+   * Paste text into the input. In unified-input mode it lands in the draft (so the
+   * user can review/edit before Enter); otherwise it's sent to the PTY as a
+   * bracketed paste. Used by the mobile toolbar's 붙여넣기 button.
+   */
+  paste: (text: string) => void;
 }
 
 /** Normal cursor sequences (ESC [ x) → application-mode SS3 (ESC O x). */
@@ -44,53 +51,6 @@ const UNIFIED_INPUT = !CLASSIC_INPUT;
 /** Bound the freeze-while-selecting buffer so a long-held selection can't grow it
  * without limit; past this we give up the freeze and let output through. */
 const MAX_FROZEN_CHARS = 1_000_000;
-
-/**
- * Synchronous clipboard copy via a hidden textarea + execCommand. Works within a
- * user gesture even in non-secure (http) contexts — e.g. a LAN URL like
- * http://192.168.x.x:5553 — where navigator.clipboard is unavailable or rejects.
- * Must run synchronously inside the gesture (no preceding await).
- */
-function legacyCopy(text: string): boolean {
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', ''); // avoid popping the mobile keyboard
-    ta.style.position = 'fixed';
-    ta.style.top = '0';
-    ta.style.left = '0';
-    ta.style.width = '1px';
-    ta.style.height = '1px';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, text.length); // iOS Safari needs an explicit range
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Copy text to the clipboard. Secure context (https / localhost) → async Clipboard
- * API. Non-secure (LAN http) → straight to the synchronous execCommand path
- * (awaiting the rejecting promise first would spend the user gesture).
- */
-async function writeClipboard(text: string): Promise<boolean> {
-  if (!text) return false;
-  if (window.isSecureContext && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      /* fall through */
-    }
-  }
-  return legacyCopy(text);
-}
 
 interface TerminalViewProps {
   agentId: string;
@@ -192,6 +152,17 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       }
       const app = wtRef.current?.applicationCursorKeys ?? false;
       agentDeckWS.send('terminal:input', { agentId, data: app ? (APP_CURSOR_MAP[data] ?? data) : data });
+    },
+    paste: (text: string) => {
+      if (!text) return;
+      // Unified input owns the visible input, so drop the paste into the draft where
+      // the user can review it before Enter. Classic mode has no draft — send it as a
+      // bracketed paste straight to the PTY (no trailing Enter).
+      if (UNIFIED_INPUT && unifiedInputRef.current) {
+        unifiedInputRef.current.insert(text);
+      } else {
+        agentDeckWS.send('terminal:pasteOnly', { agentId, text, mode: 'bracketed-paste' });
+      }
     },
   }), [agentId]);
 

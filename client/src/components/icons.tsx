@@ -188,4 +188,19 @@ export const SUB_AGENT_ICON_MAP: Record<string, React.ComponentType<IconProps>> 
   think: IconThink, unknown: IconGear,
 };
 
+// Copy: two overlapping sheets. Paste: a clipboard. Default to currentColor so
+// they inherit the button's text color (accent for paste, normal for copy).
+export function IconCopy({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <rect x="6" y="6" width="8" height="8" rx="1.3" stroke={color} strokeWidth="1.2" fill="none" />
+    <path d="M3.8 10H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v0.8" stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" />
+  </I>;
+}
+export function IconPaste({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M10.5 3H12a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h1.5" stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    <rect x="5.5" y="2" width="5" height="2.6" rx="0.8" stroke={color} strokeWidth="1.2" fill="none" />
+  </I>;
+}
+
 export type { IconProps };
