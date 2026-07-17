@@ -371,16 +371,24 @@ func (e *InternalPtySessionEngine) List() ([]SessionInfo, error) {
 // a missing agent CLI can be auto-installed on first launch.
 var npmCLIPackages = map[string]string{
 	"claude": "@anthropic-ai/claude-code",
-	"gemini": "@google/gemini-cli",
 	"codex":  "@openai/codex",
+}
+
+// scriptInstallCommands maps a launcher command to a shell install command, for
+// agent CLIs that aren't distributed via npm. Antigravity's `agy` uses Google's
+// official curl|bash installer (which drops the binary in ~/.local/bin). Like the
+// npm path, this runs inside the session on first launch so the user sees the
+// install progress and is carried straight into the CLI. Unix-only.
+var scriptInstallCommands = map[string]string{
+	"agy": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
 }
 
 // loginCommands maps an agent CLI to the shell snippet that ensures it's signed
 // in, chained right after a fresh install so the user is taken straight through
 // auth. An entry is only needed for CLIs that expose an explicit, separate login
 // command: codex has `codex login` (and `codex login status` to skip it when
-// already authenticated). Gemini has no standalone login command — it shows its
-// "Login with Google" picker the first time the CLI itself starts — so simply
+// already authenticated). Antigravity's `agy` has no standalone login command —
+// it offers Google OAuth sign-in the first time the CLI itself starts — so simply
 // exec-ing it (below) already flows into sign-in and it needs no entry here.
 var loginCommands = map[string]string{
 	"codex": "{ codex login status >/dev/null 2>&1 || codex login; }",
@@ -421,37 +429,63 @@ func npmGlobalBin() string {
 	return npmGlobalBinDir
 }
 
-// withAgentPath prepends the npm global bin dir to PATH in a copy of env, so the
-// spawned CLI (and anything it launches) resolves globally-installed agents even
-// when the server was started without that dir on PATH.
+// localBinDir is $HOME/.local/bin — where non-npm agent installers (e.g. the
+// Antigravity `agy` CLI's curl|bash installer) drop their binary. Like the npm
+// global bin dir, it's usually only added to PATH from ~/.bashrc, which the
+// server (and `bash -l`) never sources.
+func localBinDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".local", "bin")
+}
+
+// agentBinDirs are the directories that hold agent CLIs but are typically missing
+// from the server's own PATH: the npm global bin dir and ~/.local/bin.
+func agentBinDirs() []string {
+	dirs := make([]string, 0, 2)
+	if d := npmGlobalBin(); d != "" {
+		dirs = append(dirs, d)
+	}
+	if d := localBinDir(); d != "" {
+		dirs = append(dirs, d)
+	}
+	return dirs
+}
+
+// withAgentPath prepends the agent bin dirs to PATH in a copy of env, so the
+// spawned CLI (and anything it launches) resolves installed agents even when the
+// server was started without those dirs on PATH.
 func withAgentPath(env []string) []string {
-	dir := npmGlobalBin()
-	if dir == "" {
+	dirs := agentBinDirs()
+	if len(dirs) == 0 {
 		return env
 	}
+	prefix := strings.Join(dirs, string(os.PathListSeparator))
 	out := make([]string, 0, len(env)+1)
 	replaced := false
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "PATH=") && !replaced {
-			out = append(out, "PATH="+dir+string(os.PathListSeparator)+strings.TrimPrefix(kv, "PATH="))
+			out = append(out, "PATH="+prefix+string(os.PathListSeparator)+strings.TrimPrefix(kv, "PATH="))
 			replaced = true
 			continue
 		}
 		out = append(out, kv)
 	}
 	if !replaced {
-		out = append(out, "PATH="+dir)
+		out = append(out, "PATH="+prefix)
 	}
 	return out
 }
 
 // findAgentCommand returns an absolute path to command if it's installed — either
-// on PATH or in the npm global bin dir — or "" if it genuinely isn't.
+// on PATH or in one of the agent bin dirs — or "" if it genuinely isn't.
 func findAgentCommand(command string) string {
 	if p, err := exec.LookPath(command); err == nil {
 		return p
 	}
-	if dir := npmGlobalBin(); dir != "" {
+	for _, dir := range agentBinDirs() {
 		cand := filepath.Join(dir, command)
 		if runtime.GOOS == "windows" {
 			cand += ".cmd"
@@ -477,6 +511,13 @@ func resolveLaunchCommand(command string, args []string) (string, []string) {
 	if pkg, ok := npmCLIPackages[command]; ok {
 		return bootstrapInstallCommand(command, args, pkg)
 	}
+	// Non-npm CLIs (e.g. Antigravity's `agy`) install via a curl|bash script —
+	// Unix-only; on Windows fall through and let it run/fail as-is.
+	if runtime.GOOS != "windows" {
+		if script, ok := scriptInstallCommands[command]; ok {
+			return bootstrapScriptInstallCommand(command, args, script)
+		}
+	}
 	return normalizeCommand(command, args)
 }
 
@@ -498,7 +539,7 @@ func normalizeCommand(command string, args []string) (string, []string) {
 // The PATH step is essential: `npm install -g` drops the binary into
 // `$(npm prefix -g)/bin` (e.g. ~/.npm-global/bin), and that dir is usually only
 // added to PATH from ~/.bashrc — which the `bash -l` login shell here does NOT
-// source — so a bare `exec gemini` right after install would fail "command not
+// source — so a bare `exec claude` right after install would fail "command not
 // found". Prepending the global bin dir guarantees the just-installed CLI runs.
 func bootstrapInstallCommand(command string, args []string, pkg string) (string, []string) {
 	run := strings.TrimSpace(command + " " + strings.Join(args, " "))
@@ -530,9 +571,30 @@ func bootstrapInstallCommand(command string, args []string, pkg string) (string,
 	return shell, []string{"-lc", line}
 }
 
+// bootstrapScriptInstallCommand builds a command that installs a non-npm agent
+// CLI via its official shell installer, puts ~/.local/bin (where these installers
+// drop the binary) on PATH, and then execs it — so the install output streams
+// into the terminal and the user goes install → first-run sign-in → running CLI
+// in one go. Unix-only (the installers are curl|bash).
+func bootstrapScriptInstallCommand(command string, args []string, script string) (string, []string) {
+	run := strings.TrimSpace(command + " " + strings.Join(args, " "))
+	login := ""
+	if snip, ok := loginCommands[command]; ok {
+		login = " && " + snip
+	}
+	line := "echo 'Installing " + command + " (first run)...'; " + script +
+		" && export PATH=\"$HOME/.local/bin:$PATH\"" +
+		login + " && exec " + run
+	shell := "bash"
+	if resolved, err := exec.LookPath("bash"); err == nil {
+		shell = resolved
+	}
+	return shell, []string{"-lc", line}
+}
+
 // windowsShim adapts a command for Windows ConPTY. Windows CreateProcess (used
 // by go-pty's ConPTY) cannot launch batch/script shims like `.cmd`/`.bat`/`.ps1`
-// directly — and npm-installed CLIs (claude, gemini, codex) are `.cmd` shims. So
+// directly — and npm-installed CLIs (claude, codex) are `.cmd` shims. So
 // on Windows, unless the command is already an `.exe`, run it through `cmd.exe /c`
 // (which resolves the shim via PATHEXT). No-op on macOS/Linux.
 func windowsShim(command string, args []string) (string, []string) {

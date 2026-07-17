@@ -180,7 +180,7 @@ func TestBootstrapInstallCommand(t *testing.T) {
 }
 
 // Codex is carried from install straight into its login flow; a plain CLI (or
-// one whose first run handles auth, like gemini) is not.
+// one whose first run handles auth, like agy) is not.
 func TestBootstrapInstallCommandLogin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("login snippet asserted on unix")
@@ -193,18 +193,40 @@ func TestBootstrapInstallCommandLogin(t *testing.T) {
 	if !strings.Contains(codexArgs[1], "codex login status") {
 		t.Fatalf("codex bootstrap should guard on login status, got %q", codexArgs[1])
 	}
-	_, geminiArgs := bootstrapInstallCommand("gemini", nil, "@google/gemini-cli")
-	if strings.Contains(geminiArgs[1], "login") {
-		t.Fatalf("gemini bootstrap must not chain a login command, got %q", geminiArgs[1])
+	_, claudeArgs := bootstrapInstallCommand("claude", nil, "@anthropic-ai/claude-code")
+	if strings.Contains(claudeArgs[1], "login") {
+		t.Fatalf("claude bootstrap must not chain a login command, got %q", claudeArgs[1])
 	}
 }
 
-// withAgentPath prepends the npm global bin dir to PATH without dropping the
-// existing PATH entries.
+// A non-npm CLI (Antigravity's agy) installs via its curl|bash script, puts
+// ~/.local/bin on PATH, and execs — its first run handles OAuth, so no login chain.
+func TestBootstrapScriptInstallCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("script installers are unix curl|bash")
+	}
+	_, args := bootstrapScriptInstallCommand("agy", nil, "curl -fsSL https://antigravity.google/cli/install.sh | bash")
+	line := args[1]
+	if !strings.Contains(line, "antigravity.google/cli/install.sh") {
+		t.Fatalf("missing installer in %q", line)
+	}
+	if !strings.Contains(line, `export PATH="$HOME/.local/bin:$PATH"`) {
+		t.Fatalf("missing ~/.local/bin PATH prepend in %q", line)
+	}
+	if !strings.Contains(line, "exec agy") {
+		t.Fatalf("must exec agy after install, got %q", line)
+	}
+	if strings.Contains(line, "login") {
+		t.Fatalf("agy handles OAuth on first run; must not chain a login command, got %q", line)
+	}
+}
+
+// withAgentPath prepends the agent bin dirs (npm global bin + ~/.local/bin) to
+// PATH without dropping the existing PATH entries.
 func TestWithAgentPath(t *testing.T) {
-	dir := npmGlobalBin()
-	if dir == "" {
-		t.Skip("npm not available; global bin dir unknown")
+	dirs := agentBinDirs()
+	if len(dirs) == 0 {
+		t.Skip("no agent bin dirs resolvable in this environment")
 	}
 	out := withAgentPath([]string{"FOO=bar", "PATH=/usr/bin"})
 	var gotPath string
@@ -213,7 +235,7 @@ func TestWithAgentPath(t *testing.T) {
 			gotPath = strings.TrimPrefix(kv, "PATH=")
 		}
 	}
-	want := dir + string(os.PathListSeparator) + "/usr/bin"
+	want := strings.Join(append(append([]string{}, dirs...), "/usr/bin"), string(os.PathListSeparator))
 	if gotPath != want {
 		t.Fatalf("PATH = %q, want %q", gotPath, want)
 	}

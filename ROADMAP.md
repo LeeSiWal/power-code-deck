@@ -9,7 +9,7 @@ PowerCodeDeck의 다음 주요 기능은 **멀티 에이전트 관제실(Control
 - 여러 에이전트 세션을 한 화면에서 관리
 - 프로젝트별 세션 그룹핑
 - 실행 중 / 종료됨 / 주의 필요 상태 표시
-- Claude / Gemini / Codex / Shell 세션 빠른 진입
+- Claude / Antigravity / Codex / Shell 세션 빠른 진입
 - 세션별 최근 출력 요약
 - 세션 종료 / 재시작 / 로그 보기
 - 승인 대기나 장시간 무응답 같은 주의 상태 표시

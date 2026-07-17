@@ -108,8 +108,8 @@ export function IconRocket({ size, color = 'currentColor', className }: IconProp
 export function IconClaude({ size = 16, className }: IconProps) {
   return <I size={size} className={className}><rect x="2" y="2" width="12" height="12" rx="3" fill="#D97706" opacity="0.15" /><path d="M5 6.5C5 5.67 5.67 5 6.5 5h3c.83 0 1.5.67 1.5 1.5S10.33 8 9.5 8h-3C5.67 8 5 7.33 5 6.5z" fill="#D97706" /><circle cx="6.5" cy="10.5" r="1" fill="#D97706" /><circle cx="9.5" cy="10.5" r="1" fill="#D97706" /></I>;
 }
-export function IconGemini({ size = 16, className }: IconProps) {
-  return <I size={size} className={className}><rect x="2" y="2" width="12" height="12" rx="3" fill="#2563EB" opacity="0.15" /><path d="M8 3L5 8l3 5 3-5-3-5z" fill="#2563EB" opacity="0.8" /></I>;
+export function IconAntigravity({ size = 16, className }: IconProps) {
+  return <I size={size} className={className}><rect x="2" y="2" width="12" height="12" rx="3" fill="#7C3AED" opacity="0.15" /><path d="M8 4.3l3.2 3.7H9.3v4H6.7v-4H4.8L8 4.3z" fill="#7C3AED" opacity="0.85" /></I>;
 }
 export function IconCodex({ size = 16, className }: IconProps) {
   return <I size={size} className={className}><rect x="2" y="2" width="12" height="12" rx="3" fill="#16A34A" opacity="0.15" /><circle cx="8" cy="8" r="3.5" stroke="#16A34A" strokeWidth="1.5" fill="none" /><circle cx="8" cy="8" r="1" fill="#16A34A" /></I>;
@@ -180,7 +180,7 @@ export const FILE_ICON_MAP: Record<string, React.ComponentType<IconProps>> = {
 };
 
 export const AGENT_ICON_MAP: Record<string, React.ComponentType<IconProps>> = {
-  'claude-code': IconClaude, 'gemini-cli': IconGemini, 'codex-cli': IconCodex, custom: IconCustom,
+  'claude-code': IconClaude, 'antigravity': IconAntigravity, 'codex-cli': IconCodex, custom: IconCustom,
 };
 
 export const SUB_AGENT_ICON_MAP: Record<string, React.ComponentType<IconProps>> = {

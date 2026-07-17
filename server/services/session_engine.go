@@ -69,7 +69,7 @@ const (
 // (PowerCodeDeck uses the agent id) so the session id == agent id everywhere.
 type CreateSessionRequest struct {
 	ID      string
-	Type    string // shell | claude | gemini | codex | custom
+	Type    string // shell | claude | antigravity | codex | custom
 	Command string
 	Args    []string
 	Cwd     string

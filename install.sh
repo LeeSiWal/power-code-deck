@@ -250,10 +250,10 @@ if command -v claude &>/dev/null; then
 else
     echo "  ○ Claude Code not found (install: npm install -g @anthropic-ai/claude-code)"
 fi
-if command -v gemini &>/dev/null; then
-    echo "  ✓ Gemini CLI found"
+if command -v agy &>/dev/null; then
+    echo "  ✓ Antigravity (agy) found"
 else
-    echo "  ○ Gemini CLI not found"
+    echo "  ○ Antigravity (agy) not found"
 fi
 if command -v codex &>/dev/null; then
     echo "  ✓ Codex CLI found"
