@@ -17,3 +17,6 @@ server/static/
 # OS / logs
 .DS_Store
 *.log
+
+# Newton run state (per-mission artifacts, regenerated)
+.newton/

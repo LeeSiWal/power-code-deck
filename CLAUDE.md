@@ -1,0 +1,6 @@
+# CLAUDE.md
+
+## Newton Memory
+- [2026-07-15] Gemini CLI 프리셋을 Antigravity로 교체함 — 명령어 `agy`, 설치는 npm이 아니라 `curl … antigravity.google/cli/install.sh | bash`(바이너리 `~/.local/bin`), 첫 실행 시 Google OAuth. 서버는 `scriptInstallCommands`(비-npm 부트스트랩) + `~/.local/bin` PATH 처리로 지원 (verified: `cd server && CGO_ENABLED=0 go build ./... && go test ./services/`; `cd client && ./node_modules/.bin/tsc --noEmit`).
+- [2026-07-16] Antigravity(`agy`)가 터미널에 안 뜨던 버그 = **DECRQM 쿼리 미응답**. `agy`는 시작 시 alt-screen 진입·화면 clear 후 `\e[?2026$p`(동기화출력)·`\e[?2027$p`(그래핌클러스터링) 질의를 보내고 응답을 받아야만 UI를 렌더 — Claude/Codex는 즉시 렌더라 무관. 우리 PTY는 패스스루라 응답 안 해서 빈 화면으로 멈춤. 해결: `terminal_queries.go`의 `ptyQueryResponder`가 readPump에서 이 쿼리를 감지해 `\e[?2026;2$y`(지원/reset)·`\e[?2027;0$y`(미인식)로 PTY에 회신(kitty `\e[?u`는 의도적으로 무응답 → 레거시 입력 유지). 창 크기는 서버가 80x24 기본 세팅이라 무관 (verified: `go test ./services/` + `RUN_AGY_E2E=1 go test -run TestAgyRendersThroughEngine` 실제 렌더 확인).
+- [2026-07-16] Logs 탭은 원시 PTY가 아니라 **이벤트/활동 로그**임 — agent 생성/시작/종료/재시작(agent.go)과 알림(notification.go)을 `insertAgentLog`로 logs 테이블에 기록. logs_fts는 외부콘텐츠 FTS5라 sync 트리거(logs_ai/logs_ad) 필요, 검색은 FTS→LIKE 폴백(한국어 부분검색). agent 삭제 시 로그도 CASCADE 삭제 (verified: `cd server && go test ./...` 의 TestInsertAgentLogAndSearch).
