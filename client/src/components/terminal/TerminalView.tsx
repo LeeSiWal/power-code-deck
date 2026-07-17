@@ -603,6 +603,104 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     };
   }, [mouseTracking, agentId, scheduleRepaint]);
 
+  // Drag-select auto-scroll: when a drag-selection reaches the top/bottom edge of a
+  // scrollable (plain-shell) terminal, keep scrolling and glue the selection's focus
+  // to the edge line — so a selection can span MORE than one screenful of scrollback.
+  // Only for the native-scrollback regime: alt-screen apps (mouseTracking on) own
+  // their scroll and keep no scrollback DOM to select across, so this stays off
+  // there. Pointer Events unify mouse-drag, trackpad, and touch-handle drags.
+  useEffect(() => {
+    if (mouseTracking) return;
+    const shell = shellRef.current;
+    const wtermEl = shell?.querySelector('.wterm') as HTMLElement | null;
+    if (!wtermEl) return;
+
+    const EDGE = 44;      // px from an edge that arms auto-scroll
+    const MAX_STEP = 14;  // px/frame at the very edge (scaled down toward the zone's inner rim)
+    let raf = 0;
+    let dir = 0;          // -1 = scroll up, +1 = scroll down, 0 = idle
+    let strength = 0;     // 0..1 depth into the edge zone → scales scroll speed
+    let lastX = 0;        // last pointer x, so the re-extended caret keeps its column
+    let dragging = false;
+
+    const scrollable = () => wtermEl.scrollHeight - wtermEl.clientHeight > 4;
+
+    // Caret (node+offset) under a point — WebKit/Blink expose caretRangeFromPoint,
+    // Firefox caretPositionFromPoint. Used to re-anchor the selection focus at the
+    // edge line each frame as content scrolls under a stationary pointer.
+    const caretAt = (x: number, y: number): { node: Node; offset: number } | null => {
+      const d = document as any;
+      if (d.caretRangeFromPoint) {
+        const r = d.caretRangeFromPoint(x, y);
+        return r ? { node: r.startContainer, offset: r.startOffset } : null;
+      }
+      if (d.caretPositionFromPoint) {
+        const p = d.caretPositionFromPoint(x, y);
+        return p ? { node: p.offsetNode, offset: p.offset } : null;
+      }
+      return null;
+    };
+
+    const tick = () => {
+      raf = 0;
+      const sel = document.getSelection();
+      if (!dir || !sel || sel.isCollapsed || !scrollable()) return;
+      const before = wtermEl.scrollTop;
+      wtermEl.scrollTop = before + dir * Math.max(2, Math.round(MAX_STEP * strength));
+      if (wtermEl.scrollTop === before) return; // hit the top/bottom — nothing more to reveal
+      // Extend the selection focus to the caret at the edge we're scrolling toward,
+      // so the newly revealed line joins the selection without a pointer move.
+      const rect = wtermEl.getBoundingClientRect();
+      const y = dir < 0 ? rect.top + 2 : rect.bottom - 2;
+      const x = Math.min(rect.right - 2, Math.max(rect.left + 2, lastX));
+      const c = caretAt(x, y);
+      if (c) { try { sel.extend(c.node, c.offset); } catch { /* cross-node extend can throw; ignore */ } }
+      raf = requestAnimationFrame(tick);
+    };
+
+    const arm = (clientX: number, clientY: number) => {
+      const sel = document.getSelection();
+      if (!dragging || !scrollable() || !sel || sel.isCollapsed) { dir = 0; return; }
+      lastX = clientX;
+      const rect = wtermEl.getBoundingClientRect();
+      if (clientY < rect.top + EDGE) {
+        dir = -1; strength = Math.min(1, (rect.top + EDGE - clientY) / EDGE);
+      } else if (clientY > rect.bottom - EDGE) {
+        dir = 1; strength = Math.min(1, (clientY - (rect.bottom - EDGE)) / EDGE);
+      } else {
+        dir = 0;
+      }
+      if (dir && !raf) raf = requestAnimationFrame(tick);
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return; // only a primary drag selects
+      dragging = true;
+      lastX = e.clientX;
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!dragging) return;
+      if (e.pointerType === 'mouse' && !(e.buttons & 1)) { dragging = false; dir = 0; return; }
+      arm(e.clientX, e.clientY);
+    };
+    const stop = () => {
+      dragging = false; dir = 0;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    };
+
+    wtermEl.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+    return () => {
+      stop();
+      wtermEl.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+    };
+  }, [mouseTracking]);
+
   // Click / tap a URL in the terminal to open it — auth links, docs links, etc. A
   // very long link that xterm soft-wrapped across several rows still opens whole
   // (linkAt stitches the logical line back together). Pointer cursor on hover
