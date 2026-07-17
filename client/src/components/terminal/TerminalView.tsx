@@ -787,6 +787,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         `mono: ${Math.abs(ten0 - one) < 0.15 && Math.abs(tenM - one) < 0.15 && Math.abs(tenI - one) < 0.15 ? 'YES' : 'NO ⚠'}`,
         `한/0 ratio=${(tenKo / one).toFixed(2)} (want ~2.0)`,
         `contentW=${contentW.toFixed(0)} gridW=${gridW.toFixed(0)} computedCols=${computedCols} wt.cols=${wtRef.current?.cols ?? '?'} wt.rows=${wtRef.current?.rows ?? '?'}`,
+        // Live render state — the same line the blank-screen banner paints, shown
+        // continuously so a stall can be watched as it happens (renders/runs/ms,
+        // bufChars vs domChars, overflowing rows).
+        wtRef.current?.diagLine() ?? 'render: (no term)',
       ].join('\n');
       setDebugInfo(info);
     };

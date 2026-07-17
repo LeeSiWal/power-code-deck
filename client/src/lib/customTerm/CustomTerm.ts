@@ -76,6 +76,9 @@ export class CustomTerm {
   private rowHeight = 0;
   private charWidth = 0;
   private lastRenderError = '';
+  private lastRenderRuns = 0;
+  private lastRenderMs = 0;
+  private renderCount = 0;
   private disableInput: boolean;
   private cursorListener: ((rect: CursorRect | null) => void) | null = null;
   private destroyed = false;
@@ -330,6 +333,8 @@ export class CustomTerm {
 
   private render() {
     if (this.destroyed) return;
+    const t0 = performance.now();
+    let runs = 0;
     const buf = this.term.buffer.active;
     const base = buf.baseY;
     const cursorAbs = base + buf.cursorY;
@@ -343,9 +348,16 @@ export class CustomTerm {
       // A single row that trips the styled builder must NEVER blank the whole
       // screen (the agy "완전히 빈 화면" class). Fall back to plain text for just
       // that row and keep going, recording why for the on-screen diagnostic.
-      try { buildRow(el, line, this.term.cols, cx); }
+      try { runs += buildRow(el, line, this.term.cols, cx); }
       catch (e) { el.textContent = line.translateToString(true); this.lastRenderError = 'row' + r + ':' + e; }
     }
+    // Render cost, for the on-device diagnostic. The DOM renderer's cost scales
+    // with STYLE RUNS per row, not characters (xterm.js#791) — a heavily colored
+    // full-screen TUI repaint is its worst case, and "too slow to ever finish a
+    // frame" is a leading suspect for a screen that looks like it never rendered.
+    this.lastRenderRuns = runs;
+    this.lastRenderMs = performance.now() - t0;
+    this.renderCount++;
     // Only a real scrollback (normal buffer) makes .wterm a scroll container.
     const hasSb = buf.type === 'normal' && base > 0;
     this.element.classList.toggle('has-scrollback', hasSb);
@@ -379,12 +391,54 @@ export class CustomTerm {
   }
 
   /** One-line render state, for the on-device diagnostic banner (no console on a
-   *  phone/iPad). Reveals the cause when a blank persists past forceRender(). */
+   *  phone/iPad). Reveals the cause when a blank persists past forceRender().
+   *
+   *  Each field maps to a specific suspect, so the banner names the cause instead
+   *  of just reporting "blank":
+   *   - renders=0        → render() never ran (rAF dead / paused). Not a paint bug.
+   *   - runs/ms high     → style-run blowup (xterm.js#791): the DOM renderer's cost
+   *                        scales with runs per row; a slow enough frame looks blank.
+   *   - dom=0 buf=N      → we painted, the DOM has no text: builder produced nothing.
+   *   - ovf=1            → rows are wider than the grid: glyphs clipped at cell
+   *                        boundaries (xterm.js#3807) — suspect with CJK + D2Coding.
+   *   - cw/rh 0          → measurement failed (font not loaded): every cell is 0px,
+   *                        so content is painted into a zero-sized grid = invisible.
+   */
   renderDiag(): string {
     const buf = this.term.buffer.active;
+    let domChars = 0;
+    let ovf = 0;
+    for (const el of this.rowEls) {
+      if (!el) continue;
+      domChars += (el.textContent || '').trim().length;
+      if (el.scrollWidth > el.clientWidth + 1) ovf++;
+    }
+    const gridW = this.grid?.getBoundingClientRect().width ?? 0;
+    const gridH = this.grid?.getBoundingClientRect().height ?? 0;
     return `pcd-render: cols=${this.term.cols} rows=${this.rows} rowEls=${this.rowEls.length}` +
+      ` renders=${this.renderCount} runs=${this.lastRenderRuns} ms=${this.lastRenderMs.toFixed(1)}` +
+      ` bufChars=${this.bufferChars()} domChars=${domChars} ovfRows=${ovf}` +
       ` paused=${this.renderPaused} raf=${this.rafId != null} buf=${buf.type} baseY=${buf.baseY}` +
-      ` cw=${this.charWidth.toFixed(1)} rh=${this.rowHeight} err=${this.lastRenderError || '-'}`;
+      ` cw=${this.charWidth.toFixed(1)} rh=${this.rowHeight} grid=${gridW.toFixed(0)}x${gridH.toFixed(0)}` +
+      ` uni=${this.term.unicode.activeVersion} err=${this.lastRenderError || '-'}`;
+  }
+
+  /** Non-blank chars the emulator believes are on the visible screen. Paired with
+   *  domChars in the diagnostic: buf>0 && dom==0 is the true "blank screen" state. */
+  private bufferChars(): number {
+    const buf = this.term.buffer.active;
+    let n = 0;
+    for (let r = 0; r < this.rows; r++) {
+      const line = buf.getLine(buf.baseY + r);
+      if (line) n += line.translateToString(true).trim().length;
+    }
+    return n;
+  }
+
+  /** The live diagnostic string (for the ?debug overlay — same data as the banner,
+   *  but shown continuously rather than only when a blank is detected). */
+  diagLine(): string {
+    return this.renderDiag();
   }
 
   /** Paint the render diagnostic into the top row so a persistent blank surfaces

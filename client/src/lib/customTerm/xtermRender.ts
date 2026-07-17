@@ -63,14 +63,16 @@ let scratch: IBufferCell | undefined;
  * 0 — we render the wide char and skip the width-0 continuation, so the glyph
  * fills both columns naturally (no ZWSP hack).
  */
-export function buildRow(rowEl: HTMLElement, line: IBufferLine, cols: number, cursorX: number): void {
+export function buildRow(rowEl: HTMLElement, line: IBufferLine, cols: number, cursorX: number): number {
   let html = '';
   let runStyle = '';
   let runText = '';
   let runStart = 0;
+  let runs = 0; // style runs emitted — the DOM renderer's real cost driver (xterm.js#791)
 
   const flush = (endCol: number) => {
     if (!runText) return;
+    runs++;
     if (cursorX >= runStart && cursorX < endCol) {
       const chars = [...runText];
       const off = cursorX - runStart;
@@ -99,4 +101,5 @@ export function buildRow(rowEl: HTMLElement, line: IBufferLine, cols: number, cu
   }
   flush(cols);
   rowEl.innerHTML = html;
+  return runs;
 }
