@@ -608,13 +608,17 @@ export function TerminalPage() {
           {/* Content — flex fills remaining space, no absolute */}
           {activeTab === 'terminal' && (
             <div className="flex-1 min-h-0">
-              <TerminalView
-                key={agentId}
-                ref={terminalApiRef}
-                agentId={agentId}
-                onFocusTerminal={focusTerminal}
-                onHangulDirect={handleHangulDirectInput}
-              />
+              {usesNative(agent) ? (
+                <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} />
+              ) : (
+                <TerminalView
+                  key={agentId}
+                  ref={terminalApiRef}
+                  agentId={agentId}
+                  onFocusTerminal={focusTerminal}
+                  onHangulDirect={handleHangulDirectInput}
+                />
+              )}
             </div>
           )}
           {selectedFile && fileContent !== null && activeTab === 'editor' && (
@@ -636,7 +640,7 @@ export function TerminalPage() {
               iPad + touch, plus PTY control keys (arrows / Enter / Esc / …). */}
           {activeTab === 'terminal' && (
             <>
-              {!UNIFIED_INPUT && (forcePromptBar || promptOpen) && (
+              {!UNIFIED_INPUT && !usesNative(agent) && (forcePromptBar || promptOpen) && (
                 <PromptBar
                   agentId={agentId}
                   forced={forcePromptBar}
