@@ -156,6 +156,28 @@ func (h *Hub) unregister(c *Client) {
 	}
 }
 
+// detachSurface drops one UI surface's claim on an agent, and only releases the
+// engine viewer when the last surface on this connection lets go.
+//
+// This is what keeps the dashboard's thumbnails from unmounting the terminal's
+// viewer out from under it: they share one socket, hence one viewerID.
+func (h *Hub) detachSurface(c *Client, agentID string) {
+	if agentID == "" {
+		return
+	}
+	if c.attachCount != nil && c.attachCount[agentID] > 0 {
+		c.attachCount[agentID]--
+		if c.attachCount[agentID] > 0 {
+			return // another surface on this connection is still watching
+		}
+		delete(c.attachCount, agentID)
+	}
+	h.engine.Detach(agentID, c.viewerID)
+	if c.watchingAgent == agentID {
+		c.watchingAgent = ""
+	}
+}
+
 // newViewerID returns a random id identifying a single WebSocket connection as a
 // SessionEngine viewer.
 func newViewerID() string {
@@ -222,12 +244,11 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		// Detach the viewer only — the session process is NEVER killed here.
 		var payload TerminalAttachPayload
 		_ = json.Unmarshal(msg.Payload, &payload)
-		if payload.AgentID == "" || c.watchingAgent == payload.AgentID {
-			if c.watchingAgent != "" {
-				h.engine.Detach(c.watchingAgent, c.viewerID)
-				c.watchingAgent = ""
-			}
+		agentID := payload.AgentID
+		if agentID == "" {
+			agentID = c.watchingAgent
 		}
+		h.detachSurface(c, agentID)
 
 	case EventTerminalInput:
 		var payload TerminalInputPayload
@@ -358,9 +379,12 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 }
 
 func (h *Hub) handleTerminalAttach(c *Client, payload TerminalAttachPayload) {
-	if _, err := h.agentSvc.Get(payload.AgentID); err != nil {
-		log.Printf("Agent not found: %s", payload.AgentID)
-		return
+	// agentSvc is nil only in tests that exercise the viewer bookkeeping itself.
+	if h.agentSvc != nil {
+		if _, err := h.agentSvc.Get(payload.AgentID); err != nil {
+			log.Printf("Agent not found: %s", payload.AgentID)
+			return
+		}
 	}
 
 	// Exclusive viewer: only one device watches a session at a time so two viewers
@@ -383,8 +407,13 @@ func (h *Hub) handleTerminalAttach(c *Client, payload TerminalAttachPayload) {
 	// Leaving a previous session is a viewer Detach — never a Kill.
 	if c.watchingAgent != "" && c.watchingAgent != payload.AgentID {
 		h.engine.Detach(c.watchingAgent, c.viewerID)
+		delete(c.attachCount, c.watchingAgent)
 	}
 	c.watchingAgent = payload.AgentID
+	if c.attachCount == nil {
+		c.attachCount = make(map[string]int)
+	}
+	c.attachCount[payload.AgentID]++
 
 	res, err := h.engine.Attach(payload.AgentID, c.viewerID)
 	if err != nil {

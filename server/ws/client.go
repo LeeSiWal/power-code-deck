@@ -21,6 +21,19 @@ type Client struct {
 	send          chan []byte
 	watchingAgent string
 	viewerID      string // stable id for this connection (SessionEngine viewer)
+
+	// attachCount counts, per agent, how many independent UI surfaces on THIS
+	// connection asked to watch it.
+	//
+	// The browser has one WebSocket (a singleton) but several things that attach
+	// through it: the terminal view, and the dashboard's thumbnails. They all share
+	// this connection's single viewerID, so a thumbnail unmounting and sending
+	// terminal:detach used to drop the viewer the terminal view still needed —
+	// after which every keystroke was silently discarded by the write gate.
+	//
+	// So the engine viewer lives until the LAST surface detaches. Only readPump's
+	// goroutine touches this, same as watchingAgent.
+	attachCount map[string]int
 }
 
 func (c *Client) readPump() {
