@@ -46,6 +46,10 @@ func Run(args []string) {
 		cmdOpen()
 	case "ping":
 		cmdPing()
+	case "mcp-approve":
+		// Not user-facing: Claude Code spawns this as its MCP permission server.
+		// See cli/mcp_approve.go. Deliberately absent from printHelp().
+		cmdMCPApprove()
 	case "--version", "version":
 		fmt.Printf("%s v%s\n", version.Binary, version.Version)
 	case "--help", "help":
@@ -62,7 +66,7 @@ func IsSubcommand(args []string) bool {
 	if len(args) < 2 {
 		return false
 	}
-	cmds := []string{"list", "create", "delete", "send", "status", "login", "open", "ping", "version", "help", "--version", "--help"}
+	cmds := []string{"list", "create", "delete", "send", "status", "login", "open", "ping", "mcp-approve", "version", "help", "--version", "--help"}
 	for _, c := range cmds {
 		if args[1] == c {
 			return true
