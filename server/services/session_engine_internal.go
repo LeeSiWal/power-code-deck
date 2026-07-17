@@ -282,6 +282,22 @@ func (e *InternalPtySessionEngine) Detach(sessionID, viewerID string) error {
 	return nil
 }
 
+// HasViewer reports whether viewerID is currently attached to the session. This
+// is what gates writes (input / resize / ack): the engine's viewer set is the
+// only authority that both goroutines can agree on.
+func (e *InternalPtySessionEngine) HasViewer(sessionID, viewerID string) bool {
+	e.mu.RLock()
+	s := e.sessions[sessionID]
+	e.mu.RUnlock()
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.viewers[viewerID]
+	return ok
+}
+
 // Ack records that a viewer has processed n bytes of output, draining the
 // backpressure backlog so the read pump can resume. n is the byte count the
 // client parsed (matching len(data) the server metered); over-acking replay is

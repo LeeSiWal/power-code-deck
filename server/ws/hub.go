@@ -163,6 +163,26 @@ func newViewerID() string {
 	return hex.EncodeToString(b)
 }
 
+// mayWrite reports whether this client is allowed to affect the given agent's
+// session — input, paste, resize and flow-control acks all go through here.
+//
+// The rule is "you must be an attached viewer of THAT session", and the engine's
+// viewer set is the authority. Two holes this closes:
+//   - a client watching agent A could write to agent B just by naming it in the
+//     payload (the id came from the client and nothing checked it);
+//   - an evicted-but-still-open tab kept writing (its emulator answers DA1/DSR
+//     queries on its own), because eviction detaches it engine-side while its own
+//     watchingAgent field — owned by its goroutine — still names the session.
+//
+// Attach/detach are deliberately NOT gated: attach is how you become a viewer,
+// and detach must always be allowed to release one.
+func (h *Hub) mayWrite(c *Client, agentID string) bool {
+	if agentID == "" || h.engine == nil {
+		return false
+	}
+	return h.engine.HasViewer(agentID, c.viewerID)
+}
+
 func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 	switch msg.Event {
 	case EventTerminalAttach:
@@ -188,6 +208,9 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return
 		}
+		if !h.mayWrite(c, payload.AgentID) {
+			return
+		}
 		h.engine.Write(payload.AgentID, []byte(payload.Data))
 
 	case EventTerminalAck:
@@ -197,11 +220,17 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return
 		}
+		if !h.mayWrite(c, payload.AgentID) {
+			return
+		}
 		h.engine.Ack(payload.AgentID, payload.Bytes)
 
 	case EventTerminalResize:
 		var payload TerminalResizePayload
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		if !h.mayWrite(c, payload.AgentID) {
 			return
 		}
 		h.engine.Resize(payload.AgentID, int(payload.Cols), int(payload.Rows))
@@ -211,11 +240,17 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return
 		}
+		if !h.mayWrite(c, payload.AgentID) {
+			return
+		}
 		h.engine.Write(payload.AgentID, []byte(buildPasteData(payload.Text, payload.Mode, true)))
 
 	case EventTerminalPasteOnly:
 		var payload TerminalPastePayload
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		if !h.mayWrite(c, payload.AgentID) {
 			return
 		}
 		h.engine.Write(payload.AgentID, []byte(buildPasteData(payload.Text, payload.Mode, false)))

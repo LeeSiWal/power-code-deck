@@ -29,6 +29,12 @@ type SessionEngine interface {
 	Attach(sessionID, viewerID string) (*AttachResult, error)
 	// Detach removes a viewer. It NEVER kills the process.
 	Detach(sessionID, viewerID string) error
+	// HasViewer reports whether viewerID is currently attached to the session.
+	// The engine's viewer set is the authority on who may write: a client's own
+	// bookkeeping can't be trusted for this, because an evicted viewer is
+	// detached engine-side (by the incoming viewer's goroutine) while its own
+	// state still says it's watching.
+	HasViewer(sessionID, viewerID string) bool
 
 	// Write forwards input bytes to the session's process.
 	Write(sessionID string, data []byte) error

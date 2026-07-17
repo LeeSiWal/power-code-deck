@@ -812,6 +812,11 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
   const onData = useCallback((data: string) => {
     if (onHangulDirectRef.current && HANGUL_RE.test(data)) onHangulDirectRef.current();
+    // Evicted means another device owns this session now. Stay silent: this isn't
+    // only about typing — our emulator answers DA1/DSR queries through this same
+    // path, so a backgrounded tab would inject stale replies into someone else's
+    // live session. (The server drops these too; this saves the round trip.)
+    if (evictedRef.current) return;
     agentDeckWS.send('terminal:input', { agentId, data });
   }, [agentId]);
 
