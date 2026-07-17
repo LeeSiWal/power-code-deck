@@ -119,6 +119,11 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   const wtRef = useRef<CustomTerm | null>(null);
   const unifiedInputRef = useRef<UnifiedInputHandle | null>(null);
   const attachedRef = useRef(false);
+  // Whether any output has arrived since the last attach. If the server's initial
+  // screen replay is missed (e.g. it raced the subscription, or a stale viewer
+  // state), an idle TUI (Antigravity's trust prompt, a resumed session) would show
+  // nothing forever. We use this to re-request the replay once when nothing lands.
+  const dataSinceAttachRef = useRef(false);
   const readyRef = useRef(false);
   const colsRef = useRef(80);
   const rowsRef = useRef(24);
@@ -212,6 +217,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   }, []);
 
   const writeToTerm = useCallback((data: string) => {
+    dataSinceAttachRef.current = true; // replay/live output is flowing for this attach
     scanMouseMode(data);
     if (selectingRef.current) {
       pendingRef.current.push(data);
@@ -231,6 +237,26 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   // with correct attributes. So nudge rows by 1 and back. Goes through CustomTerm so
   // the client core + PTY size stay in lock-step.
   const repaintTimerRef = useRef(0);
+  // Bounded self-heal watchdog: polls a few times after attach so a render stall
+  // that surfaces LATE (agy animates a sign-in spinner for ~1-2s before drawing
+  // its real UI) is still caught and force-repainted. Stored in a ref so it's
+  // cleared on re-attach and unmount (no leak).
+  const healWatchdogRef = useRef(0);
+  const startHealWatchdog = useCallback(() => {
+    clearInterval(healWatchdogRef.current);
+    let checks = 0;
+    healWatchdogRef.current = window.setInterval(() => {
+      const t = wtRef.current;
+      if (!attachedRef.current || !agentDeckWS.connected || evictedRef.current || !t || ++checks > 10) {
+        clearInterval(healWatchdogRef.current);
+        return;
+      }
+      if (t.domBlankWithContent()) {
+        t.forceRender();
+        if (t.domBlankWithContent()) t.showDiagBanner();
+      }
+    }, 800);
+  }, []);
   const requestFullRepaint = useCallback(() => {
     const t = wtRef.current;
     if (!t || t.rows < 2 || !agentDeckWS.connected || evictedRef.current) return;
@@ -256,13 +282,60 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     // absolute cursor moves over stale content, possibly at a different size) is
     // what garbles the text ("글자가 안 붙음"). reset() blanks the core + DOM so the
     // replay redraws from a clean slate. Harmless on the first attach.
+    // Start from a clean gating state: a stuck drag-select freeze (selectingRef)
+    // or a paused render would silently swallow the replay into pendingRef and
+    // leave the screen blank even though bytes arrived.
+    selectingRef.current = false;
+    pendingRef.current = [];
+    pendingLenRef.current = 0;
+    wtRef.current?.setRenderPaused(false);
     wtRef.current?.reset();
+    dataSinceAttachRef.current = false;
     agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current });
     attachedRef.current = true;
     // Once the replay has landed and been parsed, force a clean full repaint to
     // sweep any stale attributes ghostty accumulated from the replayed history.
     window.setTimeout(() => { if (attachedRef.current) requestFullRepaint(); }, 500);
-  }, [agentId, requestFullRepaint]);
+    // Self-heal: a beat after attaching, if the screen is STILL empty, recover.
+    // Key on actual visible emptiness, NOT "did any bytes arrive" — an idle
+    // full-screen app (Antigravity's trust prompt, a resumed session) that emits
+    // nothing on its own can go blank via a stray clear, a paused render, or a
+    // viewer that got detached server-side (the shared socket's thumbnail detach
+    // racing this attach). In every one of those the replay bytes may have
+    // "arrived" yet left nothing on screen, so the old dataSinceAttach check
+    // never fired. Clear any gating state, re-attach for a fresh replay, and
+    // nudge the app with a resize so an idle TUI redraws.
+    window.setTimeout(() => {
+      if (!attachedRef.current || !agentDeckWS.connected || evictedRef.current) return;
+      const t = wtRef.current;
+      // Case 1: the emulator buffer HAS the app's frame but the DOM shows nothing
+      // — a stalled render (rAF throttled while the panel was hidden/animating at
+      // launch), not a missing replay. This is the agy "완전히 빈 화면": the old
+      // hasVisibleContent() check (buffer-only) saw content and wrongly left it be.
+      // A synchronous forceRender() bypasses the dead rAF and paints the buffer;
+      // re-attaching wouldn't help (the bytes already arrived and parsed fine).
+      if (t?.domBlankWithContent()) {
+        t.forceRender();
+        if (!t.domBlankWithContent()) return; // painted — fixed
+        // Still blank after a forced repaint → surface WHY on-screen (no console
+        // on a phone/iPad) instead of a silent blank, so the cause is visible.
+        t.showDiagBanner();
+        return;
+      }
+      if (t?.hasVisibleContent()) return; // truly healthy — leave it alone
+      // Case 2: buffer genuinely empty — the replay never landed / was cleared.
+      // Reset to a clean slate and re-attach for a fresh screen dump.
+      selectingRef.current = false;
+      pendingRef.current = [];
+      pendingLenRef.current = 0;
+      t?.setRenderPaused(false);
+      t?.reset();
+      dataSinceAttachRef.current = false;
+      agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current });
+      requestFullRepaint();
+    }, 1200);
+    startHealWatchdog();
+  }, [agentId, requestFullRepaint, startHealWatchdog]);
 
   // Reclaim the session on this device (after being evicted by another device).
   const reclaim = useCallback(() => {
@@ -300,6 +373,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     const unsubEvicted = agentDeckWS.on('terminal:evicted', (payload: any) => {
       if (payload.agentId !== agentId) return;
       attachedRef.current = false;
+      clearInterval(healWatchdogRef.current);
       setEvicted(true);
       agentDeckWS.send('terminal:detach', { agentId });
     });
@@ -310,6 +384,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     }
 
     return () => {
+      clearInterval(healWatchdogRef.current);
       unsubOutput();
       unsubOpen();
       unsubClose();
@@ -317,6 +392,15 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       agentDeckWS.send('terminal:detach', { agentId });
     };
   }, [agentId, maybeAttach, writeToTerm]);
+
+  // Attach once the terminal is ready — from a passive effect, so it runs AFTER the
+  // WS effect above has subscribed to terminal:output. This is what fixes "resume /
+  // Antigravity shows nothing until refresh": the server's initial screen replay is
+  // no longer raced by an attach fired synchronously in onReady's commit phase.
+  // maybeAttach is idempotent (attachedRef guard), so this is safe on every ready flip.
+  useEffect(() => {
+    if (ready) maybeAttach();
+  }, [ready, maybeAttach]);
 
   // Track a terminal-scoped selection for the 복사 button and touch scroll gate.
   // Snapshot the text so copy still works right after a redraw clears the highlight;
@@ -351,9 +435,18 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     const onUp = () => { flushPending(); };
     el.addEventListener('mousedown', onDown);
     window.addEventListener('mouseup', onUp);
+    // Touch end/cancel must ALSO clear the freeze: on iOS a touch that scrolls
+    // fires a synthetic mousedown (setting the freeze) but often no matching
+    // mouseup, leaving selectingRef stuck true — every subsequent replay/output
+    // byte then gets swallowed into pendingRef and the screen goes blank. These
+    // guarantee the freeze is released whenever a touch ends.
+    window.addEventListener('touchend', onUp);
+    window.addEventListener('touchcancel', onUp);
     return () => {
       el.removeEventListener('mousedown', onDown);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchend', onUp);
+      window.removeEventListener('touchcancel', onUp);
     };
   }, [flushPending]);
 
@@ -688,7 +781,12 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     if (isTouchDevice) {
       requestAnimationFrame(() => (document.activeElement as HTMLElement | null)?.blur?.());
     }
-    maybeAttach();
+    // NOTE: do NOT attach here. onReady is a ref callback that runs in the commit
+    // phase — before the passive effect that subscribes to `terminal:output`. On an
+    // SPA navigation (socket already open) attaching here fired terminal:attach before
+    // the subscription existed, so the server's initial screen replay arrived unheard
+    // and the terminal stayed blank until a refresh. Attaching is done in a passive
+    // effect below (keyed on `ready`) that is guaranteed to run after the subscription.
     // Guarantee the PTY gets the real measured size: by the next frame wterm's
     // ResizeObserver has fit the grid to the container, so push that size even if
     // its onResize fired before we were attached.
@@ -700,7 +798,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         agentDeckWS.send('terminal:resize', { agentId, cols: term.cols, rows: term.rows });
       }
     });
-  }, [maybeAttach, isTouchDevice, agentId]);
+  }, [isTouchDevice, agentId]);
 
   return (
     <div ref={shellRef} className="relative w-full h-full wterm-shell">

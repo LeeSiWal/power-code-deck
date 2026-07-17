@@ -72,6 +72,7 @@ export class CustomTerm {
   private rafId: number | null = null;
   private rowHeight = 0;
   private charWidth = 0;
+  private lastRenderError = '';
   private disableInput: boolean;
   private cursorListener: ((rect: CursorRect | null) => void) | null = null;
   private destroyed = false;
@@ -266,6 +267,25 @@ export class CustomTerm {
     this.resize(Math.max(1, Math.floor((rect.width - padX) / m.charW)), Math.max(1, Math.floor((rect.height - padY) / m.rowH)));
   }
 
+  /**
+   * Whether the visible screen holds any non-blank cell. Used by the attach
+   * self-heal: an idle full-screen app (Antigravity's trust prompt, a resumed
+   * session) emits nothing on its own, so if the screen is still empty a beat
+   * after attaching, the replay never landed (or was cleared) and we must
+   * re-attach — a check on "did any bytes arrive" misses the case where bytes
+   * DID arrive but left the screen blank (a stray clear, a paused render, or a
+   * viewer that got detached server-side).
+   */
+  hasVisibleContent(): boolean {
+    const buf = this.term.buffer.active;
+    const base = buf.baseY;
+    for (let r = 0; r < this.rows; r++) {
+      const line = buf.getLine(base + r);
+      if (line && line.translateToString(true).trim() !== '') return true;
+    }
+    return false;
+  }
+
   /** Blank the terminal so an incoming replay redraws from a clean slate (reconnect). */
   reset(): void {
     this.term.reset();
@@ -293,14 +313,18 @@ export class CustomTerm {
     const buf = this.term.buffer.active;
     const base = buf.baseY;
     const cursorAbs = base + buf.cursorY;
-    this.syncScrollback(base);
+    try { this.syncScrollback(base); } catch (e) { this.lastRenderError = 'sb:' + e; }
     for (let r = 0; r < this.rows; r++) {
       const el = this.rowEls[r];
       if (!el) continue;
       const line = buf.getLine(base + r);
       if (!line) { el.innerHTML = ''; el.style.background = ''; continue; }
       const cx = base + r === cursorAbs ? buf.cursorX : -1;
-      buildRow(el, line, this.term.cols, cx);
+      // A single row that trips the styled builder must NEVER blank the whole
+      // screen (the agy "완전히 빈 화면" class). Fall back to plain text for just
+      // that row and keep going, recording why for the on-screen diagnostic.
+      try { buildRow(el, line, this.term.cols, cx); }
+      catch (e) { el.textContent = line.translateToString(true); this.lastRenderError = 'row' + r + ':' + e; }
     }
     // Only a real scrollback (normal buffer) makes .wterm a scroll container.
     const hasSb = buf.type === 'normal' && base > 0;
@@ -308,6 +332,50 @@ export class CustomTerm {
     if (this.stickBottom) this.scrollToBottom();
     // Let an external cursor-anchored input follow the cursor as the app redraws.
     if (this.cursorListener) this.cursorListener(this.cursorRect());
+  }
+
+  /** Render NOW, bypassing the rAF gate and any render-pause. The self-heal uses
+   *  this: if a scheduled rAF was throttled to never (panel hidden/animating at
+   *  launch, iOS background), rafId stays non-null and every scheduleRender()
+   *  early-returns, so the final buffer never reaches the DOM — a blank screen
+   *  over a fully-populated buffer. A timer-driven forceRender() breaks that. */
+  forceRender(): void {
+    if (this.destroyed) return;
+    if (this.rafId != null) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+    this.renderPaused = false;
+    this.render();
+  }
+
+  /** The emulator buffer holds visible content but the rendered DOM rows are all
+   *  empty — the render pipeline stalled (throttled rAF) or a row threw. This is
+   *  the true "blank screen" signal; hasVisibleContent() alone (buffer-only) is a
+   *  false-positive here because the buffer IS populated. */
+  domBlankWithContent(): boolean {
+    if (!this.hasVisibleContent()) return false;
+    for (const el of this.rowEls) {
+      if (el && el.textContent && el.textContent.trim() !== '') return false;
+    }
+    return true;
+  }
+
+  /** One-line render state, for the on-device diagnostic banner (no console on a
+   *  phone/iPad). Reveals the cause when a blank persists past forceRender(). */
+  renderDiag(): string {
+    const buf = this.term.buffer.active;
+    return `pcd-render: cols=${this.term.cols} rows=${this.rows} rowEls=${this.rowEls.length}` +
+      ` paused=${this.renderPaused} raf=${this.rafId != null} buf=${buf.type} baseY=${buf.baseY}` +
+      ` cw=${this.charWidth.toFixed(1)} rh=${this.rowHeight} err=${this.lastRenderError || '-'}`;
+  }
+
+  /** Paint the render diagnostic into the top row so a persistent blank surfaces
+   *  its cause on-screen instead of showing nothing. */
+  showDiagBanner(): void {
+    const diag = this.renderDiag();
+    const el = this.rowEls[0];
+    if (el) el.textContent = diag;
+    // Also to the console (for a desktop devtools session) in case the banner
+    // itself is hidden by whatever is blanking the screen.
+    console.warn(diag);
   }
 
   private syncScrollback(base: number) {
