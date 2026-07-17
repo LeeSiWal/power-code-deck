@@ -16,6 +16,13 @@ export interface StreamEvent {
   type: string;
   subtype?: string;
   session_id?: string;
+  /** stream_event only (--include-partial-messages): the raw Anthropic SSE frame. */
+  event?: {
+    type?: string; // message_start | content_block_start | content_block_delta | …
+    index?: number;
+    delta?: { type?: string; text?: string };
+    message?: { id?: string };
+  };
   message?: {
     role?: string;
     content?: ContentBlock[];
@@ -51,7 +58,7 @@ export interface ContentBlock {
 export type ChatItem =
   | { kind: 'session'; id: string; model?: string; cwd?: string; version?: string; bridgeOk: boolean }
   | { kind: 'user'; id: string; text: string }
-  | { kind: 'assistant'; id: string; text: string }
+  | { kind: 'assistant'; id: string; text: string; streaming?: boolean }
   | {
       kind: 'tool';
       id: string; // the tool_use id — the key the result arrives under
@@ -88,8 +95,34 @@ function resultText(content: unknown): string {
 export function foldEvents(events: StreamEvent[]): ChatItem[] {
   const items: ChatItem[] = [];
   const toolIndex = new Map<string, number>(); // tool_use id -> index in items
+  // Index of the assistant bubble currently being streamed into, or -1.
+  //
+  // With --include-partial-messages the CLI sends each token as a
+  // stream_event/content_block_delta AND then repeats the finished text as a whole
+  // `assistant` message. Rendering both would print every answer twice, so the
+  // deltas build a bubble in place and the final message replaces its text rather
+  // than appending a new one.
+  let streamAt = -1;
 
   for (const ev of events) {
+    if (ev.type === 'stream_event') {
+      const inner = ev.event;
+      if (inner?.type === 'content_block_delta' && inner.delta?.type === 'text_delta') {
+        const chunk = inner.delta.text ?? '';
+        if (!chunk) continue;
+        if (streamAt >= 0 && items[streamAt]?.kind === 'assistant') {
+          const cur = items[streamAt] as Extract<ChatItem, { kind: 'assistant' }>;
+          items[streamAt] = { ...cur, text: cur.text + chunk };
+        } else {
+          streamAt = items.length;
+          items.push({ kind: 'assistant', id: `s${items.length}`, text: chunk, streaming: true });
+        }
+      } else if (inner?.type === 'message_stop') {
+        streamAt = -1; // the turn's text is done; a later message starts a new bubble
+      }
+      continue;
+    }
+
     if (ev.type === 'system' && ev.subtype === 'init') {
       // Whether OUR permission bridge is connected decides if approvals are even
       // possible. Without it the CLI denies every gated tool and still reports the
@@ -110,8 +143,17 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
       const subagent = !!ev.parent_tool_use_id;
       for (const b of ev.message.content) {
         if (b.type === 'text' && b.text?.trim()) {
-          items.push({ kind: 'assistant', id: `${items.length}`, text: b.text });
+          if (streamAt >= 0 && items[streamAt]?.kind === 'assistant') {
+            // Same text we just streamed — settle the bubble, don't duplicate it.
+            const cur = items[streamAt] as Extract<ChatItem, { kind: 'assistant' }>;
+            items[streamAt] = { ...cur, text: b.text, streaming: false };
+            streamAt = -1;
+          } else {
+            items.push({ kind: 'assistant', id: `${items.length}`, text: b.text });
+          }
         } else if (b.type === 'tool_use' && b.id) {
+          // A tool call ends the text bubble that preceded it.
+          streamAt = -1;
           toolIndex.set(b.id, items.length);
           items.push({
             kind: 'tool',

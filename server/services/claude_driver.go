@@ -74,6 +74,14 @@ func (d *ClaudeDriver) buildArgs() []string {
 		"--input-format", "stream-json",
 		"--output-format", "stream-json",
 		"--verbose",
+		// Token-level deltas (stream_event/content_block_delta/text_delta). Without
+		// this the CLI only emits whole assistant messages, so the UI sits silent
+		// through a long answer and then dumps it at once.
+		"--include-partial-messages",
+		// Echo our own user turns back on stdout. Without it the conversation the
+		// server knows — and replays to a device that reconnects — has the user's
+		// half missing, so their messages vanish from the history.
+		"--replay-user-messages",
 		"--mcp-config", d.mcpConfigJSON(),
 		"--permission-prompt-tool", "mcp__pcd__approve",
 	}

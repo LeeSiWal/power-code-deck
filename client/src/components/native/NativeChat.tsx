@@ -90,9 +90,11 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
     if (!text) return;
     setError('');
     agentDeckWS.send('native:input', { agentId, text });
-    // Echo locally: the CLI does not emit our own turn back, so without this the
-    // message would vanish until Claude replies.
-    setEvents((prev) => [...prev, { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }]);
+    // No local echo: the CLI replays our own turn back on stdout
+    // (--replay-user-messages), so it arrives as a real `user` event and lands in
+    // the server's history like everything else. Echoing locally as well would
+    // print the message twice — and, worse, the local copy was invisible to the
+    // server, so it vanished on every reconnect (history replaces our events).
     setDraft('');
   }, [agentId, draft]);
 
