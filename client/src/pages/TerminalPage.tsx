@@ -32,12 +32,24 @@ type CenterTab = 'terminal' | 'editor';
 const UNIFIED_INPUT = typeof window === 'undefined' || !window.location.search.includes('classicInput');
 
 /**
- * `?native` renders the agent as a chat driven by Claude's stream-json events
- * instead of a terminal. Opt-in on purpose: the terminal path stays the default
- * until the native one has earned it, and having both lets you compare them on the
- * same agent by just changing the URL.
+ * Claude agents render as a chat driven by the CLI's stream-json events, not as a
+ * terminal. `?terminal` forces the old TUI path back for one session.
+ *
+ * Native is the default only where a driver exists — Claude. Codex (app-server) is
+ * not wired yet, and a shell or a custom command has no structured stream at all,
+ * so those must stay on the terminal: rendering them as a chat would show an empty
+ * screen forever.
  */
-const NATIVE_UI = typeof window !== 'undefined' && window.location.search.includes('native');
+const CLASSIC_TERMINAL = typeof window !== 'undefined' && window.location.search.includes('terminal');
+
+function nativeCapable(agent: { preset?: string; command?: string }): boolean {
+  return agent.preset === 'claude-code' || agent.command === 'claude';
+}
+
+/** Whether this agent is rendered as a chat rather than a terminal. */
+function usesNative(agent: { preset?: string; command?: string } | null | undefined): boolean {
+  return !CLASSIC_TERMINAL && !!agent && nativeCapable(agent);
+}
 
 export function TerminalPage() {
   const { id } = useParams<{ id: string }>();
@@ -331,7 +343,7 @@ export function TerminalPage() {
         {/* Content — no absolute positioning, flex fills remaining space */}
         {activeTab === 'terminal' && (
           <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
-            {NATIVE_UI ? (
+            {usesNative(agent) ? (
               <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} />
             ) : (
               <TerminalView
@@ -362,7 +374,7 @@ export function TerminalPage() {
         {/* Bottom input — mandatory Prompt Bar (한글/긴 프롬프트) + terminal
             control keys. Korean is composed in the Prompt Bar's textarea and
             pasted into the terminal; direct typing into the terminal would split jamo. */}
-        {activeTab === 'terminal' && (
+        {activeTab === 'terminal' && !usesNative(agent) && (
           <>
             {!UNIFIED_INPUT && (
               <PromptBar
