@@ -653,6 +653,16 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     agentDeckWS.send('terminal:input', { agentId, data });
   }, [agentId]);
 
+  // Flow-control ack: tell the server how many bytes we've parsed so it can
+  // release a backpressured (flooding) session. Only meaningful as the active
+  // viewer; skip while evicted so a background device doesn't drain another
+  // device's backlog.
+  const onAck = useCallback((bytes: number) => {
+    if (agentDeckWS.connected && !evictedRef.current) {
+      agentDeckWS.send('terminal:ack', { agentId, bytes });
+    }
+  }, [agentId]);
+
   const onResize = useCallback((cols: number, rows: number) => {
     colsRef.current = cols;
     rowsRef.current = rows;
@@ -728,6 +738,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         disableInput={UNIFIED_INPUT}
         onData={onData}
         onResize={onResize}
+        onAck={onAck}
         onReady={onReady}
         onClick={() => { if (!isTouchDevice) onFocusTerminal?.(); }}
         className="wterm-embed w-full h-full"

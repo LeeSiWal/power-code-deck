@@ -32,6 +32,9 @@ type SessionEngine interface {
 
 	// Write forwards input bytes to the session's process.
 	Write(sessionID string, data []byte) error
+	// Ack reports that a viewer has processed n bytes of output, draining the
+	// flow-control backlog so the (backpressured) read pump can resume.
+	Ack(sessionID string, n int)
 	// Resize adjusts the session's PTY window size.
 	Resize(sessionID string, cols, rows int) error
 

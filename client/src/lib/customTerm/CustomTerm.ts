@@ -12,6 +12,13 @@ export interface CustomTermOptions {
   onResize?: (cols: number, rows: number) => void;
   onTitle?: (title: string) => void;
   /**
+   * Flow-control ack: fired after xterm finishes parsing output, reporting the
+   * UTF-8 byte count consumed (batched). The server meters the same bytes and
+   * pauses a flooding process until enough are acked — VS Code's terminal
+   * backpressure, which keeps a big burst from jamming the WebSocket / main thread.
+   */
+  onAck?: (bytes: number) => void;
+  /**
    * Skip creating the built-in InputHandler (the hidden off-screen textarea).
    * Used when an external, visible input surface (UnifiedInput) owns keyboard
    * and IME instead — so the two textareas don't fight for focus/keystrokes.
@@ -21,6 +28,20 @@ export interface CustomTermOptions {
 
 /** Pixel rect of the cursor cell, relative to the terminal element's visible box. */
 export interface CursorRect { left: number; top: number; height: number }
+
+/** UTF-8 byte length of a string without allocating (matches the server's
+ *  len([]byte) accounting for flow-control acks). */
+function utf8Len(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff) { n += 4; i++; } // surrogate pair → 1 rune
+    else n += 3;
+  }
+  return n;
+}
 
 /**
  * A DOM terminal built on @xterm/headless — the SAME VT engine VS Code's terminal
@@ -44,6 +65,9 @@ export class CustomTerm {
   private onDataCb?: (data: string) => void;
   private onResizeCb?: (cols: number, rows: number) => void;
   private onTitleCb?: (title: string) => void;
+  private onAckCb?: (bytes: number) => void;
+  private ackPending = 0;
+  private static readonly ACK_THRESHOLD = 16 * 1024;
   private ro: ResizeObserver | null = null;
   private rafId: number | null = null;
   private rowHeight = 0;
@@ -61,6 +85,7 @@ export class CustomTerm {
     this.onDataCb = opts.onData;
     this.onResizeCb = opts.onResize;
     this.onTitleCb = opts.onTitle;
+    this.onAckCb = opts.onAck;
     this.term = new Terminal({
       cols: opts.cols || 80,
       rows: opts.rows || 24,
@@ -201,9 +226,22 @@ export class CustomTerm {
 
   write(data: string | Uint8Array): void {
     this.stickBottom = this.isAtBottom();
-    this.term.write(data, this.onParsed);
+    const n = typeof data === 'string' ? utf8Len(data) : data.length;
+    // The ack fires from xterm's write callback — AFTER the bytes are parsed —
+    // so the server only counts output the browser has actually consumed.
+    this.term.write(data, () => { this.scheduleRender(); this.reportAck(n); });
   }
-  private onParsed = () => this.scheduleRender();
+
+  /** Batch acked bytes and flush to the server once past the threshold, so a
+   *  flood acks every ~16KB (steady drain) instead of per tiny chunk. */
+  private reportAck(n: number): void {
+    if (!this.onAckCb) return;
+    this.ackPending += n;
+    if (this.ackPending >= CustomTerm.ACK_THRESHOLD) {
+      this.onAckCb(this.ackPending);
+      this.ackPending = 0;
+    }
+  }
 
   resize(cols: number, rows: number): void {
     if (cols === this.term.cols && rows === this.term.rows) return;

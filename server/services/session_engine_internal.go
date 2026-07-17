@@ -43,6 +43,7 @@ type internalPtySession struct {
 	buffer    *RingBuffer
 	modes     *terminalModes
 	queries   *ptyQueryResponder
+	flow      *flowControl
 	viewers   map[string]struct{}
 	status    string
 	closeOnce sync.Once
@@ -129,6 +130,7 @@ func (e *InternalPtySessionEngine) Create(req CreateSessionRequest) (*SessionInf
 		buffer:  NewRingBuffer(e.scrollbackBytes),
 		modes:   newTerminalModes(),
 		queries: &ptyQueryResponder{},
+		flow:    newFlowControl(),
 		viewers: make(map[string]struct{}),
 		status:  SessionRunning,
 	}
@@ -187,6 +189,7 @@ func (e *InternalPtySessionEngine) readPump(s *internalPtySession) {
 			_, _ = s.pty.Write(reply)
 		}
 		if h := e.outputHandler(); h != nil {
+			s.flow.added(len(data)) // meter bytes in flight for backpressure
 			h(s.info.ID, data)
 		}
 	}
@@ -199,6 +202,10 @@ func (e *InternalPtySessionEngine) readPump(s *internalPtySession) {
 			head, tail := splitIncompleteUTF8(chunk)
 			carry = append(carry[:0], tail...)
 			emit(head)
+			// Backpressure: if the viewer is drowning in unacked output, block here
+			// (the PTY fills, the process slows) until it catches up — VS Code's
+			// terminal flow control. Self-heals on detach / lost ack so it can't wedge.
+			s.flow.wait()
 		}
 		if err != nil {
 			emit(carry) // flush leftovers on exit (don't drop bytes)
@@ -238,7 +245,11 @@ func (e *InternalPtySessionEngine) Attach(sessionID, viewerID string) (*AttachRe
 
 	s.mu.Lock()
 	s.viewers[viewerID] = struct{}{}
+	nv := len(s.viewers)
 	s.mu.Unlock()
+	// Reset backpressure for the (re)attaching viewer: the fresh client will ack
+	// the replay below from a clean slate, so any prior in-flight count is stale.
+	s.flow.setViewers(nv)
 
 	// Prepend the current DEC private modes (alt-screen, mouse tracking, SGR,
 	// application cursor keys, bracketed paste) so a reattaching viewer restores
@@ -262,8 +273,26 @@ func (e *InternalPtySessionEngine) Detach(sessionID, viewerID string) error {
 	}
 	s.mu.Lock()
 	delete(s.viewers, viewerID)
+	nv := len(s.viewers)
 	s.mu.Unlock()
+	// Release any backpressure hold — the leaving viewer won't ack, and with no
+	// viewer we must not throttle (output keeps filling the ring for later replay).
+	s.flow.setViewers(nv)
 	return nil
+}
+
+// Ack records that a viewer has processed n bytes of output, draining the
+// backpressure backlog so the read pump can resume. n is the byte count the
+// client parsed (matching len(data) the server metered); over-acking replay is
+// harmless (the counter floors at zero).
+func (e *InternalPtySessionEngine) Ack(sessionID string, n int) {
+	e.mu.RLock()
+	s := e.sessions[sessionID]
+	e.mu.RUnlock()
+	if s == nil || n <= 0 {
+		return
+	}
+	s.flow.ack(n)
 }
 
 func (e *InternalPtySessionEngine) Write(sessionID string, data []byte) error {

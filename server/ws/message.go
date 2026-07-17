@@ -12,6 +12,7 @@ const (
 	EventTerminalAttach      = "terminal:attach"
 	EventTerminalDetach      = "terminal:detach"
 	EventTerminalInput       = "terminal:input"
+	EventTerminalAck         = "terminal:ack"
 	EventTerminalResize      = "terminal:resize"
 	EventTerminalPasteSubmit = "terminal:pasteSubmit"
 	EventTerminalPasteOnly   = "terminal:pasteOnly"
@@ -55,6 +56,14 @@ type TerminalAttachPayload struct {
 type TerminalInputPayload struct {
 	AgentID string `json:"agentId"`
 	Data    string `json:"data"`
+}
+
+// TerminalAckPayload confirms the viewer has parsed `bytes` of output, draining
+// the server's flow-control backlog (ACK-based backpressure). `bytes` is the
+// UTF-8 byte count, matching what the server metered when it sent the output.
+type TerminalAckPayload struct {
+	AgentID string `json:"agentId"`
+	Bytes   int    `json:"bytes"`
 }
 
 type TerminalResizePayload struct {

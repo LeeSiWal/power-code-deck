@@ -190,6 +190,15 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		}
 		h.engine.Write(payload.AgentID, []byte(payload.Data))
 
+	case EventTerminalAck:
+		// Flow-control ACK: the viewer parsed some output, so drain the backlog
+		// and let a backpressured read pump resume.
+		var payload TerminalAckPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		h.engine.Ack(payload.AgentID, payload.Bytes)
+
 	case EventTerminalResize:
 		var payload TerminalResizePayload
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {

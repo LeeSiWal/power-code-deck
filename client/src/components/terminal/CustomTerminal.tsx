@@ -17,6 +17,7 @@ interface CustomTerminalProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onRe
   onData?: (data: string) => void;
   onResize?: (cols: number, rows: number) => void;
   onTitle?: (title: string) => void;
+  onAck?: (bytes: number) => void;
   onReady?: (term: CustomTerm) => void;
   className?: string;
   style?: CSSProperties;
@@ -27,12 +28,12 @@ interface CustomTerminalProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onRe
  * Same handle (write/resize/focus) and onReady(term) contract TerminalView expects.
  */
 export const CustomTerminal = forwardRef<CustomTerminalHandle, CustomTerminalProps>(function CustomTerminal(
-  { cols = 80, rows = 24, autoResize = false, cursorBlink = false, disableInput = false, onData, onResize, onTitle, onReady, className, style, ...htmlProps },
+  { cols = 80, rows = 24, autoResize = false, cursorBlink = false, disableInput = false, onData, onResize, onTitle, onAck, onReady, className, style, ...htmlProps },
   ref,
 ) {
   const termRef = useRef<CustomTerm | null>(null);
-  const cbRef = useRef({ onData, onResize, onTitle, onReady });
-  cbRef.current = { onData, onResize, onTitle, onReady };
+  const cbRef = useRef({ onData, onResize, onTitle, onAck, onReady });
+  cbRef.current = { onData, onResize, onTitle, onAck, onReady };
 
   useImperativeHandle(ref, () => ({
     write: (data) => termRef.current?.write(data),
@@ -47,6 +48,7 @@ export const CustomTerminal = forwardRef<CustomTerminalHandle, CustomTerminalPro
       onData: (d) => cbRef.current.onData?.(d),
       onResize: (c, r) => cbRef.current.onResize?.(c, r),
       onTitle: (t) => cbRef.current.onTitle?.(t),
+      onAck: (b) => cbRef.current.onAck?.(b),
     });
     termRef.current = term;
     term.init();
