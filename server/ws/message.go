@@ -51,6 +51,7 @@ const (
 	EventNativeApproval = "native:approval" // the agent is blocked, waiting on a human
 	EventNativeHistory  = "native:history"  // events so far, on open
 	EventNativeState    = "native:state"    // running/stopped + pending approvals
+	EventNativeError    = "native:error"    // something failed — say so, never swallow it
 )
 
 // Server -> Client events (meta + notifications)
@@ -215,4 +216,13 @@ type NativeStatePayload struct {
 	AgentID string                  `json:"agentId"`
 	Running bool                    `json:"running"`
 	Pending []NativeApprovalPayload `json:"pending"`
+}
+
+// NativeErrorPayload carries a failure to the user instead of dropping it.
+//
+// The whole point of the native track is not lying about what happened, and the
+// first way to break that promise is to swallow "your message never got sent".
+type NativeErrorPayload struct {
+	AgentID string `json:"agentId"`
+	Message string `json:"message"`
 }

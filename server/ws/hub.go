@@ -312,6 +312,11 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		c.watchingAgent = payload.AgentID
 		if !h.native.Running(payload.AgentID) {
 			if err := h.native.Start(payload.AgentID, payload.Cwd, payload.Model, payload.Resume); err != nil {
+				log.Printf("native: start %s failed: %v", payload.AgentID, err)
+				c.sendEvent(EventNativeError, NativeErrorPayload{
+					AgentID: payload.AgentID,
+					Message: "세션을 시작하지 못했습니다: " + err.Error(),
+				})
 				c.sendEvent(EventNativeState, NativeStatePayload{AgentID: payload.AgentID, Running: false})
 				return
 			}
@@ -323,7 +328,18 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
 			return
 		}
-		_ = h.native.Send(payload.AgentID, payload.Text)
+		if err := h.native.Send(payload.AgentID, payload.Text); err != nil {
+			// Never swallow this: the user typed something and it went nowhere.
+			// Silence here is exactly the failure that makes an agent UI untrustworthy.
+			log.Printf("native: send to %s failed: %v", payload.AgentID, err)
+			c.sendEvent(EventNativeError, NativeErrorPayload{
+				AgentID: payload.AgentID,
+				Message: "메시지를 전달하지 못했습니다: " + err.Error(),
+			})
+			c.sendEvent(EventNativeState, NativeStatePayload{
+				AgentID: payload.AgentID, Running: h.native.Running(payload.AgentID),
+			})
+		}
 
 	case EventNativeDecide:
 		var payload NativeDecidePayload

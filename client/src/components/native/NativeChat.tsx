@@ -29,6 +29,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -58,12 +59,18 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
       setRunning(!!p.running);
       setPending(p.pending ?? []);
     });
+    // Failures are shown, never swallowed: a message that went nowhere must not
+    // look like a message that is being answered.
+    const offError = agentDeckWS.on('native:error', (p: any) => {
+      if (p.agentId !== agentId) return;
+      setError(p.message ?? '알 수 없는 오류');
+    });
 
     const open = () => agentDeckWS.send('native:open', { agentId, cwd, model: model ?? '' });
     open();
     const offOpen = agentDeckWS.on('open', open); // re-open after a reconnect
 
-    return () => { offEvent(); offHistory(); offApproval(); offState(); offOpen(); };
+    return () => { offEvent(); offHistory(); offApproval(); offState(); offError(); offOpen(); };
   }, [agentId, cwd, model]);
 
   // Stick to the bottom unless the user scrolled up to read something.
@@ -81,6 +88,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   const send = useCallback(() => {
     const text = draft.trim();
     if (!text) return;
+    setError('');
     agentDeckWS.send('native:input', { agentId, text });
     // Echo locally: the CLI does not emit our own turn back, so without this the
     // message would vanish until Claude replies.
@@ -99,10 +107,21 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
         {items.map((item) => <ChatRow key={`${item.kind}-${item.id}`} item={item} />)}
         {!items.length && (
           <div className="text-deck-muted text-sm py-8 text-center">
-            {running ? '세션 시작 중…' : '메시지를 보내 대화를 시작하세요.'}
+            {/* `claude -p --input-format stream-json` emits NOTHING until the first
+                user turn — not even system/init. So a live session with no events
+                is not "starting", it's waiting for you. Saying "시작 중…" here made
+                a ready session look like a hung one. */}
+            {running ? '세션 준비됨 · 메시지를 보내세요.' : '메시지를 보내 대화를 시작하세요.'}
           </div>
         )}
       </div>
+
+      {error && (
+        <div className="mx-2 mb-1 px-3 py-2 rounded-lg bg-red-500/15 text-red-400 text-xs flex items-start gap-2">
+          <span className="flex-1">{error}</span>
+          <button onClick={() => setError('')} className="shrink-0 opacity-60">닫기</button>
+        </div>
+      )}
 
       {pending.map((p) => <ApprovalCard key={p.id} req={p} onDecide={decide} />)}
 
