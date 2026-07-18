@@ -26,6 +26,10 @@ const (
 	StreamTypeResult    = "result"
 	StreamTypeRateLimit = "rate_limit_event"
 	StreamTypeStream    = "stream_event" // only with --include-partial-messages
+	// Control frames ride the same pipes: we write a control_request on stdin and
+	// the CLI answers with a control_response on stdout. init advertises what it
+	// understands in `capabilities` — feature-detect on that, not on a version.
+	StreamTypeControlResponse = "control_response"
 )
 
 // StreamEvent is one line of the CLI's stdout. Raw keeps the original bytes so a
@@ -120,6 +124,29 @@ type UserInput struct {
 type UserInputMessage struct {
 	Role    string         `json:"role"`
 	Content []ContentBlock `json:"content"`
+}
+
+// ControlRequest is a non-conversational command written to stdin. Observed shape
+// (claude 2.1.212), with the reply captured from the same run:
+//
+//	-> {"type":"control_request","request_id":"int-1","request":{"subtype":"interrupt"}}
+//	<- {"type":"control_response","response":{"subtype":"success","request_id":"int-1",
+//	                                          "response":{"still_queued":[]}}}
+type ControlRequest struct {
+	Type      string             `json:"type"`
+	RequestID string             `json:"request_id"`
+	Request   ControlRequestBody `json:"request"`
+}
+
+type ControlRequestBody struct {
+	Subtype string `json:"subtype"`
+}
+
+// NewInterruptRequest builds the frame that stops the current turn. Only send it
+// when init's capabilities include "interrupt_receipt_v1"; an older CLI would just
+// ignore the line and the user's 중단 tap would do nothing, silently.
+func NewInterruptRequest(id string) ControlRequest {
+	return ControlRequest{Type: "control_request", RequestID: id, Request: ControlRequestBody{Subtype: "interrupt"}}
 }
 
 // NewUserText builds the stdin frame for a plain user turn.

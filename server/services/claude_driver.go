@@ -53,6 +53,9 @@ type ClaudeDriver struct {
 
 	// claudeSessionID is learned from system/init and is what --resume needs.
 	claudeSessionID string
+	// capabilities come from init: what this CLI build understands.
+	capabilities []string
+	interruptSeq int
 }
 
 func NewClaudeDriver(cfg ClaudeConfig) *ClaudeDriver {
@@ -78,10 +81,11 @@ func (d *ClaudeDriver) buildArgs() []string {
 		// this the CLI only emits whole assistant messages, so the UI sits silent
 		// through a long answer and then dumps it at once.
 		"--include-partial-messages",
-		// Echo our own user turns back on stdout. Without it the conversation the
-		// server knows — and replays to a device that reconnects — has the user's
-		// half missing, so their messages vanish from the history.
-		"--replay-user-messages",
+		// NOTE: no --replay-user-messages. NativeService records each user turn in
+		// history itself, the moment it's sent (native_service.go Send) — so the
+		// user's half survives a reconnect AND lands in the right order. The CLI's
+		// echo could arrive after the reply started, flipping the on-screen order,
+		// and would double-print alongside our own record.
 		"--mcp-config", d.mcpConfigJSON(),
 		"--permission-prompt-tool", "mcp__pcd__approve",
 	}
@@ -193,6 +197,7 @@ func (d *ClaudeDriver) readPump(stdout io.ReadCloser) {
 		if ev.Type == StreamTypeSystem && ev.Subtype == "init" && ev.SessionID != "" {
 			d.mu.Lock()
 			d.claudeSessionID = ev.SessionID
+			d.capabilities = ev.Capabilities
 			d.mu.Unlock()
 		}
 		d.events <- ev
@@ -220,6 +225,41 @@ func (d *ClaudeDriver) Send(text string) error {
 		return fmt.Errorf("claude driver: session is not running")
 	}
 	b, err := json.Marshal(NewUserText(text))
+	if err != nil {
+		return err
+	}
+	_, err = stdin.Write(append(b, '\n'))
+	return err
+}
+
+// Interrupt stops the turn in progress. The CLI answers with a control_response;
+// we don't wait for it — the visible effect (the stream stopping) is the ack that
+// matters to a user, and blocking here would stall the caller for a round trip.
+//
+// Refuses when the CLI didn't advertise interrupt support, rather than writing a
+// line it will ignore and letting the user believe they stopped something.
+func (d *ClaudeDriver) Interrupt() error {
+	d.mu.Lock()
+	stdin := d.stdin
+	stopped := d.stopped
+	caps := d.capabilities
+	d.interruptSeq++
+	id := fmt.Sprintf("int-%d", d.interruptSeq)
+	d.mu.Unlock()
+
+	if stdin == nil || stopped {
+		return fmt.Errorf("claude driver: session is not running")
+	}
+	supported := false
+	for _, c := range caps {
+		if c == "interrupt_receipt_v1" {
+			supported = true
+		}
+	}
+	if !supported {
+		return fmt.Errorf("claude driver: this CLI build does not support interrupt")
+	}
+	b, err := json.Marshal(NewInterruptRequest(id))
 	if err != nil {
 		return err
 	}

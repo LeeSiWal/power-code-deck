@@ -137,6 +137,22 @@ export const api = {
   resumeSession: (id: string, sid: string) => apiFetch(`/agents/${id}/sessions/${sid}/resume`, { method: 'POST' }),
   newSession: (id: string) => apiFetch<{ id: string }>(`/agents/${id}/sessions/new`, { method: 'POST' }),
 
+  // Upload a file into the agent's project (.pcd-attachments/) so a chat message
+  // can reference it and Claude can Read it. Multipart, so it bypasses apiFetch's
+  // JSON content-type (the browser must set the multipart boundary itself).
+  attachFile: async (id: string, file: File): Promise<{ path: string; name: string }> => {
+    const fd = new FormData();
+    fd.append('file', file);
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/agents/${id}/attach`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '업로드 실패');
+    return res.json();
+  },
+
   // Session Handoff — issue a one-time "Continue on Mobile" token + QR URLs.
   createHandoff: (id: string) =>
     apiFetch<{

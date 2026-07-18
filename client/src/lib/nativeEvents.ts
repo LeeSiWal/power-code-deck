@@ -55,6 +55,14 @@ export interface ContentBlock {
   content?: unknown;
 }
 
+/** AskUserQuestion's tool input, as observed on the wire. */
+export interface AskQuestion {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options: { label: string; description?: string }[];
+}
+
 export type ChatItem =
   | { kind: 'session'; id: string; model?: string; cwd?: string; version?: string; bridgeOk: boolean }
   | { kind: 'user'; id: string; text: string }
@@ -69,6 +77,7 @@ export type ChatItem =
       /** Set when this call belongs to a sub-agent (Task), not the main thread. */
       subagent: boolean;
     }
+  | { kind: 'ask'; id: string; questions: AskQuestion[]; answered: boolean }
   | { kind: 'result'; id: string; text: string; denied: string[]; costUsd?: number; turns?: number };
 
 /** Flatten a tool_result's `content` — a string, or an array of blocks. */
@@ -151,6 +160,20 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
           } else {
             items.push({ kind: 'assistant', id: `${items.length}`, text: b.text });
           }
+        } else if (b.type === 'tool_use' && b.id && b.name === 'AskUserQuestion') {
+          // Claude asking US something. Headless mode can't actually prompt — the
+          // CLI answers it internally with "The user did not answer the questions."
+          // — but the questions and options are right here in the input, so we can
+          // render real buttons and send the pick as the next user turn. That is
+          // how Claude expects to be answered anyway ("just tell me which one").
+          streamAt = -1;
+          const qs = ((b.input as any)?.questions ?? []) as AskQuestion[];
+          if (qs.length) {
+            toolIndex.set(b.id, items.length);
+            items.push({ kind: 'ask', id: b.id, questions: qs, answered: false });
+            continue;
+          }
+          items.push({ kind: 'tool', id: b.id, name: 'AskUserQuestion', input: {}, status: 'pending', subagent });
         } else if (b.type === 'tool_use' && b.id) {
           // A tool call ends the text bubble that preceded it.
           streamAt = -1;
@@ -177,6 +200,12 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
           if (at !== undefined && items[at]?.kind === 'tool') {
             const t = items[at] as Extract<ChatItem, { kind: 'tool' }>;
             items[at] = { ...t, status: b.is_error ? 'error' : 'ok', result: resultText(b.content) };
+          } else if (at !== undefined && items[at]?.kind === 'ask') {
+            // The CLI's own "the user did not answer" result arrives immediately;
+            // it does NOT mean the question is dead. Keep the buttons live — the
+            // user answers by sending the pick as their next message.
+            const a = items[at] as Extract<ChatItem, { kind: 'ask' }>;
+            items[at] = { ...a, answered: false };
           }
         } else if (b.type === 'text' && b.text?.trim()) {
           items.push({ kind: 'user', id: `${items.length}`, text: b.text });
@@ -226,4 +255,21 @@ export function toolSummary(name: string, input: Record<string, unknown>): strin
       return typeof first === 'string' ? first : '';
     }
   }
+}
+
+
+/**
+ * Whether a turn is currently running — i.e. whether 중단 is meaningful.
+ *
+ * True from the moment a user turn is sent until that turn's `result` lands.
+ * Derived from the event list rather than tracked in component state so it stays
+ * correct across a reconnect: the history alone tells you if a turn is in flight.
+ */
+export function isTurnActive(events: StreamEvent[]): boolean {
+  let active = false;
+  for (const ev of events) {
+    if (ev.type === 'user' && ev.message?.content?.some((b) => b.type === 'text')) active = true;
+    if (ev.type === 'result') active = false;
+  }
+  return active;
 }

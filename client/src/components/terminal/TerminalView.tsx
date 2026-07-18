@@ -402,8 +402,17 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   useEffect(() => {
     const el = shellRef.current;
     if (!el) return;
-    const onDown = () => { selectingRef.current = true; };
-    const onUp = () => { flushPending(); };
+    // Freeze OUTPUT (buffer) AND pause the renderer for the whole drag, so no
+    // repaint — from any path, not just output — can replace the row DOM under a
+    // forming selection and wipe the highlight before it's even visible.
+    const onDown = () => { selectingRef.current = true; wtRef.current?.setRenderPaused(true); };
+    const onUp = () => {
+      flushPending();
+      // Keep the render paused only while a selection is actually held; a plain
+      // click (no selection) must resume immediately or the terminal freezes.
+      const sel = document.getSelection();
+      if (!sel || sel.isCollapsed) wtRef.current?.setRenderPaused(false);
+    };
     el.addEventListener('mousedown', onDown);
     window.addEventListener('mouseup', onUp);
     // Touch end/cancel must ALSO clear the freeze: on iOS a touch that scrolls
@@ -606,11 +615,12 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   // Drag-select auto-scroll: when a drag-selection reaches the top/bottom edge of a
   // scrollable (plain-shell) terminal, keep scrolling and glue the selection's focus
   // to the edge line — so a selection can span MORE than one screenful of scrollback.
-  // Only for the native-scrollback regime: alt-screen apps (mouseTracking on) own
-  // their scroll and keep no scrollback DOM to select across, so this stays off
-  // there. Pointer Events unify mouse-drag, trackpad, and touch-handle drags.
+  // Mouse drag-selection over the terminal. Runs for BOTH regimes: over an
+  // alt-screen app (Claude Code) the browser often won't start a native selection
+  // on its constantly-redrawn grid, so we build the Range ourselves from the caret
+  // under the pointer. The edge auto-scroll below only engages when there's actually
+  // scrollback to reveal (plain shells) — it's a no-op for alt-screen.
   useEffect(() => {
-    if (mouseTracking) return;
     const shell = shellRef.current;
     const wtermEl = shell?.querySelector('.wterm') as HTMLElement | null;
     if (!wtermEl) return;
@@ -673,14 +683,28 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       if (dir && !raf) raf = requestAnimationFrame(tick);
     };
 
+    // Explicitly drive the selection from the caret under the pointer — native
+    // drag-selection can fail to start over an alt-screen app's live grid. Only for
+    // mouse; touch drags are scroll (wheel effect), touch selection is long-press.
+    let anchorNode: Node | null = null;
+    let anchorOffset = 0;
+
     const onPointerDown = (e: PointerEvent) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return; // only a primary drag selects
+      if (e.pointerType !== 'mouse') return;
+      if (e.button !== 0) return;
       dragging = true;
       lastX = e.clientX;
+      const c = caretAt(e.clientX, e.clientY);
+      anchorNode = c?.node ?? null;
+      anchorOffset = c?.offset ?? 0;
     };
     const onPointerMove = (e: PointerEvent) => {
       if (!dragging) return;
-      if (e.pointerType === 'mouse' && !(e.buttons & 1)) { dragging = false; dir = 0; return; }
+      if (!(e.buttons & 1)) { dragging = false; dir = 0; return; }
+      const c = caretAt(e.clientX, e.clientY);
+      if (c && anchorNode) {
+        try { document.getSelection()?.setBaseAndExtent(anchorNode, anchorOffset, c.node, c.offset); } catch { /* stale node between frames */ }
+      }
       arm(e.clientX, e.clientY);
     };
     const stop = () => {
@@ -699,7 +723,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       window.removeEventListener('pointerup', stop);
       window.removeEventListener('pointercancel', stop);
     };
-  }, [mouseTracking]);
+  }, [ready]);
 
   // Click / tap a URL in the terminal to open it — auth links, docs links, etc. A
   // very long link that xterm soft-wrapped across several rows still opens whole
@@ -942,6 +966,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
           {debugInfo}
         </pre>
       )}
+
 
       {/* Jump to the latest — shown when scrolled up (native scrollback or an
           alt-screen app's own scroll). */}

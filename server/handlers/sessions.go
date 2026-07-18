@@ -107,6 +107,12 @@ func ResumeSession(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFun
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Record the target conversation on the new agent so the NATIVE chat resumes
+		// it too: native ignores the terminal `--resume` args above and resumes via
+		// resumeIDFor = the agent's claude_session_id. Without this the native track
+		// opens the resumed agent blank (fresh session, no prior conversation), and
+		// NativeService can't seed history from the transcript either.
+		agentSvc.SetClaudeSessionID(newAgent.ID, sid)
 		hub.BroadcastAll(ws.EventAgentCreated, newAgent)
 		w.WriteHeader(http.StatusCreated)
 		jsonResponse(w, newAgent)

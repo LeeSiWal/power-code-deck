@@ -341,6 +341,18 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 			})
 		}
 
+	case EventNativeSetModel:
+		var payload NativeSetModelPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
+			return
+		}
+		if err := h.native.SetModel(payload.AgentID, payload.Model); err != nil {
+			c.sendEvent(EventNativeError, NativeErrorPayload{
+				AgentID: payload.AgentID,
+				Message: "모델 전환 실패: " + err.Error(),
+			})
+		}
+
 	case EventNativeDecide:
 		var payload NativeDecidePayload
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
@@ -354,6 +366,19 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 			UpdatedInput: payload.UpdatedInput,
 			Message:      payload.Message,
 		})
+
+	case EventNativeInterrupt:
+		var payload NativeInterruptPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
+			return
+		}
+		if err := h.native.Interrupt(payload.AgentID); err != nil {
+			// Say so: a 중단 tap that quietly did nothing is worse than no button.
+			c.sendEvent(EventNativeError, NativeErrorPayload{
+				AgentID: payload.AgentID,
+				Message: "중단하지 못했습니다: " + err.Error(),
+			})
+		}
 
 	case EventNativeStop:
 		var payload NativeStopPayload

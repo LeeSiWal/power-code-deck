@@ -86,6 +86,9 @@ func main() {
 	// the bridge is our own child process on this machine, and the endpoint should
 	// not be reachable from the LAN even when the deck itself is.
 	nativeSvc := services.NewNativeService("http://127.0.0.1:" + cfg.Port)
+	// Remember Claude's own conversation id per agent so reopening (or a server
+	// restart) continues the conversation instead of starting a blank one.
+	nativeSvc.SetPersistence(agentSvc.SetClaudeSessionID, agentSvc.ClaudeSessionID)
 	hub.SetNativeService(nativeSvc)
 
 	// Session output → broadcast to every viewer of that session.
@@ -170,6 +173,7 @@ func main() {
 	api.HandleFunc("/files/delete", handlers.DeleteFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("DELETE")
 	api.HandleFunc("/files/rename", handlers.RenameFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("PATCH")
 	api.HandleFunc("/files/stat", handlers.FileStat(fileSvc, agentSvc, projectSvc, cfg)).Methods("GET")
+	api.HandleFunc("/agents/{id}/attach", handlers.AttachFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("POST")
 
 	// Projects
 	api.HandleFunc("/projects/recent", handlers.RecentProjects(projectSvc)).Methods("GET")

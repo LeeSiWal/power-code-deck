@@ -3,10 +3,13 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/gorilla/mux"
 
 	"powercodedeck/config"
 	"powercodedeck/services"
@@ -179,6 +182,63 @@ func WriteFile(fileSvc *services.FileService, agentSvc *services.AgentService, p
 		}
 
 		jsonResponse(w, map[string]string{"status": "ok"})
+	}
+}
+
+// AttachFile saves an uploaded file into the agent's working dir (a hidden
+// .pcd-attachments/ subdir) so the native chat can reference it by path and Claude
+// can Read it. Reuses the same path guard as writes, so the destination is always
+// inside the agent's project and never a sensitive dir.
+func AttachFile(fileSvc *services.FileService, agentSvc *services.AgentService, projectSvc *services.ProjectService, cfg *config.Config) http.HandlerFunc {
+	guard := newFileGuard(fileSvc, agentSvc, projectSvc, cfg)
+	return func(w http.ResponseWriter, r *http.Request) {
+		agentID := mux.Vars(r)["id"]
+		if err := r.ParseMultipartForm(64 << 20); err != nil { // 64MB cap
+			jsonError(w, "업로드가 너무 크거나 잘못되었습니다", http.StatusBadRequest)
+			return
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			jsonError(w, "파일이 없습니다", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		// filepath.Base strips any directory components — no traversal via the name.
+		name := filepath.Base(header.Filename)
+		if name == "" || name == "." || name == string(filepath.Separator) {
+			jsonError(w, "잘못된 파일 이름", http.StatusBadRequest)
+			return
+		}
+		// Build the ABSOLUTE destination inside the agent's project. authorize's
+		// ValidatePath resolves a relative path against the server's cwd (not the
+		// agent's), so a relative ".pcd-attachments/…" would read as traversal — pass
+		// the absolute path and let the guard verify it's within-base + not sensitive.
+		baseDir, err := agentSvc.GetWorkingDir(agentID)
+		if err != nil {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		abs, status, err := guard.authorize(agentID, filepath.Join(baseDir, ".pcd-attachments", name))
+		if err != nil {
+			jsonError(w, err.Error(), status)
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out, err := os.Create(abs)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer out.Close()
+		if _, err := io.Copy(out, file); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]string{"path": ".pcd-attachments/" + name, "name": name})
 	}
 }
 

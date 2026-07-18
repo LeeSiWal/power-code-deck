@@ -1,10 +1,30 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
 )
+
+// nativeTextEvent builds a synthetic user/assistant StreamEvent with its Raw JSON
+// filled in — the fan-out and history replay both send ev.Raw, so a server-made
+// event MUST carry the wire JSON the client's foldEvents expects, not just the
+// struct fields. role is "user" or "assistant".
+func nativeTextEvent(role, text string) *StreamEvent {
+	raw, _ := json.Marshal(map[string]any{
+		"type": role,
+		"message": map[string]any{
+			"role":    role,
+			"content": []map[string]any{{"type": "text", "text": text}},
+		},
+	})
+	return &StreamEvent{
+		Type:    role,
+		Message: &StreamMessage{Role: role, Content: []ContentBlock{{Type: "text", Text: text}}},
+		Raw:     raw,
+	}
+}
 
 // NativeService owns the live native sessions: it starts a driver per session,
 // wires that session's approval bridge, and fans the event stream out to whoever
@@ -25,6 +45,13 @@ type NativeService struct {
 	// onEvent/onApproval are set by the hub at wiring time.
 	onEvent    func(sessionID string, ev *StreamEvent)
 	onApproval func(PermissionRequest)
+
+	// onSessionID records Claude's own conversation id when a session announces it,
+	// so a later open can --resume instead of starting from nothing. Injected
+	// rather than reaching for the DB here: this service owns processes, not rows.
+	onSessionID func(agentID, claudeSessionID string)
+	// resumeIDFor supplies the last known conversation id for an agent.
+	resumeIDFor func(agentID string) string
 }
 
 type nativeSession struct {
@@ -62,6 +89,14 @@ func NewNativeService(baseURL string) *NativeService {
 func (s *NativeService) Broker() *PermissionBroker { return s.broker }
 func (s *NativeService) Tokens() ApproveTokenStore { return s.tokens }
 
+// SetPersistence wires where the resume id is stored and read from.
+func (s *NativeService) SetPersistence(save func(agentID, claudeSessionID string), load func(agentID string) string) {
+	s.mu.Lock()
+	s.onSessionID = save
+	s.resumeIDFor = load
+	s.mu.Unlock()
+}
+
 // SetHandlers wires the hub's fan-out. Called once at startup.
 func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApproval func(PermissionRequest)) {
 	s.mu.Lock()
@@ -89,6 +124,18 @@ func (s *NativeService) Start(sessionID, cwd, model, resumeID string) error {
 	}
 	s.mu.Unlock()
 
+	// Continue the last conversation unless the caller asked for a specific one.
+	// Without this every open starts a blank session, which on a phone looks like
+	// the deck forgot everything you just discussed.
+	if resumeID == "" {
+		s.mu.RLock()
+		load := s.resumeIDFor
+		s.mu.RUnlock()
+		if load != nil {
+			resumeID = load(sessionID)
+		}
+	}
+
 	token, err := s.tokens.Issue(sessionID)
 	if err != nil {
 		return err
@@ -104,11 +151,33 @@ func (s *NativeService) Start(sessionID, cwd, model, resumeID string) error {
 		SelfPath:     s.selfBin,
 	})
 	if err := d.Start(); err != nil {
-		s.tokens.Revoke(sessionID)
-		return err
+		// A stale resume id (its transcript was deleted, or the CLI rejects it)
+		// must not lock the agent out of ever starting. Drop it and try fresh
+		// once, rather than failing every open from here on.
+		if resumeID != "" {
+			d = NewClaudeDriver(ClaudeConfig{
+				SessionID: sessionID, Cwd: cwd, Model: model,
+				ApproveURL: s.baseURL + "/internal/native/approve", ApproveToken: token,
+				SelfPath: s.selfBin,
+			})
+			if err2 := d.Start(); err2 != nil {
+				s.tokens.Revoke(sessionID)
+				return err
+			}
+		} else {
+			s.tokens.Revoke(sessionID)
+			return err
+		}
 	}
 
 	sess := &nativeSession{id: sessionID, driver: d, cwd: cwd}
+	// A resumed session's PRIOR conversation is not re-emitted as events by
+	// `claude --resume` — it just continues. So seed history from the transcript on
+	// disk, or the chat opens blank until the next reply. (Only when we actually
+	// resumed a real id, and only useful before the first client renders history.)
+	if resumeID != "" {
+		seedNativeHistory(sess, cwd, resumeID)
+	}
 	s.mu.Lock()
 	s.sessions[sessionID] = sess
 	s.mu.Unlock()
@@ -117,22 +186,38 @@ func (s *NativeService) Start(sessionID, cwd, model, resumeID string) error {
 	return nil
 }
 
+// seedNativeHistory loads a resumed conversation's earlier user/assistant turns
+// from its transcript into the session history, so the chat shows them at once.
+func seedNativeHistory(sess *nativeSession, cwd, sid string) {
+	msgs, err := ReadSession(cwd, sid)
+	if err != nil || len(msgs) == 0 {
+		return
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	for _, m := range msgs {
+		if m.Text == "" || (m.Role != "user" && m.Role != "assistant") {
+			continue
+		}
+		sess.history = append(sess.history, nativeTextEvent(m.Role, m.Text))
+	}
+	if len(sess.history) > maxNativeHistory {
+		sess.history = sess.history[len(sess.history)-maxNativeHistory:]
+	}
+}
+
 // pump forwards the driver's events and cleans up when the process exits.
 func (s *NativeService) pump(sess *nativeSession) {
 	for ev := range sess.driver.Events() {
-		sess.mu.Lock()
-		sess.history = append(sess.history, ev)
-		if len(sess.history) > maxNativeHistory {
-			sess.history = sess.history[len(sess.history)-maxNativeHistory:]
+		if ev.Type == StreamTypeSystem && ev.Subtype == "init" && ev.SessionID != "" {
+			s.mu.RLock()
+			save := s.onSessionID
+			s.mu.RUnlock()
+			if save != nil {
+				save(sess.id, ev.SessionID)
+			}
 		}
-		sess.mu.Unlock()
-
-		s.mu.RLock()
-		fn := s.onEvent
-		s.mu.RUnlock()
-		if fn != nil {
-			fn(sess.id, ev)
-		}
+		s.emit(sess, ev)
 	}
 
 	// The process is gone: release anything waiting on a human for it, or the
@@ -140,8 +225,51 @@ func (s *NativeService) pump(sess *nativeSession) {
 	s.broker.CancelSession(sess.id)
 	s.tokens.Revoke(sess.id)
 	s.mu.Lock()
-	delete(s.sessions, sess.id)
+	// Only clear the map slot if it still points at THIS session — a model switch
+	// replaces the driver, so this old pump's exit must not evict the new session.
+	if s.sessions[sess.id] == sess {
+		delete(s.sessions, sess.id)
+	}
 	s.mu.Unlock()
+}
+
+// SetModel switches a running session to a new model by restarting its driver with
+// the new --model, resuming the same Claude conversation so nothing is lost. The
+// new session's system/init (with the new model) flows to watchers as a fresh
+// banner. model "" reverts to the CLI default.
+func (s *NativeService) SetModel(sessionID, model string) error {
+	s.mu.Lock()
+	old := s.sessions[sessionID]
+	if old != nil {
+		delete(s.sessions, sessionID) // remove now so Start() below won't no-op
+	}
+	s.mu.Unlock()
+	if old == nil {
+		return fmt.Errorf("native session %s is not running", sessionID)
+	}
+	resumeID := old.driver.ClaudeSessionID()
+	cwd := old.cwd
+	old.driver.Stop() // its pump exits; the guard above keeps it from evicting the new one
+	return s.Start(sessionID, cwd, model, resumeID)
+}
+
+// emit records an event in the session's history (bounded) and fans it out to
+// every watcher — the single path both live driver events and server-synthesized
+// turns go through, so history order and what's on screen never disagree.
+func (s *NativeService) emit(sess *nativeSession, ev *StreamEvent) {
+	sess.mu.Lock()
+	sess.history = append(sess.history, ev)
+	if len(sess.history) > maxNativeHistory {
+		sess.history = sess.history[len(sess.history)-maxNativeHistory:]
+	}
+	sess.mu.Unlock()
+
+	s.mu.RLock()
+	fn := s.onEvent
+	s.mu.RUnlock()
+	if fn != nil {
+		fn(sess.id, ev)
+	}
 }
 
 // Send delivers a user turn to a running session.
@@ -152,7 +280,26 @@ func (s *NativeService) Send(sessionID, text string) error {
 	if sess == nil {
 		return fmt.Errorf("native session %s is not running", sessionID)
 	}
-	return sess.driver.Send(text)
+	if err := sess.driver.Send(text); err != nil {
+		return err
+	}
+	// Record the user turn in history NOW — at its real position, before the reply
+	// arrives — instead of relying on the CLI to echo it back (that echo can land
+	// after the assistant's response, flipping the order). This is also what keeps
+	// the user's half of the conversation across a reconnect.
+	s.emit(sess, nativeTextEvent("user", text))
+	return nil
+}
+
+// Interrupt stops the turn a session is in the middle of.
+func (s *NativeService) Interrupt(sessionID string) error {
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if sess == nil {
+		return fmt.Errorf("native session %s is not running", sessionID)
+	}
+	return sess.driver.Interrupt()
 }
 
 // Decide answers a pending approval.

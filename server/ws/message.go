@@ -23,10 +23,12 @@ const (
 	// Native track — a Claude session driven as a structured stream instead of a
 	// terminal. There is no attach/resize/ack here: without a screen there is
 	// nothing to size, and nothing to meter for backpressure.
-	EventNativeOpen   = "native:open"   // start (or adopt) a session and replay its history
-	EventNativeInput  = "native:input"  // a user turn
-	EventNativeDecide = "native:decide" // answer a pending approval
-	EventNativeStop   = "native:stop"
+	EventNativeOpen      = "native:open"   // start (or adopt) a session and replay its history
+	EventNativeInput     = "native:input"  // a user turn
+	EventNativeDecide    = "native:decide" // answer a pending approval
+	EventNativeStop      = "native:stop"
+	EventNativeInterrupt = "native:interrupt" // stop the turn, keep the session
+	EventNativeSetModel  = "native:setModel"  // switch model, resume same conversation
 )
 
 // Server -> Client events
@@ -172,6 +174,13 @@ type NativeInputPayload struct {
 	Text    string `json:"text"`
 }
 
+// NativeSetModelPayload switches the model mid-conversation: the session restarts
+// with the new --model, resuming the same Claude conversation so nothing is lost.
+type NativeSetModelPayload struct {
+	AgentID string `json:"agentId"`
+	Model   string `json:"model"`
+}
+
 // NativeDecidePayload answers one approval. Behavior is allow|deny.
 //
 // UpdatedInput carries an edited tool input (approve-with-changes) and Message the
@@ -186,6 +195,10 @@ type NativeDecidePayload struct {
 }
 
 type NativeStopPayload struct {
+	AgentID string `json:"agentId"`
+}
+
+type NativeInterruptPayload struct {
 	AgentID string `json:"agentId"`
 }
 

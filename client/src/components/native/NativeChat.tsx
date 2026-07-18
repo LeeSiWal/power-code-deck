@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { agentDeckWS } from '../../lib/ws';
-import { foldEvents, toolSummary, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
+import { api } from '../../lib/api';
+import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 
 /**
  * NativeChat — a Claude session rendered from its event stream instead of a
@@ -25,16 +26,75 @@ interface NativeChatProps {
   model?: string;
 }
 
+// Model choices for the switcher. `id` is passed straight to the CLI's --model;
+// '' = the CLI default ("Auto"). Switching restarts the session on the same
+// conversation (server SetModel), so nothing is lost.
+const MODELS: { id: string; label: string; desc: string }[] = [
+  { id: '', label: 'Auto', desc: 'CLI 기본 선택' },
+  { id: 'claude-fable-5', label: 'Fable 5', desc: '최신 · 복잡하고 긴 작업' },
+  { id: 'claude-opus-4-8', label: 'Opus 4.8', desc: '가장 강력 · 깊은 추론' },
+  { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 · 1M', desc: '초대용량 컨텍스트(1M)' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5', desc: '균형 · 빠르고 똑똑' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', desc: '가장 빠름 · 가벼운 작업' },
+];
+
 export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const [draft, setDraft] = useState('');
+  const [attachments, setAttachments] = useState<{ name: string; path: string }[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [modelId, setModelId] = useState(() => localStorage.getItem(`pcd:model:${agentId}`) || '');
+  const [menu, setMenu] = useState<null | 'add' | 'model'>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const modelIdRef = useRef(modelId);
+  modelIdRef.current = modelId;
+
+  const pickModel = useCallback((id: string) => {
+    setMenu(null);
+    if (id === modelIdRef.current) return;
+    setModelId(id);
+    try { localStorage.setItem(`pcd:model:${agentId}`, id); } catch { /* ignore */ }
+    // Restart on the same conversation with the new --model.
+    agentDeckWS.send('native:setModel', { agentId, model: id });
+  }, [agentId]);
+
+  const modelLabel = MODELS.find((m) => m.id === modelId)?.label ?? modelId ?? 'Auto';
+
+  // Grow the input with its content (up to a cap, then it scrolls internally).
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+  }, [draft]);
+
+  const onFilePick = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ''; // let the same file be picked again later
+    if (!files.length) return;
+    setUploading(true);
+    try {
+      for (const f of files) {
+        const r = await api.attachFile(agentId, f);
+        setAttachments((prev) => [...prev, r]);
+      }
+    } catch (err) {
+      setError('파일 업로드 실패: ' + String(err));
+    } finally {
+      setUploading(false);
+    }
+  }, [agentId]);
 
   const items = useMemo(() => foldEvents(events), [events]);
+  // Derived from the events, not tracked separately, so it survives a reconnect:
+  // the history alone says whether a turn is still in flight.
+  const busy = useMemo(() => isTurnActive(events), [events]);
 
   useEffect(() => {
     const offEvent = agentDeckWS.on('native:event', (p: any) => {
@@ -66,7 +126,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
       setError(p.message ?? '알 수 없는 오류');
     });
 
-    const open = () => agentDeckWS.send('native:open', { agentId, cwd, model: model ?? '' });
+    const open = () => agentDeckWS.send('native:open', { agentId, cwd, model: modelIdRef.current });
     open();
     const offOpen = agentDeckWS.on('open', open); // re-open after a reconnect
 
@@ -85,18 +145,33 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   }, []);
 
-  const send = useCallback(() => {
-    const text = draft.trim();
-    if (!text) return;
+  const sendText = useCallback((text: string) => {
+    if (!text.trim()) return;
     setError('');
     agentDeckWS.send('native:input', { agentId, text });
+  }, [agentId]);
+
+  const interrupt = useCallback(() => {
+    agentDeckWS.send('native:interrupt', { agentId });
+  }, [agentId]);
+
+  const send = useCallback(() => {
+    const text = draft.trim();
+    if (!text && !attachments.length) return;
+    // Attachments ride along as paths inside the project — Claude opens them with
+    // its Read tool. Sent as part of the same user turn.
+    const msg = attachments.length
+      ? (text ? text + '\n\n' : '') + '첨부 파일 (Read 도구로 확인해줘):\n' + attachments.map((a) => a.path).join('\n')
+      : text;
+    sendText(msg);
+    setAttachments([]);
     // No local echo: the CLI replays our own turn back on stdout
     // (--replay-user-messages), so it arrives as a real `user` event and lands in
     // the server's history like everything else. Echoing locally as well would
     // print the message twice — and, worse, the local copy was invisible to the
     // server, so it vanished on every reconnect (history replaces our events).
     setDraft('');
-  }, [agentId, draft]);
+  }, [draft, attachments, sendText]);
 
   const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string) => {
     agentDeckWS.send('native:decide', { agentId, id, behavior, message });
@@ -105,8 +180,10 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
 
   return (
     <div className="flex flex-col h-full bg-deck-bg">
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-        {items.map((item) => <ChatRow key={`${item.kind}-${item.id}`} item={item} />)}
+      <div ref={scrollRef} onScroll={onScroll} className="selectable flex-1 overflow-y-auto px-3 py-3 space-y-2">
+        {items.map((item) => (
+          <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} />
+        ))}
         {!items.length && (
           <div className="text-deck-muted text-sm py-8 text-center">
             {/* `claude -p --input-format stream-json` emits NOTHING until the first
@@ -127,35 +204,123 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
 
       {pending.map((p) => <ApprovalCard key={p.id} req={p} onDecide={decide} />)}
 
-      <div className="flex gap-2 p-2 border-t border-deck-border safe-bottom">
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter sends; Shift+Enter is a newline. On mobile the soft keyboard's
-            // return arrives as a plain Enter, which is what we want here.
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          rows={1}
-          placeholder="Claude에게 메시지…"
-          className="flex-1 resize-none bg-deck-surface border border-deck-border rounded-lg px-3 py-2 text-sm text-deck-text outline-none focus:border-deck-accent"
-        />
-        <button
-          onClick={send}
-          disabled={!draft.trim()}
-          className="px-4 rounded-lg bg-deck-accent text-white text-sm font-medium disabled:opacity-40"
-        >
-          보내기
-        </button>
+      <div className="border-t border-deck-border safe-bottom relative">
+        {/* Backdrop to dismiss an open menu on any outside click. */}
+        {menu && <div className="fixed inset-0 z-10" onClick={() => setMenu(null)} />}
+
+        {/* + (Add) menu — mirrors the desktop app's Add popup. */}
+        {menu === 'add' && (
+          <div className="absolute bottom-14 left-2 z-20 w-56 bg-deck-surface border border-deck-border rounded-lg shadow-xl overflow-hidden text-sm">
+            <button
+              onClick={() => { setMenu(null); fileRef.current?.click(); }}
+              className="w-full text-left px-3 py-2.5 hover:bg-deck-bg/60 text-deck-text flex items-center gap-2"
+            >
+              <span>⬆️</span> 컴퓨터에서 업로드
+            </button>
+          </div>
+        )}
+
+        {/* Model switcher menu. */}
+        {menu === 'model' && (
+          <div className="absolute bottom-14 right-2 z-20 w-64 max-w-[calc(100vw-1rem)] bg-deck-surface border border-deck-border rounded-lg shadow-xl overflow-hidden">
+            <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim">모델</div>
+            {MODELS.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => pickModel(m.id)}
+                className={`w-full text-left px-3 py-2 hover:bg-deck-bg/60 flex items-start gap-2 ${m.id === modelId ? 'bg-deck-bg/40' : ''}`}
+              >
+                <span className={`mt-0.5 shrink-0 w-3 ${m.id === modelId ? 'text-deck-accent' : 'text-transparent'}`}>✓</span>
+                <span className="min-w-0">
+                  <span className={`block text-sm ${m.id === modelId ? 'text-deck-accent' : 'text-deck-text'}`}>{m.label}</span>
+                  <span className="block text-xs text-deck-text-dim truncate">{m.desc}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-2 pt-2">
+            {attachments.map((a, i) => (
+              <span key={i} className="flex items-center gap-1 bg-deck-surface border border-deck-border rounded px-2 py-1 text-xs text-deck-text max-w-[70%]">
+                <span className="truncate">📎 {a.name}</span>
+                <button
+                  onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                  className="opacity-60 shrink-0"
+                  title="첨부 제거"
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="p-2 space-y-2">
+          <input ref={fileRef} type="file" multiple className="hidden" onChange={onFilePick} />
+          <textarea
+            ref={taRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter sends; Shift+Enter is a newline. On mobile the soft keyboard's
+              // return arrives as a plain Enter, which is what we want here.
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            rows={1}
+            placeholder="Claude에게 메시지…"
+            style={{ maxHeight: 160 }}
+            className="w-full resize-none overflow-y-auto bg-deck-surface border border-deck-border rounded-lg px-3 py-2 text-sm text-deck-text outline-none focus:border-deck-accent"
+          />
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMenu(menu === 'add' ? null : 'add')}
+              disabled={uploading}
+              className="shrink-0 w-8 h-8 rounded-lg bg-deck-surface border border-deck-border text-deck-text-dim flex items-center justify-center text-lg disabled:opacity-40"
+              title="추가"
+            >
+              {uploading ? '⏳' : '＋'}
+            </button>
+            <button
+              onClick={() => setMenu(menu === 'model' ? null : 'model')}
+              className="shrink-0 h-8 px-2.5 rounded-lg bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1"
+              title="모델 전환"
+            >
+              ⚡ {modelLabel}
+            </button>
+            <div className="flex-1" />
+            {busy ? (
+              // While a turn is running, the useful button is 중단 — not a second
+              // 보내기. The CLI takes an interrupt control frame and stops mid-answer.
+              <button
+                onClick={interrupt}
+                className="shrink-0 px-4 h-8 rounded-lg bg-red-500/20 text-red-400 text-sm font-medium"
+                title="답변 중단"
+              >
+                중단
+              </button>
+            ) : (
+              <button
+                onClick={send}
+                disabled={!draft.trim() && !attachments.length}
+                className="shrink-0 px-4 h-8 rounded-lg bg-deck-accent text-white text-sm font-medium disabled:opacity-40"
+              >
+                보내기
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function ChatRow({ item }: { item: ChatItem }) {
+function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) => void }) {
   if (item.kind === 'session') {
     return (
       <div className="text-[11px] text-deck-muted border border-deck-border rounded-lg px-3 py-2">
@@ -192,6 +357,8 @@ function ChatRow({ item }: { item: ChatItem }) {
 
   if (item.kind === 'tool') return <ToolRow item={item} />;
 
+  if (item.kind === 'ask') return <AskRow item={item} onAnswer={onAnswer} />;
+
   // result
   return (
     <div className="text-[11px] text-deck-muted border-t border-deck-border pt-2 mt-2">
@@ -204,6 +371,68 @@ function ChatRow({ item }: { item: ChatItem }) {
         턴 {item.turns ?? '?'}
         {item.costUsd != null && ` · $${item.costUsd.toFixed(4)}`}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Claude asking the user a question.
+ *
+ * Headless mode cannot prompt: the CLI answers AskUserQuestion itself with "The
+ * user did not answer the questions" the moment it's called. But the questions and
+ * options ride along in the tool input, so we render them as real buttons and send
+ * the pick as the next user turn — which is exactly how Claude expects to be
+ * answered ("just tell me which one you want"). Tap instead of typing.
+ */
+function AskRow({ item, onAnswer }: {
+  item: Extract<ChatItem, { kind: 'ask' }>;
+  onAnswer: (text: string) => void;
+}) {
+  const [picked, setPicked] = useState<string[]>([]);
+
+  const answer = (q: AskQuestion, label: string) => {
+    if (q.multiSelect) {
+      setPicked((p) => (p.includes(label) ? p.filter((x) => x !== label) : [...p, label]));
+      return;
+    }
+    setPicked([label]);
+    onAnswer(label);
+  };
+
+  return (
+    <div className="space-y-2">
+      {item.questions.map((q, qi) => (
+        <div key={qi} className="border border-deck-accent/40 bg-deck-accent/5 rounded-lg p-3 space-y-2">
+          {q.header && <div className="text-[10px] uppercase tracking-wide text-deck-accent">{q.header}</div>}
+          <div className="text-sm text-deck-text">{q.question}</div>
+          <div className="space-y-1.5">
+            {q.options.map((o) => {
+              const on = picked.includes(o.label);
+              return (
+                <button
+                  key={o.label}
+                  onClick={() => answer(q, o.label)}
+                  className={`w-full text-left px-3 py-2 rounded-lg border text-xs ${
+                    on ? 'border-deck-accent bg-deck-accent/20 text-deck-text' : 'border-deck-border text-deck-text'
+                  }`}
+                >
+                  <div className="font-medium">{o.label}</div>
+                  {o.description && <div className="text-deck-muted mt-0.5">{o.description}</div>}
+                </button>
+              );
+            })}
+          </div>
+          {q.multiSelect && (
+            <button
+              onClick={() => { if (picked.length) onAnswer(picked.join(', ')); }}
+              disabled={!picked.length}
+              className="w-full py-2 rounded-lg bg-deck-accent text-white text-xs font-medium disabled:opacity-40"
+            >
+              {picked.length ? `${picked.length}개 선택 · 보내기` : '선택하세요'}
+            </button>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

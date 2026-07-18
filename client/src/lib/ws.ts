@@ -6,6 +6,13 @@ class AgentDeckWS {
   private reconnectTimer: number | null = null;
   private livenessTimer: number | null = null;
   private token: string | null = null;
+  // Messages sent while the socket wasn't OPEN (still connecting, or between a
+  // drop and the reconnect). Without this they were silently dropped — so a
+  // native:open / terminal:attach fired at mount, before the socket finished
+  // connecting, vanished, and the session only recovered on a manual refresh.
+  // Flushed in order the instant the socket opens. Bounded so a long outage can't
+  // grow it without limit.
+  private sendQueue: string[] = [];
 
   constructor() {
     // Mobile Safari (iPad/iPhone) freezes background tabs and silently drops the
@@ -39,7 +46,13 @@ class AgentDeckWS {
 
     this.ws.onopen = () => {
       console.log('[WS] Connected');
-      // Emit 'open' to all listeners so components can re-attach
+      // Flush anything queued while we were connecting/reconnecting FIRST, so a
+      // native:open / terminal:attach that fired before the socket was ready
+      // actually reaches the server instead of being lost.
+      const queued = this.sendQueue;
+      this.sendQueue = [];
+      for (const m of queued) this.ws?.send(m);
+      // Then emit 'open' so components can re-attach.
       this.listeners.get('open')?.forEach((fn) => fn({}));
     };
 
@@ -119,8 +132,12 @@ class AgentDeckWS {
   }
 
   send(event: string, payload: any) {
+    const msg = JSON.stringify({ event, payload });
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ event, payload }));
+      this.ws.send(msg);
+    } else {
+      this.sendQueue.push(msg);
+      if (this.sendQueue.length > 200) this.sendQueue.shift();
     }
   }
 

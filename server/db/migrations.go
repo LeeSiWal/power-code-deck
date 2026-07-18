@@ -55,6 +55,14 @@ CREATE TRIGGER IF NOT EXISTS logs_ad AFTER DELETE ON logs BEGIN
 END;
 `
 
+// The native track resumes a conversation with `claude --resume <session_id>`,
+// where the id is Claude's own (from system/init) — not our agent id. It has to
+// outlive the process, so it lives on the agent row. Non-fatal if it already
+// exists, like the other ALTERs here.
+const nativeSessionMigration = `
+ALTER TABLE agents ADD COLUMN claude_session_id TEXT DEFAULT '';
+`
+
 const colorMigration = `
 ALTER TABLE agents ADD COLUMN color_hue INTEGER DEFAULT 220;
 ALTER TABLE agents ADD COLUMN color_name TEXT DEFAULT 'blue';
@@ -99,6 +107,9 @@ func Migrate(db *sql.DB) error {
 	// Keep the FTS index in sync with the logs table (no-op / non-fatal if FTS
 	// isn't available on this build).
 	db.Exec(logsFtsTriggerMigration)
+
+	// Native resume id — may already exist, non-fatal
+	db.Exec(nativeSessionMigration)
 
 	// Color columns — may already exist, non-fatal
 	for _, stmt := range []string{

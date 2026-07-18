@@ -240,6 +240,23 @@ func (s *AgentService) Delete(id string) error {
 	return err
 }
 
+// ClaudeSessionID returns the Claude conversation id we last saw for this agent,
+// or "" if it never ran natively. This is what --resume takes.
+func (s *AgentService) ClaudeSessionID(id string) string {
+	var sid string
+	_ = s.db.QueryRow("SELECT COALESCE(claude_session_id, '') FROM agents WHERE id = ?", id).Scan(&sid)
+	return sid
+}
+
+// SetClaudeSessionID remembers the conversation so a later open can resume it.
+// Best-effort: failing to record it costs continuity, never correctness.
+func (s *AgentService) SetClaudeSessionID(id, sessionID string) {
+	if id == "" || sessionID == "" {
+		return
+	}
+	_, _ = s.db.Exec("UPDATE agents SET claude_session_id = ? WHERE id = ?", sessionID, id)
+}
+
 func (s *AgentService) Restart(id string) (*Agent, error) {
 	agent, err := s.Get(id)
 	if err != nil {
