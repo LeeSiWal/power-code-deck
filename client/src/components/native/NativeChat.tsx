@@ -204,11 +204,10 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
       : text;
     sendText(msg);
     setAttachments([]);
-    // No local echo: the CLI replays our own turn back on stdout
-    // (--replay-user-messages), so it arrives as a real `user` event and lands in
-    // the server's history like everything else. Echoing locally as well would
-    // print the message twice — and, worse, the local copy was invisible to the
-    // server, so it vanished on every reconnect (history replaces our events).
+    // No local echo: the server records the user turn the moment it's sent
+    // (NativeService.Send) and fans it out, so it arrives like every other event and
+    // survives a reconnect. A local copy would print twice, and — being invisible to
+    // the server — would vanish whenever history replaced our events.
     setDraft('');
   }, [draft, attachments, sendText]);
 
@@ -372,25 +371,30 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
               {currentMode.label}
             </button>
             <div className="flex-1" />
-            {busy ? (
-              // While a turn is running, the useful button is 중단 — not a second
-              // 보내기. The CLI takes an interrupt control frame and stops mid-answer.
+            {/* Sending mid-turn is allowed. Measured against the real CLI: a message
+                written to stdin while a turn is in flight neither interrupts nor
+                steers it — the running answer completes untouched, then the queued
+                message starts its own turn immediately. So the button stays, and
+                only its label changes to say where the message is going. Hiding it
+                (as this did before) left Enter still sending, so keyboard and touch
+                users had different rules. */}
+            {busy && (
               <button
                 onClick={interrupt}
-                className="shrink-0 px-4 h-8 rounded-lg bg-red-500/20 text-red-400 text-sm font-medium"
+                className="shrink-0 px-3 h-8 rounded-lg bg-red-500/20 text-red-400 text-sm font-medium"
                 title="답변 중단"
               >
                 중단
               </button>
-            ) : (
-              <button
-                onClick={send}
-                disabled={!draft.trim() && !attachments.length}
-                className="shrink-0 px-4 h-8 rounded-lg bg-deck-accent text-white text-sm font-medium disabled:opacity-40"
-              >
-                보내기
-              </button>
             )}
+            <button
+              onClick={send}
+              disabled={!draft.trim() && !attachments.length}
+              className="shrink-0 px-4 h-8 rounded-lg bg-deck-accent text-white text-sm font-medium disabled:opacity-40"
+              title={busy ? '현재 답변이 끝나면 이어서 처리됩니다' : undefined}
+            >
+              {busy ? '이어서' : '보내기'}
+            </button>
           </div>
         </div>
       </div>
