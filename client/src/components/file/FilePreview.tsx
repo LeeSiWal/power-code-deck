@@ -29,7 +29,6 @@ export function FilePreview({ path, content, agentId, onEdit }: FilePreviewProps
   const fileName = path.split('/').pop() || path;
   const kind = fileKind(fileName);
   const isMarkdown = /\.(md|markdown|mdx)$/i.test(fileName);
-  const [viewMode, setViewMode] = useState<'raw' | 'preview'>(isMarkdown ? 'preview' : 'raw');
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState('');
 
@@ -50,26 +49,20 @@ export function FilePreview({ path, content, agentId, onEdit }: FilePreviewProps
     <div className="flex flex-col h-full bg-deck-bg">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-deck-border shrink-0">
         <span className="text-xs font-mono text-deck-text-dim truncate">{fileName}</span>
-        <div className="flex items-center gap-1.5">
-          {isMarkdown && (
-            <button
-              onClick={() => setViewMode(viewMode === 'raw' ? 'preview' : 'raw')}
-              className="text-xs px-2 py-0.5 rounded bg-deck-surface text-deck-text-dim hover:bg-deck-border"
-            >
-              {viewMode === 'raw' ? 'Preview' : 'Raw'}
-            </button>
-          )}
-          {onEdit && kind === 'text' && (
-            <button onClick={onEdit} className="text-xs px-2 py-0.5 rounded bg-deck-surface text-deck-text hover:bg-deck-border">
-              Edit
-            </button>
-          )}
-        </div>
+        {/* No Raw/Preview toggle: "Raw" only ever duplicated what Edit already shows
+            (the source), and it existed for markdown alone — so the way to see a
+            file's source depended on its extension. Now there are two states for
+            every text file: rendered/plain here, source in Edit. */}
+        {onEdit && kind === 'text' && (
+          <button onClick={onEdit} className="text-xs px-2 py-0.5 rounded bg-deck-surface text-deck-text hover:bg-deck-border">
+            {isMarkdown ? '원본 편집' : 'Edit'}
+          </button>
+        )}
       </div>
 
       <div className={`flex-1 overflow-auto min-h-0 ${kind === 'text' ? 'selectable' : ''}`}>
         {kind === 'text' ? (
-          isMarkdown && viewMode === 'preview' ? (
+          isMarkdown ? (
             <MarkdownPreview content={content} />
           ) : (
             <pre className="p-3 text-xs font-mono text-deck-text leading-relaxed whitespace-pre-wrap break-words selectable">

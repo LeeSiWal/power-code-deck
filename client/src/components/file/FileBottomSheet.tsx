@@ -48,6 +48,7 @@ export function FileBottomSheet({ open, onClose, agentId, workingDir }: FileBott
                 <FilePreview
                   path={selectedFile}
                   content={fileContent}
+                  agentId={agentId}
                   onEdit={() => setEditing(true)}
                 />
               </div>
