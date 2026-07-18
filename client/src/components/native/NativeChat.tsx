@@ -369,8 +369,16 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
                 {c.description && (
                   <span className="text-xs text-deck-text-dim truncate">{c.description}</span>
                 )}
-                <span className="ml-auto shrink-0 text-[10px] text-deck-text-faint uppercase">
-                  {c.scope === 'project' ? '프로젝트' : c.type === 'agent' ? '에이전트' : c.type === 'skill' ? '스킬' : '사용자'}
+                <span className="ml-auto shrink-0 text-[10px] text-deck-text-faint">
+                  {c.scope === 'plugin'
+                    ? `플러그인${c.type === 'skill' ? '·스킬' : ''}`
+                    : c.scope === 'project'
+                      ? '프로젝트'
+                      : c.type === 'agent'
+                        ? '에이전트'
+                        : c.type === 'skill'
+                          ? '스킬'
+                          : '사용자'}
                 </span>
               </button>
             ))}

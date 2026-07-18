@@ -143,6 +143,7 @@ func SlashCommands(agentSvc *services.AgentService) http.HandlerFunc {
 		// Home first, then project, so the project's version of a name wins.
 		if home, err := os.UserHomeDir(); err == nil {
 			scanSlashRoot(filepath.Join(home, ".claude"), "user", add)
+			scanPlugins(home, add) // namespaced, so it can't collide with the above
 		}
 		if projectDir != "" {
 			scanSlashRoot(filepath.Join(projectDir, ".claude"), "project", add)
@@ -154,6 +155,132 @@ func SlashCommands(agentSvc *services.AgentService) http.HandlerFunc {
 		slashCache[projectDir] = slashCacheEntry{cmds: commands, at: time.Now()}
 		jsonResponse(w, commands)
 	}
+}
+
+type claudeSettings struct {
+	EnabledPlugins map[string]bool `json:"enabledPlugins"`
+}
+
+// scanPlugins adds the commands and skills of every ENABLED plugin, which are a
+// large part of what a user can actually invoke and were missing entirely.
+//
+// They are only reachable under their plugin namespace — verified against the real
+// CLI: "/newton:mission" expands, while "/mission" answers "Unknown command". So
+// the name we offer must carry the prefix or the entry would be a dead one.
+func scanPlugins(home string, add func(SlashCommand)) {
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		return
+	}
+	var s claudeSettings
+	if json.Unmarshal(data, &s) != nil {
+		return
+	}
+	for key, enabled := range s.EnabledPlugins {
+		if !enabled {
+			continue
+		}
+		// "newton@newton-marketplace"
+		name, marketplace, ok := strings.Cut(key, "@")
+		if !ok || name == "" {
+			continue
+		}
+		dir := pluginDir(home, marketplace, name)
+		if dir == "" {
+			continue
+		}
+
+		cmdDir := filepath.Join(dir, "commands")
+		if entries, err := os.ReadDir(cmdDir); err == nil {
+			for _, e := range entries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+					continue
+				}
+				add(SlashCommand{
+					Name:        "/" + name + ":" + strings.TrimSuffix(e.Name(), ".md"),
+					Type:        "command",
+					Description: readFirstLine(filepath.Join(cmdDir, e.Name())),
+					Scope:       "plugin",
+				})
+			}
+		}
+
+		skillDir := filepath.Join(dir, "skills")
+		if entries, err := os.ReadDir(skillDir); err == nil {
+			for _, e := range entries {
+				skill, desc := e.Name(), ""
+				if e.IsDir() {
+					desc = skillDescription(filepath.Join(skillDir, skill, "SKILL.md"))
+				} else {
+					if !strings.HasSuffix(skill, ".md") {
+						continue
+					}
+					skill = strings.TrimSuffix(skill, ".md")
+				}
+				add(SlashCommand{
+					Name:        "/" + name + ":" + skill,
+					Type:        "skill",
+					Description: desc,
+					Scope:       "plugin",
+				})
+			}
+		}
+	}
+}
+
+// pluginDir resolves an enabled plugin's files: the newest non-orphaned version in
+// the marketplace cache, else the marketplace checkout itself (a single-plugin repo
+// keeps commands/ and skills/ at its root). Orphaned versions are ones a newer
+// install superseded — listing them would offer commands that no longer exist.
+func pluginDir(home, marketplace, name string) string {
+	cache := filepath.Join(home, ".claude", "plugins", "cache", marketplace, name)
+	if entries, err := os.ReadDir(cache); err == nil {
+		best, bestMod := "", time.Time{}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			p := filepath.Join(cache, e.Name())
+			if _, err := os.Stat(filepath.Join(p, ".orphaned_at")); err == nil {
+				continue
+			}
+			if info, err := e.Info(); err == nil && info.ModTime().After(bestMod) {
+				best, bestMod = p, info.ModTime()
+			}
+		}
+		if best != "" {
+			return best
+		}
+	}
+	mk := filepath.Join(home, ".claude", "plugins", "marketplaces", marketplace)
+	if st, err := os.Stat(mk); err == nil && st.IsDir() {
+		return mk
+	}
+	return ""
+}
+
+// skillDescription pulls `description:` out of a SKILL.md front-matter block.
+// readFirstLine can't be reused: it skips the "---" fence and would return the
+// `name:` line instead.
+func skillDescription(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for i := 0; scanner.Scan() && i < 30; i++ {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "description:") {
+			continue
+		}
+		d := strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "description:")), `"'`)
+		if r := []rune(d); len(r) > 80 {
+			return string(r[:80]) + "…"
+		}
+		return d
+	}
+	return ""
 }
 
 // scanSlashRoot collects one .claude directory's commands, agent mentions and skills.
