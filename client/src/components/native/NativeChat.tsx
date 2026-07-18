@@ -400,17 +400,15 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
 
 function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) => void }) {
   if (item.kind === 'session') {
+    // Model / version / cwd are chrome, not conversation — the toolbar already shows
+    // the model, so rendering them here just pushes the chat down on every session.
+    // The bridge warning is the opposite: without our bridge the CLI denies every
+    // gated tool AND still calls the turn a success. That silence is exactly what we
+    // must not reproduce, so it stays — and is now the only reason this row renders.
+    if (item.bridgeOk) return null;
     return (
-      <div className="text-[11px] text-deck-muted border border-deck-border rounded-lg px-3 py-2">
-        <div>{item.model} · v{item.version}</div>
-        <div className="truncate">{item.cwd}</div>
-        {/* Without our bridge the CLI denies every gated tool AND still calls the
-            turn a success. That silence is exactly what we must not reproduce. */}
-        {!item.bridgeOk && (
-          <div className="text-red-400 mt-1">
-            ⚠ 승인 브리지가 연결되지 않았습니다 — 권한이 필요한 도구가 전부 자동 거부됩니다.
-          </div>
-        )}
+      <div className="text-[11px] text-red-400 border border-red-400/40 bg-red-400/5 rounded-lg px-3 py-2">
+        ⚠ 승인 브리지가 연결되지 않았습니다 — 권한이 필요한 도구가 전부 자동 거부됩니다.
       </div>
     );
   }
@@ -437,18 +435,14 @@ function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) 
 
   if (item.kind === 'ask') return <AskRow item={item} onAnswer={onAnswer} />;
 
-  // result
+  // result — the turn/cost counters were noise between every exchange, so the row
+  // now renders only when it has something the user must act on. "success" describes
+  // the turn, not the work: a turn where every tool was blocked still ends
+  // successful, so say so rather than implying it happened.
+  if (!item.denied.length) return null;
   return (
-    <div className="text-[11px] text-deck-muted border-t border-deck-border pt-2 mt-2">
-      {/* "success" describes the turn, not the work: a turn where every tool was
-          blocked still ends successful. Say so rather than implying it happened. */}
-      {item.denied.length > 0 && (
-        <div className="text-amber-400">거부됨: {item.denied.join(', ')} — 해당 작업은 실행되지 않았습니다.</div>
-      )}
-      <div>
-        턴 {item.turns ?? '?'}
-        {item.costUsd != null && ` · $${item.costUsd.toFixed(4)}`}
-      </div>
+    <div className="text-[11px] text-amber-400 border-t border-deck-border pt-2 mt-2">
+      거부됨: {item.denied.join(', ')} — 해당 작업은 실행되지 않았습니다.
     </div>
   );
 }
