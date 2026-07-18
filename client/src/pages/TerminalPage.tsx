@@ -637,10 +637,17 @@ export function TerminalPage() {
           )}
 
           {/* Bottom controls — optional Prompt Bar (desktop) / mandatory on
-              iPad + touch, plus PTY control keys (arrows / Enter / Esc / …). */}
-          {activeTab === 'terminal' && (
+              iPad + touch, plus PTY control keys (arrows / Enter / Esc / …).
+              Terminal sessions only: these write raw bytes to a PTY, and a native
+              session has none, so on native chat every key here was a silent no-op
+              (engine.Write finds no session and drops it). The mobile branch already
+              guarded this; desktop did not, leaving a full row of dead buttons.
+              Nothing is lost in native — 중단 replaces Esc/Ctrl+C, approval cards
+              replace y/n, question buttons replace the arrows, and Shift+Tab lives
+              in the composer as the permission-mode switch. */}
+          {activeTab === 'terminal' && !usesNative(agent) && (
             <>
-              {!UNIFIED_INPUT && !usesNative(agent) && (forcePromptBar || promptOpen) && (
+              {!UNIFIED_INPUT && (forcePromptBar || promptOpen) && (
                 <PromptBar
                   agentId={agentId}
                   forced={forcePromptBar}
