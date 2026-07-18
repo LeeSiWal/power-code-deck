@@ -120,6 +120,15 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   }, [agentId]);
 
   const items = useMemo(() => foldEvents(events), [events]);
+
+  // Everything you've sent, oldest first — the composer's ↑ history. Derived from
+  // the conversation rather than tracked separately, so it is already correct after
+  // a reconnect or a resume (the server's history is the source of truth).
+  const sentHistory = useMemo(() => items.flatMap((i) => (i.kind === 'user' ? [i.text] : [])), [items]);
+  // null = not browsing. While browsing, the draft the user had typed is parked in
+  // draftBeforeHist so ↓ past the newest entry can put it back.
+  const [histIdx, setHistIdx] = useState<number | null>(null);
+  const draftBeforeHist = useRef('');
   // Derived from the events, not tracked separately, so it survives a reconnect:
   // the history alone says whether a turn is still in flight.
   const busy = useMemo(() => isTurnActive(events), [events]);
@@ -204,6 +213,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
       : text;
     sendText(msg);
     setAttachments([]);
+    setHistIdx(null); // sending ends history browsing; the next ↑ starts from the newest
     // No local echo: the server records the user turn the moment it's sent
     // (NativeService.Send) and fans it out, so it arrives like every other event and
     // survives a reconnect. A local copy would print twice, and — being invisible to
@@ -323,7 +333,12 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
           <textarea
             ref={taRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              // Typing means you've left the recalled message behind; the next ↑
+              // should start again from the newest entry, not resume mid-walk.
+              if (histIdx !== null) setHistIdx(null);
+            }}
             onKeyDown={(e) => {
               // Shift+Tab cycles the permission mode, like the Claude Code TUI —
               // otherwise Tab would just move focus out of the box.
@@ -331,6 +346,48 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
                 e.preventDefault();
                 cycleMode();
                 return;
+              }
+              // ↑ / ↓ recall what you sent before — the terminal key bar's arrows,
+              // which had no native equivalent. Only from the very start of the box,
+              // so ↑ still moves the caret inside a multi-line draft.
+              if (e.key === 'ArrowUp' && sentHistory.length) {
+                const ta = e.currentTarget;
+                if (histIdx !== null || (ta.selectionStart === 0 && ta.selectionEnd === 0)) {
+                  e.preventDefault();
+                  if (histIdx === null) draftBeforeHist.current = draft;
+                  const next = histIdx === null ? sentHistory.length - 1 : Math.max(0, histIdx - 1);
+                  setHistIdx(next);
+                  setDraft(sentHistory[next]);
+                  return;
+                }
+              }
+              if (e.key === 'ArrowDown' && histIdx !== null) {
+                e.preventDefault();
+                const next = histIdx + 1;
+                if (next >= sentHistory.length) {
+                  setHistIdx(null);
+                  setDraft(draftBeforeHist.current); // hand back the draft ↑ interrupted
+                } else {
+                  setHistIdx(next);
+                  setDraft(sentHistory[next]);
+                }
+                return;
+              }
+              // Esc — the TUI's interrupt, now reachable from the keyboard as well as
+              // the 중단 button. While browsing history it backs out first, so Esc
+              // never stops a turn you were only scrolling past.
+              if (e.key === 'Escape') {
+                if (histIdx !== null) {
+                  e.preventDefault();
+                  setHistIdx(null);
+                  setDraft(draftBeforeHist.current);
+                  return;
+                }
+                if (busy) {
+                  e.preventDefault();
+                  interrupt();
+                  return;
+                }
               }
               // Enter sends; Shift+Enter is a newline. On mobile the soft keyboard's
               // return arrives as a plain Enter, which is what we want here.
