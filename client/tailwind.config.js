@@ -6,13 +6,18 @@ export default {
     extend: {
       colors: {
         deck: {
+          // 3-step near-black ground with a faint indigo bias.
           bg: '#0a0a0f',
-          surface: '#12121a',
-          border: '#1e1e2e',
+          surface: '#101018',   // panels, inputs
+          raised: '#17171f',    // menus, elevated cards
+          border: '#26262f',    // hairline — lifted for definition
+          'border-soft': '#1b1b24',
           accent: '#6366f1',
           'accent-light': '#818cf8',
-          text: '#e2e8f0',
-          'text-dim': '#64748b',
+          // Cool slate text, lifted so secondary/tertiary stay legible on near-black.
+          text: '#e7e9f0',
+          'text-dim': '#8791a4',
+          'text-faint': '#565f73',
           success: '#22c55e',
           warning: '#f59e0b',
           danger: '#ef4444',

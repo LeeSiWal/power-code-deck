@@ -950,7 +950,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
           ['--term-font-family' as any]: "'D2Coding', 'Nanum Gothic Coding', monospace",
           ['--term-font-size' as any]: `${resolvedFontSize}px`,
           ['--term-bg' as any]: '#0a0a0f',
-          ['--term-fg' as any]: '#e2e8f0',
+          ['--term-fg' as any]: '#e7e9f0',
           ['--term-cursor' as any]: '#6366f1',
         }}
       />

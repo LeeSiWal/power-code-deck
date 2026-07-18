@@ -52,12 +52,21 @@ type NativeService struct {
 	onSessionID func(agentID, claudeSessionID string)
 	// resumeIDFor supplies the last known conversation id for an agent.
 	resumeIDFor func(agentID string) string
+
+	// saveConfig / loadConfig persist the chosen model + permission mode per agent,
+	// so a restart or another device resumes with the same choices rather than
+	// snapping back to defaults. Injected for the same reason as the resume id: this
+	// service owns processes, not rows.
+	saveConfig func(agentID, model, mode string)
+	loadConfig func(agentID string) (model, mode string)
 }
 
 type nativeSession struct {
 	id     string
 	driver *ClaudeDriver
 	cwd    string
+	model  string // remembered so a mode switch keeps the model, and vice-versa
+	mode   string // permission mode: "" | acceptEdits | plan | bypassPermissions
 	// history keeps the events already emitted, so a device that connects late (or
 	// reconnects from another device) can render the conversation so far. This is
 	// the native track's answer to terminal replay — and it needs no serializer,
@@ -97,6 +106,35 @@ func (s *NativeService) SetPersistence(save func(agentID, claudeSessionID string
 	s.mu.Unlock()
 }
 
+// SetConfigPersistence wires where a session's model + permission mode are stored.
+func (s *NativeService) SetConfigPersistence(save func(agentID, model, mode string), load func(agentID string) (string, string)) {
+	s.mu.Lock()
+	s.saveConfig = save
+	s.loadConfig = load
+	s.mu.Unlock()
+}
+
+// Config returns a running session's current model + permission mode, so a client
+// opening the page can display the choices the session is actually using (which may
+// have been set on another device) rather than its own last local guess.
+func (s *NativeService) Config(sessionID string) (model, mode string) {
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if sess != nil {
+		return sess.model, sess.mode
+	}
+	// Not running: fall back to what's persisted, so a cold open still shows the
+	// remembered choices.
+	s.mu.RLock()
+	load := s.loadConfig
+	s.mu.RUnlock()
+	if load != nil {
+		return load(sessionID)
+	}
+	return "", ""
+}
+
 // SetHandlers wires the hub's fan-out. Called once at startup.
 func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApproval func(PermissionRequest)) {
 	s.mu.Lock()
@@ -116,7 +154,16 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 // Start launches a native Claude session for an agent. Idempotent: starting one
 // that already runs is a no-op, so a second device opening the page doesn't spawn
 // a second agent.
-func (s *NativeService) Start(sessionID, cwd, model, resumeID string) error {
+func (s *NativeService) Start(sessionID, cwd, model, resumeID, mode string) error {
+	return s.startSession(sessionID, cwd, model, resumeID, mode, true)
+}
+
+// startSession is the shared launch path. fromDB distinguishes a fresh open (where
+// the caller's model/mode are only hints and the session's saved choices win) from
+// a restart (where the caller passes the exact model/mode to use, so the DB must
+// not override them — e.g. switching model must keep the current default mode, not
+// resurrect an old persisted one).
+func (s *NativeService) startSession(sessionID, cwd, model, resumeID, mode string, fromDB bool) error {
 	s.mu.Lock()
 	if _, ok := s.sessions[sessionID]; ok {
 		s.mu.Unlock()
@@ -136,19 +183,38 @@ func (s *NativeService) Start(sessionID, cwd, model, resumeID string) error {
 		}
 	}
 
+	// On a fresh open the session's remembered model + mode win over the client's
+	// local hint, so every device resumes with the same choices. (A restart passes
+	// exact values and skips this.)
+	if fromDB {
+		s.mu.RLock()
+		load := s.loadConfig
+		s.mu.RUnlock()
+		if load != nil {
+			savedModel, savedMode := load(sessionID)
+			if savedModel != "" {
+				model = savedModel
+			}
+			if savedMode != "" {
+				mode = savedMode
+			}
+		}
+	}
+
 	token, err := s.tokens.Issue(sessionID)
 	if err != nil {
 		return err
 	}
 
 	d := NewClaudeDriver(ClaudeConfig{
-		SessionID:    sessionID,
-		Cwd:          cwd,
-		Model:        model,
-		ResumeID:     resumeID,
-		ApproveURL:   s.baseURL + "/internal/native/approve",
-		ApproveToken: token,
-		SelfPath:     s.selfBin,
+		SessionID:      sessionID,
+		Cwd:            cwd,
+		Model:          model,
+		PermissionMode: mode,
+		ResumeID:       resumeID,
+		ApproveURL:     s.baseURL + "/internal/native/approve",
+		ApproveToken:   token,
+		SelfPath:       s.selfBin,
 	})
 	if err := d.Start(); err != nil {
 		// A stale resume id (its transcript was deleted, or the CLI rejects it)
@@ -156,7 +222,7 @@ func (s *NativeService) Start(sessionID, cwd, model, resumeID string) error {
 		// once, rather than failing every open from here on.
 		if resumeID != "" {
 			d = NewClaudeDriver(ClaudeConfig{
-				SessionID: sessionID, Cwd: cwd, Model: model,
+				SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: mode,
 				ApproveURL: s.baseURL + "/internal/native/approve", ApproveToken: token,
 				SelfPath: s.selfBin,
 			})
@@ -170,7 +236,7 @@ func (s *NativeService) Start(sessionID, cwd, model, resumeID string) error {
 		}
 	}
 
-	sess := &nativeSession{id: sessionID, driver: d, cwd: cwd}
+	sess := &nativeSession{id: sessionID, driver: d, cwd: cwd, model: model, mode: mode}
 	// A resumed session's PRIOR conversation is not re-emitted as events by
 	// `claude --resume` — it just continues. So seed history from the transcript on
 	// disk, or the chat opens blank until the next reply. (Only when we actually
@@ -180,7 +246,14 @@ func (s *NativeService) Start(sessionID, cwd, model, resumeID string) error {
 	}
 	s.mu.Lock()
 	s.sessions[sessionID] = sess
+	save := s.saveConfig
 	s.mu.Unlock()
+
+	// Remember the choices this session actually launched with, so the next open —
+	// on this device or another — resumes with them.
+	if save != nil {
+		save(sessionID, model, mode)
+	}
 
 	go s.pump(sess)
 	return nil
@@ -233,11 +306,11 @@ func (s *NativeService) pump(sess *nativeSession) {
 	s.mu.Unlock()
 }
 
-// SetModel switches a running session to a new model by restarting its driver with
-// the new --model, resuming the same Claude conversation so nothing is lost. The
-// new session's system/init (with the new model) flows to watchers as a fresh
-// banner. model "" reverts to the CLI default.
-func (s *NativeService) SetModel(sessionID, model string) error {
+// restart replaces a running session's driver with a new one — same conversation
+// (resume), new model + permission mode — so a model or mode switch loses nothing.
+// The new system/init flows to watchers as a fresh banner. Shared by SetModel and
+// SetMode; each keeps the OTHER setting from the session it's replacing.
+func (s *NativeService) restart(sessionID, model, mode string) error {
 	s.mu.Lock()
 	old := s.sessions[sessionID]
 	if old != nil {
@@ -249,8 +322,32 @@ func (s *NativeService) SetModel(sessionID, model string) error {
 	}
 	resumeID := old.driver.ClaudeSessionID()
 	cwd := old.cwd
-	old.driver.Stop() // its pump exits; the guard above keeps it from evicting the new one
-	return s.Start(sessionID, cwd, model, resumeID)
+	old.driver.Stop() // its pump exits; the pump guard keeps it from evicting the new one
+	return s.startSession(sessionID, cwd, model, resumeID, mode, false)
+}
+
+// SetModel switches model, keeping the current permission mode.
+func (s *NativeService) SetModel(sessionID, model string) error {
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	mode := ""
+	if sess != nil {
+		mode = sess.mode
+	}
+	return s.restart(sessionID, model, mode)
+}
+
+// SetMode switches the permission mode (the TUI's Shift+Tab), keeping the model.
+func (s *NativeService) SetMode(sessionID, mode string) error {
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	model := ""
+	if sess != nil {
+		model = sess.model
+	}
+	return s.restart(sessionID, model, mode)
 }
 
 // emit records an event in the session's history (bounded) and fans it out to

@@ -257,6 +257,24 @@ func (s *AgentService) SetClaudeSessionID(id, sessionID string) {
 	_, _ = s.db.Exec("UPDATE agents SET claude_session_id = ? WHERE id = ?", sessionID, id)
 }
 
+// NativeConfig returns the remembered native-chat model + permission mode for an
+// agent (both "" if never set — meaning Claude's defaults).
+func (s *AgentService) NativeConfig(id string) (model, mode string) {
+	_ = s.db.QueryRow(
+		"SELECT COALESCE(native_model, ''), COALESCE(native_mode, '') FROM agents WHERE id = ?", id,
+	).Scan(&model, &mode)
+	return model, mode
+}
+
+// SetNativeConfig persists the native-chat model + permission mode so a restart or
+// another device resumes with the same choices. Best-effort, like the resume id.
+func (s *AgentService) SetNativeConfig(id, model, mode string) {
+	if id == "" {
+		return
+	}
+	_, _ = s.db.Exec("UPDATE agents SET native_model = ?, native_mode = ? WHERE id = ?", model, mode, id)
+}
+
 func (s *AgentService) Restart(id string) (*Agent, error) {
 	agent, err := s.Get(id)
 	if err != nil {

@@ -20,7 +20,7 @@ export function BottomNav() {
             key={item.href}
             to={item.href}
             className="flex flex-col items-center gap-1 py-3 px-5 text-xs min-w-[56px]"
-            style={{ color: active ? '#6366f1' : '#64748b' }}
+            style={{ color: active ? '#6366f1' : '#8791a4' }}
           >
             <div className="relative">
               <item.Icon size={22} />

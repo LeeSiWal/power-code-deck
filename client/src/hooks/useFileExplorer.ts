@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { api } from '../lib/api';
 import { agentDeckWS } from '../lib/ws';
+import { fileKind } from '../components/file/FilePreview';
 
 interface FileNode {
   name: string;
@@ -71,14 +72,21 @@ export function useFileExplorer(agentId: string | null) {
   const openFile = useCallback(
     async (path: string) => {
       setSelectedFile(path);
+      setChangedFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+      // Media (image/pdf/video/audio) is loaded by FilePreview itself from the raw
+      // endpoint — reading it as a JSON text string here would corrupt it. Mark it
+      // open with empty content so the preview panel shows.
+      if (fileKind(path.split('/').pop() || '') !== 'text') {
+        setFileContent('');
+        return;
+      }
       try {
         const data = await api.readFile(path, agentId || undefined);
         setFileContent(data.content);
-        setChangedFiles((prev) => {
-          const next = new Set(prev);
-          next.delete(path);
-          return next;
-        });
       } catch (err) {
         console.error('Failed to read file:', err);
         setFileContent(null);

@@ -311,7 +311,7 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		// history replay — otherwise events racing the reply would be lost.
 		c.watchingAgent = payload.AgentID
 		if !h.native.Running(payload.AgentID) {
-			if err := h.native.Start(payload.AgentID, payload.Cwd, payload.Model, payload.Resume); err != nil {
+			if err := h.native.Start(payload.AgentID, payload.Cwd, payload.Model, payload.Resume, payload.Mode); err != nil {
 				log.Printf("native: start %s failed: %v", payload.AgentID, err)
 				c.sendEvent(EventNativeError, NativeErrorPayload{
 					AgentID: payload.AgentID,
@@ -350,6 +350,18 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 			c.sendEvent(EventNativeError, NativeErrorPayload{
 				AgentID: payload.AgentID,
 				Message: "모델 전환 실패: " + err.Error(),
+			})
+		}
+
+	case EventNativeSetMode:
+		var payload NativeSetModePayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
+			return
+		}
+		if err := h.native.SetMode(payload.AgentID, payload.Mode); err != nil {
+			c.sendEvent(EventNativeError, NativeErrorPayload{
+				AgentID: payload.AgentID,
+				Message: "모드 전환 실패: " + err.Error(),
 			})
 		}
 
@@ -551,8 +563,10 @@ func (h *Hub) sendNativeHistory(c *Client, agentID string) {
 	for _, ev := range evs {
 		raw = append(raw, ev.Raw)
 	}
+	model, mode := h.native.Config(agentID)
 	c.sendEvent(EventNativeHistory, NativeHistoryPayload{
 		AgentID: agentID, Events: raw, Running: h.native.Running(agentID),
+		Model: model, Mode: mode,
 	})
 
 	pending := h.native.Pending(agentID)

@@ -112,6 +112,11 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
   // deltas build a bubble in place and the final message replaces its text rather
   // than appending a new one.
   let streamAt = -1;
+  // The session banner (model · version · cwd) is emitted on every system/init —
+  // which fires on each (re)connect and each model switch, so it would stack a
+  // duplicate every time ("매번 나온다"). Only render it when the info actually
+  // changes: once at the start, and again where a real model switch happened.
+  let lastSessionKey = '';
 
   for (const ev of events) {
     if (ev.type === 'stream_event') {
@@ -137,6 +142,9 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
       // possible. Without it the CLI denies every gated tool and still reports the
       // turn as a success — so this is worth showing, not hiding.
       const bridgeOk = (ev.mcp_servers ?? []).some((m) => m.name === 'pcd' && m.status === 'connected');
+      const key = `${ev.model ?? ''}|${ev.cwd ?? ''}`;
+      if (key === lastSessionKey) continue; // same session info — don't repeat the banner
+      lastSessionKey = key;
       items.push({
         kind: 'session',
         id: ev.session_id ?? 'init',

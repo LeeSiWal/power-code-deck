@@ -366,7 +366,7 @@ export function TerminalPage() {
                 onCancel={() => setEditing(false)}
               />
             ) : (
-              <FilePreview path={selectedFile} content={fileContent} onEdit={() => setEditing(true)} />
+              <FilePreview path={selectedFile} content={fileContent} agentId={agentId} onEdit={() => setEditing(true)} />
             )}
           </div>
         )}
@@ -631,7 +631,7 @@ export function TerminalPage() {
                   onCancel={() => setEditing(false)}
                 />
               ) : (
-                <FilePreview path={selectedFile} content={fileContent} onEdit={() => setEditing(true)} />
+                <FilePreview path={selectedFile} content={fileContent} agentId={agentId} onEdit={() => setEditing(true)} />
               )}
             </div>
           )}

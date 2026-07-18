@@ -126,7 +126,7 @@ export function CommandPalette() {
       <div className="fixed inset-0 bg-black/50" onClick={() => setCommandPaletteOpen(false)} />
       <div className="relative w-full max-w-lg mx-4 bg-deck-surface border border-deck-border rounded-xl shadow-2xl overflow-hidden">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-deck-border">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5.5" stroke="#64748b" strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="14" y2="14" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round"/></svg>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5.5" stroke="#8791a4" strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="14" y2="14" stroke="#8791a4" strokeWidth="1.5" strokeLinecap="round"/></svg>
           <input
             ref={inputRef}
             type="text"

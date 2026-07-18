@@ -54,7 +54,7 @@ export function ProjectSelectPage() {
       <header className="flex items-center justify-between px-4 py-2 bg-deck-surface border-b border-deck-border shrink-0">
         <span className="text-sm font-medium">PowerCodeDeck</span>
         <button onClick={logout} className="p-1.5 rounded hover:bg-deck-border/30" title="Logout">
-          <IconLogout size={14} color="#64748b" />
+          <IconLogout size={14} color="#8791a4" />
         </button>
       </header>
       <main className="flex-1 overflow-y-auto min-h-0">

@@ -36,7 +36,7 @@ export function toolSpriteType(tool?: string): string {
 export const STATUS_COLOR: Record<ActivityNode['status'], string> = {
   working: '#10b981', // emerald
   thinking: '#f59e0b', // amber
-  idle: '#64748b', // slate
+  idle: '#8791a4', // slate
   done: '#475569', // dim slate
 };
 

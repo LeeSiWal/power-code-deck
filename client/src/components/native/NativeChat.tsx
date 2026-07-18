@@ -38,6 +38,16 @@ const MODELS: { id: string; label: string; desc: string }[] = [
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', desc: '가장 빠름 · 가벼운 작업' },
 ];
 
+// Permission modes — the TUI's Shift+Tab cycle. `id` → --permission-mode.
+// Switching restarts the session on the same conversation (server SetMode).
+// `pill`/`dot` encode risk in colour: neutral → indigo → sky (plan) → amber (careful).
+const MODES: { id: string; label: string; desc: string; pill: string; dot: string }[] = [
+  { id: '', label: '기본', desc: '도구마다 승인 요청', pill: 'border-deck-border bg-deck-surface text-deck-text-dim', dot: 'bg-deck-text-dim' },
+  { id: 'acceptEdits', label: '자동 수정', desc: '파일 편집 자동 승인', pill: 'border-deck-accent/50 bg-deck-accent/10 text-deck-accent-light', dot: 'bg-deck-accent-light' },
+  { id: 'plan', label: '플랜', desc: '실행 없이 계획만 세움', pill: 'border-sky-400/40 bg-sky-400/10 text-sky-300', dot: 'bg-sky-300' },
+  { id: 'bypassPermissions', label: '전체 허용', desc: '모든 도구 자동 승인', pill: 'border-amber-400/45 bg-amber-400/10 text-amber-300', dot: 'bg-amber-300' },
+];
+
 export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pending, setPending] = useState<PendingApproval[]>([]);
@@ -47,13 +57,16 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   const [attachments, setAttachments] = useState<{ name: string; path: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const [modelId, setModelId] = useState(() => localStorage.getItem(`pcd:model:${agentId}`) || '');
-  const [menu, setMenu] = useState<null | 'add' | 'model'>(null);
+  const [modeId, setModeId] = useState(() => localStorage.getItem(`pcd:mode:${agentId}`) || '');
+  const [menu, setMenu] = useState<null | 'add' | 'model' | 'mode'>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const modelIdRef = useRef(modelId);
   modelIdRef.current = modelId;
+  const modeIdRef = useRef(modeId);
+  modeIdRef.current = modeId;
 
   const pickModel = useCallback((id: string) => {
     setMenu(null);
@@ -64,7 +77,22 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
     agentDeckWS.send('native:setModel', { agentId, model: id });
   }, [agentId]);
 
+  const pickMode = useCallback((id: string) => {
+    setMenu(null);
+    if (id === modeIdRef.current) return;
+    setModeId(id);
+    try { localStorage.setItem(`pcd:mode:${agentId}`, id); } catch { /* ignore */ }
+    agentDeckWS.send('native:setMode', { agentId, mode: id });
+  }, [agentId]);
+
+  // Shift+Tab cycles the permission mode, like the Claude Code TUI.
+  const cycleMode = useCallback(() => {
+    const i = MODES.findIndex((m) => m.id === modeIdRef.current);
+    pickMode(MODES[(i + 1) % MODES.length].id);
+  }, [pickMode]);
+
   const modelLabel = MODELS.find((m) => m.id === modelId)?.label ?? modelId ?? 'Auto';
+  const currentMode = MODES.find((m) => m.id === modeId) ?? MODES[0];
 
   // Grow the input with its content (up to a cap, then it scrolls internally).
   useEffect(() => {
@@ -107,6 +135,17 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
       if (p.agentId !== agentId) return;
       setEvents(p.events as StreamEvent[]);
       setRunning(!!p.running);
+      // The session's model/mode are authoritative — they may have been chosen on
+      // another device, or restored from a past session. Sync the toolbar (and this
+      // device's remembered choice) to them so what's shown matches what's running.
+      if (typeof p.model === 'string' && p.model !== modelIdRef.current) {
+        setModelId(p.model);
+        try { localStorage.setItem(`pcd:model:${agentId}`, p.model); } catch { /* ignore */ }
+      }
+      if (typeof p.mode === 'string' && p.mode !== modeIdRef.current) {
+        setModeId(p.mode);
+        try { localStorage.setItem(`pcd:mode:${agentId}`, p.mode); } catch { /* ignore */ }
+      }
     });
     const offApproval = agentDeckWS.on('native:approval', (p: any) => {
       if (p.agentId !== agentId) return;
@@ -126,7 +165,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
       setError(p.message ?? '알 수 없는 오류');
     });
 
-    const open = () => agentDeckWS.send('native:open', { agentId, cwd, model: modelIdRef.current });
+    const open = () => agentDeckWS.send('native:open', { agentId, cwd, model: modelIdRef.current, mode: modeIdRef.current });
     open();
     const offOpen = agentDeckWS.on('open', open); // re-open after a reconnect
 
@@ -210,7 +249,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
 
         {/* + (Add) menu — mirrors the desktop app's Add popup. */}
         {menu === 'add' && (
-          <div className="absolute bottom-14 left-2 z-20 w-56 bg-deck-surface border border-deck-border rounded-lg shadow-xl overflow-hidden text-sm">
+          <div className="absolute bottom-14 left-2 z-20 w-56 bg-deck-raised border border-deck-border rounded-lg shadow-xl overflow-hidden text-sm">
             <button
               onClick={() => { setMenu(null); fileRef.current?.click(); }}
               className="w-full text-left px-3 py-2.5 hover:bg-deck-bg/60 text-deck-text flex items-center gap-2"
@@ -222,7 +261,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
 
         {/* Model switcher menu. */}
         {menu === 'model' && (
-          <div className="absolute bottom-14 right-2 z-20 w-64 max-w-[calc(100vw-1rem)] bg-deck-surface border border-deck-border rounded-lg shadow-xl overflow-hidden">
+          <div className="absolute bottom-14 right-2 z-20 w-64 max-w-[calc(100vw-1rem)] bg-deck-raised border border-deck-border rounded-lg shadow-xl overflow-hidden">
             <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim">모델</div>
             {MODELS.map((m) => (
               <button
@@ -233,6 +272,29 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
                 <span className={`mt-0.5 shrink-0 w-3 ${m.id === modelId ? 'text-deck-accent' : 'text-transparent'}`}>✓</span>
                 <span className="min-w-0">
                   <span className={`block text-sm ${m.id === modelId ? 'text-deck-accent' : 'text-deck-text'}`}>{m.label}</span>
+                  <span className="block text-xs text-deck-text-dim truncate">{m.desc}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Permission-mode menu (also cycled by Shift+Tab). */}
+        {menu === 'mode' && (
+          <div className="absolute bottom-14 right-2 z-20 w-64 max-w-[calc(100vw-1rem)] bg-deck-raised border border-deck-border rounded-lg shadow-xl overflow-hidden">
+            <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim">권한 모드 · Shift+Tab</div>
+            {MODES.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => pickMode(m.id)}
+                className={`w-full text-left px-3 py-2 hover:bg-deck-bg/60 flex items-start gap-2 ${m.id === modeId ? 'bg-deck-bg/40' : ''}`}
+              >
+                <span className={`mt-0.5 shrink-0 w-3 ${m.id === modeId ? 'text-deck-accent' : 'text-transparent'}`}>✓</span>
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} />
+                    <span className={`text-sm ${m.id === modeId ? 'text-deck-accent' : 'text-deck-text'}`}>{m.label}</span>
+                  </span>
                   <span className="block text-xs text-deck-text-dim truncate">{m.desc}</span>
                 </span>
               </button>
@@ -264,6 +326,13 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
+              // Shift+Tab cycles the permission mode, like the Claude Code TUI —
+              // otherwise Tab would just move focus out of the box.
+              if (e.key === 'Tab' && e.shiftKey) {
+                e.preventDefault();
+                cycleMode();
+                return;
+              }
               // Enter sends; Shift+Enter is a newline. On mobile the soft keyboard's
               // return arrives as a plain Enter, which is what we want here.
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -288,10 +357,19 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
             </button>
             <button
               onClick={() => setMenu(menu === 'model' ? null : 'model')}
-              className="shrink-0 h-8 px-2.5 rounded-lg bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1"
+              className="shrink-0 h-8 px-2.5 rounded-full bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1.5"
               title="모델 전환"
             >
-              ⚡ {modelLabel}
+              <span className="w-1.5 h-1.5 rounded-full bg-deck-accent" />
+              {modelLabel}
+            </button>
+            <button
+              onClick={() => setMenu(menu === 'mode' ? null : 'mode')}
+              className={`shrink-0 h-8 px-2.5 rounded-full border text-xs font-medium flex items-center gap-1.5 ${currentMode.pill}`}
+              title="권한 모드 전환 (Shift+Tab)"
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${currentMode.dot}`} />
+              {currentMode.label}
             </button>
             <div className="flex-1" />
             {busy ? (

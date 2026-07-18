@@ -60,7 +60,7 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
   valueRef.current = value;
   const composingRef = useRef(false);
   const [style, setStyle] = useState<{ family: string; size: string; color: string; bg: string }>({
-    family: 'monospace', size: '14px', color: 'var(--term-fg, #e2e8f0)', bg: 'var(--term-bg, #0a0a0f)',
+    family: 'monospace', size: '14px', color: 'var(--term-fg, #e7e9f0)', bg: 'var(--term-bg, #0a0a0f)',
   });
 
   // Match the terminal's rendered font/color/background so the draft aligns with the

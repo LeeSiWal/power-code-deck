@@ -89,6 +89,7 @@ func main() {
 	// Remember Claude's own conversation id per agent so reopening (or a server
 	// restart) continues the conversation instead of starting a blank one.
 	nativeSvc.SetPersistence(agentSvc.SetClaudeSessionID, agentSvc.ClaudeSessionID)
+	nativeSvc.SetConfigPersistence(agentSvc.SetNativeConfig, agentSvc.NativeConfig)
 	hub.SetNativeService(nativeSvc)
 
 	// Session output → broadcast to every viewer of that session.
@@ -168,6 +169,7 @@ func main() {
 	// Files
 	api.HandleFunc("/files/tree", handlers.FileTree(fileSvc, agentSvc, projectSvc, cfg)).Methods("GET")
 	api.HandleFunc("/files/read", handlers.ReadFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("GET")
+	api.HandleFunc("/files/raw", handlers.RawFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("GET")
 	api.HandleFunc("/files/write", handlers.WriteFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("PUT")
 	api.HandleFunc("/files/mkdir", handlers.Mkdir(fileSvc, agentSvc, projectSvc, cfg)).Methods("POST")
 	api.HandleFunc("/files/delete", handlers.DeleteFile(fileSvc, agentSvc, projectSvc, cfg)).Methods("DELETE")

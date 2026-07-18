@@ -115,6 +115,10 @@ func Migrate(db *sql.DB) error {
 	for _, stmt := range []string{
 		"ALTER TABLE agents ADD COLUMN color_hue INTEGER DEFAULT 220",
 		"ALTER TABLE agents ADD COLUMN color_name TEXT DEFAULT 'blue'",
+		// Native-chat model + permission mode, remembered per session so a restart
+		// or another device resumes with the same choices.
+		"ALTER TABLE agents ADD COLUMN native_model TEXT DEFAULT ''",
+		"ALTER TABLE agents ADD COLUMN native_mode TEXT DEFAULT ''",
 	} {
 		db.Exec(stmt)
 	}

@@ -116,7 +116,7 @@ export function ProjectSelector() {
                   >
                     <IconFolder size={14} />
                     <span className="truncate flex-1">{entry.name}</span>
-                    <IconChevronRight size={12} color="#64748b" />
+                    <IconChevronRight size={12} color="#8791a4" />
                   </button>
                 ))}
                 {browseEntries.filter(e => e.isDir).length === 0 && (
@@ -133,7 +133,7 @@ export function ProjectSelector() {
           onClick={() => setShowCreate(true)}
           className="w-full p-3 rounded-lg text-left flex items-center gap-3 hover:bg-deck-border/30 transition-colors border border-dashed border-deck-border bg-deck-surface"
         >
-          <IconPlus size={18} color="#64748b" />
+          <IconPlus size={18} color="#8791a4" />
           <span className="text-sm">Create new project...</span>
         </button>
       </section>

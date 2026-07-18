@@ -29,6 +29,7 @@ const (
 	EventNativeStop      = "native:stop"
 	EventNativeInterrupt = "native:interrupt" // stop the turn, keep the session
 	EventNativeSetModel  = "native:setModel"  // switch model, resume same conversation
+	EventNativeSetMode   = "native:setMode"   // switch permission mode (Shift+Tab)
 )
 
 // Server -> Client events
@@ -166,6 +167,7 @@ type NativeOpenPayload struct {
 	AgentID string `json:"agentId"`
 	Cwd     string `json:"cwd"`
 	Model   string `json:"model"`
+	Mode    string `json:"mode"`   // permission mode: "" | acceptEdits | plan | bypassPermissions
 	Resume  string `json:"resume"` // Claude's own session_id, to continue a past run
 }
 
@@ -179,6 +181,13 @@ type NativeInputPayload struct {
 type NativeSetModelPayload struct {
 	AgentID string `json:"agentId"`
 	Model   string `json:"model"`
+}
+
+// NativeSetModePayload switches the permission mode (the TUI's Shift+Tab):
+// "" | acceptEdits | plan | bypassPermissions. Restarts on the same conversation.
+type NativeSetModePayload struct {
+	AgentID string `json:"agentId"`
+	Mode    string `json:"mode"`
 }
 
 // NativeDecidePayload answers one approval. Behavior is allow|deny.
@@ -214,6 +223,11 @@ type NativeHistoryPayload struct {
 	AgentID string            `json:"agentId"`
 	Events  []json.RawMessage `json:"events"`
 	Running bool              `json:"running"`
+	// Model + Mode are the session's current choices, so a device opening the page
+	// displays what the session is actually using (possibly set on another device),
+	// not its own last local guess.
+	Model string `json:"model"`
+	Mode  string `json:"mode"`
 }
 
 // NativeApprovalPayload is one pending "may I?".

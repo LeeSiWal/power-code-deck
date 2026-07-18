@@ -170,6 +170,19 @@ export const api = {
   // Files
   fileTree: (agentId: string, depth?: number) =>
     apiFetch(`/files/tree?agentId=${agentId}${depth ? `&depth=${depth}` : ''}`),
+  // Fetch a file's raw bytes as an object URL (authenticated) — for rendering
+  // images / PDFs / video / audio the browser can display natively. Caller must
+  // URL.revokeObjectURL() it when done.
+  rawFileObjectURL: async (path: string, agentId?: string): Promise<string> => {
+    const token = getToken();
+    const q = new URLSearchParams({ path, ...(agentId ? { agentId } : {}) });
+    const res = await fetch(`${API_BASE}/files/raw?${q.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error('파일을 불러오지 못했습니다');
+    return URL.createObjectURL(await res.blob());
+  },
+
   readFile: (path: string, agentId?: string) =>
     apiFetch(`/files/read?path=${encodeURIComponent(path)}${agentId ? `&agentId=${agentId}` : ''}`),
   writeFile: (path: string, content: string, agentId?: string) =>

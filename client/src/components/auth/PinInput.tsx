@@ -77,7 +77,7 @@ export function PinInput({ onSubmit, error: externalError }: PinInputProps) {
             style={{
               borderColor: error && digits.length === 0
                 ? '#ef4444'
-                : i < digits.length ? '#6366f1' : '#1e1e2e',
+                : i < digits.length ? '#6366f1' : '#26262f',
               background: i < digits.length ? '#6366f1' : 'transparent',
               transform: i < digits.length ? 'scale(1.1)' : 'scale(1)',
             }}

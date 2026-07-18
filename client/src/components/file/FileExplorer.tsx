@@ -92,17 +92,17 @@ export function FileExplorer({ tree, changedFiles, onSelect, onRefresh, onMkdir,
                       if (name && name.trim()) onNewFile(`${workingDir || '.'}/${name.trim()}`);
                     }}
                     className="p-1 rounded hover:bg-deck-border/50" title="New File">
-              <IconFilePlus size={14} color="#64748b" />
+              <IconFilePlus size={14} color="#8791a4" />
             </button>
           )}
           {onMkdir && (
             <button onClick={() => { setNewFolderParent(workingDir || '.'); setNewFolderName(''); }}
                     className="p-1 rounded hover:bg-deck-border/50" title="New Folder">
-              <IconNewFolder size={14} color="#64748b" />
+              <IconNewFolder size={14} color="#8791a4" />
             </button>
           )}
           <button onClick={onRefresh} className="p-1 rounded hover:bg-deck-border/50" title="Refresh">
-            <IconRefresh size={14} color="#64748b" />
+            <IconRefresh size={14} color="#8791a4" />
           </button>
         </div>
       </div>
@@ -115,7 +115,7 @@ export function FileExplorer({ tree, changedFiles, onSelect, onRefresh, onMkdir,
 
       <div className="px-2 py-1.5 border-b border-deck-border/50">
         <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-deck-bg border border-deck-border/50">
-          <IconSearch size={12} color="#64748b" />
+          <IconSearch size={12} color="#8791a4" />
           <input
             type="text"
             placeholder="Search files..."
@@ -195,12 +195,12 @@ function TreeNode({
         style={{
           paddingLeft: `${depth * 12 + 8}px`,
           paddingRight: '8px',
-          color: isChanged ? '#6366f1' : '#e2e8f0',
+          color: isChanged ? '#6366f1' : '#e7e9f0',
         }}
       >
         {isDir ? (
           <span className="w-4 flex items-center justify-center shrink-0">
-            {expanded ? <IconChevronDown size={12} color="#64748b" /> : <IconChevronRight size={12} color="#64748b" />}
+            {expanded ? <IconChevronDown size={12} color="#8791a4" /> : <IconChevronRight size={12} color="#8791a4" />}
           </span>
         ) : <span className="w-4" />}
         <span className="shrink-0">
@@ -213,7 +213,7 @@ function TreeNode({
       {contextMenu && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
-          <div className="fixed z-50 rounded shadow-xl py-1 min-w-[160px] bg-deck-surface border border-deck-border"
+          <div className="fixed z-50 rounded shadow-xl py-1 min-w-[160px] bg-deck-raised border border-deck-border"
                style={{ left: contextMenu.x, top: contextMenu.y }}>
             {isDir && onNewFile && (
               <button

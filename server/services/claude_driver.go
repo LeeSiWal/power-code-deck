@@ -25,6 +25,10 @@ type ClaudeConfig struct {
 	Cwd       string
 	Model     string // "" = the CLI's default
 
+	// PermissionMode: default | acceptEdits | plan | bypassPermissions ("" = CLI
+	// default). What the TUI's Shift+Tab cycles.
+	PermissionMode string
+
 	// ResumeID is Claude's own session_id, to continue a past conversation.
 	ResumeID string
 
@@ -91,6 +95,11 @@ func (d *ClaudeDriver) buildArgs() []string {
 	}
 	if d.cfg.Model != "" {
 		args = append(args, "--model", d.cfg.Model)
+	}
+	// Permission mode (Shift+Tab in the TUI): default | acceptEdits | plan |
+	// bypassPermissions. "" leaves the CLI default (our approve bridge gates tools).
+	if d.cfg.PermissionMode != "" {
+		args = append(args, "--permission-mode", d.cfg.PermissionMode)
 	}
 	if d.cfg.ResumeID != "" {
 		args = append(args, "--resume", d.cfg.ResumeID)

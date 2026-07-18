@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -239,6 +240,36 @@ func AttachFile(fileSvc *services.FileService, agentSvc *services.AgentService, 
 			return
 		}
 		jsonResponse(w, map[string]string{"path": ".pcd-attachments/" + name, "name": name})
+	}
+}
+
+// RawFile serves a file's bytes verbatim with a proper Content-Type, so the
+// browser can render images / PDFs / video / audio the JSON /files/read path
+// (which stringifies content) can't. Same path guard as every file op. Supports
+// range requests via http.ServeContent.
+func RawFile(fileSvc *services.FileService, agentSvc *services.AgentService, projectSvc *services.ProjectService, cfg *config.Config) http.HandlerFunc {
+	guard := newFileGuard(fileSvc, agentSvc, projectSvc, cfg)
+	return func(w http.ResponseWriter, r *http.Request) {
+		abs, status, err := guard.authorize(r.URL.Query().Get("agentId"), r.URL.Query().Get("path"))
+		if err != nil {
+			jsonError(w, err.Error(), status)
+			return
+		}
+		f, err := os.Open(abs)
+		if err != nil {
+			jsonError(w, "파일을 찾을 수 없습니다", http.StatusNotFound)
+			return
+		}
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil || st.IsDir() {
+			jsonError(w, "파일이 아닙니다", http.StatusBadRequest)
+			return
+		}
+		if ct := mime.TypeByExtension(filepath.Ext(abs)); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		http.ServeContent(w, r, filepath.Base(abs), st.ModTime(), f)
 	}
 }
 

@@ -1,6 +1,6 @@
 const STATUS_CONFIG: Record<string, { color: string; label: string }> = {
   running: { color: '#22c55e', label: 'Running' },
-  stopped: { color: '#64748b', label: 'Stopped' },
+  stopped: { color: '#8791a4', label: 'Stopped' },
   error: { color: '#ef4444', label: 'Error' },
   starting: { color: '#f59e0b', label: 'Starting' },
 };
