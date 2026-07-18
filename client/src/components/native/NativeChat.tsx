@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { agentDeckWS } from '../../lib/ws';
 import { api } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
@@ -49,6 +50,7 @@ const MODES: { id: string; label: string; desc: string; pill: string; dot: strin
 ];
 
 export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
+  const navigate = useNavigate(); // /clear swaps to a freshly created session
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [running, setRunning] = useState(false);
@@ -130,9 +132,9 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   const [histIdx, setHistIdx] = useState<number | null>(null);
   const draftBeforeHist = useRef('');
 
-  // Slash commands / @agent mentions defined under .claude/ — the project's and the
-  // user's. Only user-defined ones are offered; built-ins don't work over this
-  // protocol, so listing them would be a menu of dead entries.
+  // What this session can actually invoke: verified built-ins, the user's and the
+  // project's .claude/ definitions, and enabled plugins. The server decides what
+  // qualifies — every entry there was probed against the real CLI first.
   const [cmds, setCmds] = useState<{ name: string; type: string; description?: string; scope?: string }[]>([]);
   const [cmdIdx, setCmdIdx] = useState(0);
   const [cmdDismissed, setCmdDismissed] = useState(false);
@@ -141,8 +143,10 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   }, [agentId]);
 
   // Offer completions only while the draft IS the token — "/dep", "@rev". A space
-  // means arguments have started and the choice is already made.
-  const cmdToken = /^[/@][\w-]*$/.test(draft) ? draft : null;
+  // means arguments have started and the choice is already made. The colon is part
+  // of the class because plugin entries are namespaced ("/newton:mission") and are
+  // only reachable under that name.
+  const cmdToken = /^[/@][\w:-]*$/.test(draft) ? draft : null;
   const cmdMatches = useMemo(
     () => (cmdToken ? cmds.filter((c) => c.name.startsWith(cmdToken)).slice(0, 8) : []),
     [cmdToken, cmds],
@@ -227,9 +231,24 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
     agentDeckWS.send('native:interrupt', { agentId });
   }, [agentId]);
 
-  const send = useCallback(() => {
+  const send = useCallback(async () => {
     const text = draft.trim();
     if (!text && !attachments.length) return;
+    // /clear starts a genuinely new session instead of being forwarded. Sent to the
+    // CLI it drops the context but leaves the transcript on screen, so the chat looks
+    // intact while Claude has forgotten every word of it — the worst kind of wrong
+    // screen. A fresh session clears both at once.
+    if (text === '/clear' && !attachments.length) {
+      setDraft('');
+      setHistIdx(null);
+      try {
+        const a = (await api.newSession(agentId)) as { id: string };
+        navigate(`/agents/${a.id}`);
+      } catch (err) {
+        setError('새 세션을 시작하지 못했습니다: ' + String(err));
+      }
+      return;
+    }
     // Attachments ride along as paths inside the project — Claude opens them with
     // its Read tool. Sent as part of the same user turn.
     const msg = attachments.length
@@ -370,7 +389,9 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
                   <span className="text-xs text-deck-text-dim truncate">{c.description}</span>
                 )}
                 <span className="ml-auto shrink-0 text-[10px] text-deck-text-faint">
-                  {c.scope === 'plugin'
+                  {c.scope === 'builtin'
+                    ? '내장'
+                    : c.scope === 'plugin'
                     ? `플러그인${c.type === 'skill' ? '·스킬' : ''}`
                     : c.scope === 'project'
                       ? '프로젝트'

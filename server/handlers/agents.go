@@ -140,6 +140,11 @@ func SlashCommands(agentSvc *services.AgentService) http.HandlerFunc {
 			commands = append(commands, c)
 		}
 
+		// Built-ins first so a user- or project-defined command of the same name
+		// overrides them, matching how the CLI resolves it.
+		for _, c := range builtinSlashCommands {
+			add(c)
+		}
 		// Home first, then project, so the project's version of a name wins.
 		if home, err := os.UserHomeDir(); err == nil {
 			scanSlashRoot(filepath.Join(home, ".claude"), "user", add)
@@ -155,6 +160,30 @@ func SlashCommands(agentSvc *services.AgentService) http.HandlerFunc {
 		slashCache[projectDir] = slashCacheEntry{cmds: commands, at: time.Now()}
 		jsonResponse(w, commands)
 	}
+}
+
+// builtinSlashCommands are the CLI's OWN commands, each one verified to work over
+// the stream protocol we drive. The set had to be probed rather than assumed: it is
+// undocumented and not uniform. /help, /status, /memory, /permissions and /rewind
+// all answer "isn't available in this environment", and /todos is an unknown
+// command — listing any of those would put a dead entry in the picker.
+//
+// /model is deliberately absent although it works: switching the model that way
+// leaves the deck's own model state (the pill, and what a restart resumes with)
+// pointing at the old one. The pill is the honest path.
+//
+// /clear is listed but the CLIENT handles it — forwarding would drop the CLI's
+// context while the transcript stayed on screen, so the chat would look intact
+// while Claude had forgotten all of it.
+var builtinSlashCommands = []SlashCommand{
+	{Name: "/context", Type: "builtin", Scope: "builtin", Description: "컨텍스트 사용량 — 무엇이 얼마나 차지하는지"},
+	{Name: "/compact", Type: "builtin", Scope: "builtin", Description: "대화를 요약해 컨텍스트를 줄임"},
+	{Name: "/clear", Type: "builtin", Scope: "builtin", Description: "새 세션으로 시작 — 대화와 컨텍스트를 함께 비움"},
+	{Name: "/cost", Type: "builtin", Scope: "builtin", Description: "이번 세션의 사용량과 비용"},
+	{Name: "/usage", Type: "builtin", Scope: "builtin", Description: "구독 사용량 한도"},
+	{Name: "/init", Type: "builtin", Scope: "builtin", Description: "저장소를 분석해 CLAUDE.md 생성"},
+	{Name: "/mcp", Type: "builtin", Scope: "builtin", Description: "MCP 서버 상태"},
+	{Name: "/doctor", Type: "builtin", Scope: "builtin", Description: "Claude Code 설치 상태 점검"},
 }
 
 type claudeSettings struct {
