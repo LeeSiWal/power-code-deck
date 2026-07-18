@@ -51,6 +51,18 @@ function usesNative(agent: { preset?: string; command?: string } | null | undefi
   return !CLASSIC_TERMINAL && !!agent && nativeCapable(agent);
 }
 
+// Side-panel width bounds. The upper bound is generous because these panels are
+// read, not glanced at — a session transcript or a deep path needs room on a large
+// display — while the lower bound keeps a panel from being dragged to a sliver.
+const PANEL_MIN = 180;
+const PANEL_MAX = 640;
+
+function readPanelWidth(side: 'left' | 'right', fallback: number): number {
+  const raw = Number(localStorage.getItem(`pcd:panel:${side}`));
+  if (!Number.isFinite(raw) || raw <= 0) return fallback;
+  return Math.max(PANEL_MIN, Math.min(PANEL_MAX, raw));
+}
+
 export function TerminalPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -142,8 +154,18 @@ export function TerminalPage() {
   const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
   const [mobileAnimOpen, setMobileAnimOpen] = useState(false);
   const [mobileBrowserOpen, setMobileBrowserOpen] = useState(false);
-  const [leftWidth, setLeftWidth] = useState(220);
-  const [rightWidth, setRightWidth] = useState(220);
+  // Desktop side panels. 220px was too narrow for what they actually hold: the
+  // explorer truncated nested paths, and the right panel's session list — previews,
+  // timestamps, sub-agent lines — wrapped constantly. Widths persist, so a resize
+  // sticks instead of snapping back on every reload.
+  const [leftWidth, setLeftWidth] = useState(() => readPanelWidth('left', 300));
+  const [rightWidth, setRightWidth] = useState(() => readPanelWidth('right', 340));
+  // The mouseup handler is created once per drag and would otherwise close over the
+  // width as it was when the drag STARTED — these mirror the live value.
+  const leftWidthRef = useRef(leftWidth);
+  leftWidthRef.current = leftWidth;
+  const rightWidthRef = useRef(rightWidth);
+  rightWidthRef.current = rightWidth;
   const [editing, setEditing] = useState(false);
   const resizingRef = useRef<'left' | 'right' | null>(null);
 
@@ -229,15 +251,27 @@ export function TerminalPage() {
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
         const delta = e.clientX - startX;
-        const newWidth = Math.max(150, Math.min(400, side === 'left' ? startWidth + delta : startWidth - delta));
+        const newWidth = Math.max(
+          PANEL_MIN,
+          Math.min(PANEL_MAX, side === 'left' ? startWidth + delta : startWidth - delta),
+        );
         if (side === 'left') setLeftWidth(newWidth);
         else setRightWidth(newWidth);
       });
     };
 
     const onMouseUp = () => {
+      const side = resizingRef.current;
       resizingRef.current = null;
       cancelAnimationFrame(rafId);
+      // Remember the width once the drag ends, not on every frame — one write
+      // instead of hundreds, and the value stored is the one actually settled on.
+      if (side) {
+        try {
+          const el = side === 'left' ? leftWidthRef : rightWidthRef;
+          localStorage.setItem(`pcd:panel:${side}`, String(el.current));
+        } catch { /* private mode — the panel just won't remember */ }
+      }
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
     };
