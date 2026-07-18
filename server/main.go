@@ -152,7 +152,7 @@ func main() {
 	api.Use(auth.Middleware(authSvc))
 
 	// Agents
-	api.HandleFunc("/agents/slash-commands", handlers.SlashCommands()).Methods("GET")
+	api.HandleFunc("/agents/slash-commands", handlers.SlashCommands(agentSvc)).Methods("GET")
 	api.HandleFunc("/agents", handlers.ListAgents(agentSvc)).Methods("GET")
 	api.HandleFunc("/agents", handlers.CreateAgent(agentSvc, hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}", handlers.GetAgent(agentSvc)).Methods("GET")

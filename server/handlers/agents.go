@@ -83,91 +83,118 @@ func DeleteAgent(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc 
 	}
 }
 
-// Slash commands cache
+// Slash commands cache, keyed by project dir ("" = home only).
 var (
-	slashCache     []SlashCommand
-	slashCacheTime time.Time
-	slashCacheMu   sync.Mutex
-	slashCacheTTL  = 30 * time.Second
+	slashCache    = map[string]slashCacheEntry{}
+	slashCacheMu  sync.Mutex
+	slashCacheTTL = 30 * time.Second
 )
+
+type slashCacheEntry struct {
+	cmds []SlashCommand
+	at   time.Time
+}
 
 type SlashCommand struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
 	Description string `json:"description,omitempty"`
+	/** Scope tells the UI where a command came from — a project's own commands are
+	  the ones you'd expect to see while working in it. */
+	Scope string `json:"scope"` // "project" | "user"
 }
 
-func SlashCommands() http.HandlerFunc {
+// SlashCommands lists the commands / agent mentions / skills a native chat can
+// actually invoke. Only user-defined ones: verified against the real CLI that a
+// custom command sent over stream-json expands normally, while a BUILT-IN like
+// /help answers "isn't available in this environment" — so listing built-ins would
+// hand the user buttons that do nothing.
+//
+// Takes ?agentId= to include that agent's project-level .claude/, which Claude Code
+// expands just like the ones in $HOME. Without it, per-project commands — the most
+// useful kind — would never appear.
+func SlashCommands(agentSvc *services.AgentService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		slashCacheMu.Lock()
-		defer slashCacheMu.Unlock()
-
-		if slashCache != nil && time.Since(slashCacheTime) < slashCacheTTL {
-			jsonResponse(w, slashCache)
-			return
+		projectDir := ""
+		if id := r.URL.Query().Get("agentId"); id != "" && agentSvc != nil {
+			if a, err := agentSvc.Get(id); err == nil && a != nil {
+				projectDir = a.WorkingDir
+			}
 		}
 
-		home, err := os.UserHomeDir()
-		if err != nil {
-			jsonResponse(w, []SlashCommand{})
+		slashCacheMu.Lock()
+		defer slashCacheMu.Unlock()
+		if e, ok := slashCache[projectDir]; ok && time.Since(e.at) < slashCacheTTL {
+			jsonResponse(w, e.cmds)
 			return
 		}
 
 		var commands []SlashCommand
-
-		// ~/.claude/commands/ — slash commands
-		cmdDir := filepath.Join(home, ".claude", "commands")
-		if entries, err := os.ReadDir(cmdDir); err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() {
-					continue
-				}
-				name := strings.TrimSuffix(entry.Name(), ".md")
-				desc := readFirstLine(filepath.Join(cmdDir, entry.Name()))
-				commands = append(commands, SlashCommand{
-					Name:        "/" + name,
-					Type:        "command",
-					Description: desc,
-				})
+		seen := map[string]int{}
+		add := func(c SlashCommand) {
+			if i, ok := seen[c.Name]; ok {
+				commands[i] = c // later root wins — project overrides a same-named user one
+				return
 			}
+			seen[c.Name] = len(commands)
+			commands = append(commands, c)
 		}
 
-		// ~/.claude/agents/ — agent mentions
-		agentDir := filepath.Join(home, ".claude", "agents")
-		if entries, err := os.ReadDir(agentDir); err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() {
-					continue
-				}
-				name := strings.TrimSuffix(entry.Name(), ".md")
-				commands = append(commands, SlashCommand{
-					Name: "@" + name,
-					Type: "agent",
-				})
-			}
+		// Home first, then project, so the project's version of a name wins.
+		if home, err := os.UserHomeDir(); err == nil {
+			scanSlashRoot(filepath.Join(home, ".claude"), "user", add)
 		}
-
-		// ~/.claude/skills/ — skills
-		skillDir := filepath.Join(home, ".claude", "skills")
-		if entries, err := os.ReadDir(skillDir); err == nil {
-			for _, entry := range entries {
-				name := entry.Name()
-				if !entry.IsDir() {
-					name = strings.TrimSuffix(name, ".md")
-				}
-				commands = append(commands, SlashCommand{
-					Name: "/" + name,
-					Type: "skill",
-				})
-			}
+		if projectDir != "" {
+			scanSlashRoot(filepath.Join(projectDir, ".claude"), "project", add)
 		}
 
 		if commands == nil {
 			commands = []SlashCommand{}
 		}
-		slashCache = commands
-		slashCacheTime = time.Now()
+		slashCache[projectDir] = slashCacheEntry{cmds: commands, at: time.Now()}
 		jsonResponse(w, commands)
+	}
+}
+
+// scanSlashRoot collects one .claude directory's commands, agent mentions and skills.
+func scanSlashRoot(root, scope string, add func(SlashCommand)) {
+	cmdDir := filepath.Join(root, "commands")
+	if entries, err := os.ReadDir(cmdDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := strings.TrimSuffix(entry.Name(), ".md")
+			add(SlashCommand{
+				Name:        "/" + name,
+				Type:        "command",
+				Description: readFirstLine(filepath.Join(cmdDir, entry.Name())),
+				Scope:       scope,
+			})
+		}
+	}
+
+	if entries, err := os.ReadDir(filepath.Join(root, "agents")); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			add(SlashCommand{
+				Name:  "@" + strings.TrimSuffix(entry.Name(), ".md"),
+				Type:  "agent",
+				Scope: scope,
+			})
+		}
+	}
+
+	if entries, err := os.ReadDir(filepath.Join(root, "skills")); err == nil {
+		for _, entry := range entries {
+			name := entry.Name()
+			if !entry.IsDir() {
+				name = strings.TrimSuffix(name, ".md")
+			}
+			add(SlashCommand{Name: "/" + name, Type: "skill", Scope: scope})
+		}
 	}
 }
 

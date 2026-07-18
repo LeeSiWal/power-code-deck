@@ -129,6 +129,30 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   // draftBeforeHist so ↓ past the newest entry can put it back.
   const [histIdx, setHistIdx] = useState<number | null>(null);
   const draftBeforeHist = useRef('');
+
+  // Slash commands / @agent mentions defined under .claude/ — the project's and the
+  // user's. Only user-defined ones are offered; built-ins don't work over this
+  // protocol, so listing them would be a menu of dead entries.
+  const [cmds, setCmds] = useState<{ name: string; type: string; description?: string; scope?: string }[]>([]);
+  const [cmdIdx, setCmdIdx] = useState(0);
+  const [cmdDismissed, setCmdDismissed] = useState(false);
+  useEffect(() => {
+    api.slashCommands(agentId).then(setCmds).catch(() => { /* no picker is fine */ });
+  }, [agentId]);
+
+  // Offer completions only while the draft IS the token — "/dep", "@rev". A space
+  // means arguments have started and the choice is already made.
+  const cmdToken = /^[/@][\w-]*$/.test(draft) ? draft : null;
+  const cmdMatches = useMemo(
+    () => (cmdToken ? cmds.filter((c) => c.name.startsWith(cmdToken)).slice(0, 8) : []),
+    [cmdToken, cmds],
+  );
+  const cmdOpen = !cmdDismissed && cmdMatches.length > 0;
+  const acceptCmd = (name: string) => {
+    setDraft(name + ' '); // leave the caret past a space, ready for arguments
+    setCmdDismissed(true);
+    taRef.current?.focus();
+  };
   // Derived from the events, not tracked separately, so it survives a reconnect:
   // the history alone says whether a turn is still in flight.
   const busy = useMemo(() => isTurnActive(events), [events]);
@@ -328,6 +352,31 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
           </div>
         )}
 
+        {cmdOpen && (
+          <div className="mx-2 mb-1 rounded-lg border border-deck-border bg-deck-raised overflow-hidden">
+            {cmdMatches.map((c, i) => (
+              <button
+                key={c.name}
+                // pointerDown, not click: the textarea's blur would otherwise fire
+                // first and the list could unmount before the click landed.
+                onPointerDown={(e) => { e.preventDefault(); acceptCmd(c.name); }}
+                onMouseEnter={() => setCmdIdx(i)}
+                className={`w-full text-left px-3 py-1.5 flex items-baseline gap-2 ${
+                  i === Math.min(cmdIdx, cmdMatches.length - 1) ? 'bg-deck-bg/60' : ''
+                }`}
+              >
+                <span className="font-mono text-sm text-deck-accent shrink-0">{c.name}</span>
+                {c.description && (
+                  <span className="text-xs text-deck-text-dim truncate">{c.description}</span>
+                )}
+                <span className="ml-auto shrink-0 text-[10px] text-deck-text-faint uppercase">
+                  {c.scope === 'project' ? '프로젝트' : c.type === 'agent' ? '에이전트' : c.type === 'skill' ? '스킬' : '사용자'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="p-2 space-y-2">
           <input ref={fileRef} type="file" multiple className="hidden" onChange={onFilePick} />
           <textarea
@@ -338,8 +387,37 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
               // Typing means you've left the recalled message behind; the next ↑
               // should start again from the newest entry, not resume mid-walk.
               if (histIdx !== null) setHistIdx(null);
+              // A new keystroke re-opens the picker that Esc dismissed, and puts the
+              // highlight back on the best match.
+              setCmdDismissed(false);
+              setCmdIdx(0);
             }}
             onKeyDown={(e) => {
+              // The command picker owns the arrows / Enter / Tab / Esc while it is
+              // open, so it must be checked before history recall and send — those
+              // would otherwise swallow the same keys.
+              if (cmdOpen) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setCmdIdx((i) => (i + 1) % cmdMatches.length);
+                  return;
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setCmdIdx((i) => (i - 1 + cmdMatches.length) % cmdMatches.length);
+                  return;
+                }
+                if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  acceptCmd(cmdMatches[Math.min(cmdIdx, cmdMatches.length - 1)].name);
+                  return;
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setCmdDismissed(true); // dismiss the list, keep what was typed
+                  return;
+                }
+              }
               // Shift+Tab cycles the permission mode, like the Claude Code TUI —
               // otherwise Tab would just move focus out of the box.
               if (e.key === 'Tab' && e.shiftKey) {

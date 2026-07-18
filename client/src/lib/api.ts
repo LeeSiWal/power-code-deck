@@ -119,7 +119,14 @@ export const api = {
     }),
 
   // Agents
-  slashCommands: () => apiFetch<{ name: string; type: string; description?: string }[]>('/agents/slash-commands'),
+  // Pass the agent so its project's own .claude/commands are included — Claude Code
+  // expands those exactly like the ones in $HOME. Built-ins (/help, /clear …) are
+  // deliberately absent: they are interactive-mode only and answer "isn't available
+  // in this environment" when sent over the stream protocol we drive.
+  slashCommands: (agentId?: string) =>
+    apiFetch<{ name: string; type: string; description?: string; scope?: string }[]>(
+      `/agents/slash-commands${agentId ? `?agentId=${agentId}` : ''}`,
+    ),
   listAgents: () => apiFetch<any[]>('/agents'),
   createAgent: (data: any) => apiFetch('/agents', { method: 'POST', body: JSON.stringify(data) }),
   getAgent: (id: string) => apiFetch(`/agents/${id}`),
