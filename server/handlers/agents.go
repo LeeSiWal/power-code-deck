@@ -211,8 +211,11 @@ func readFirstLine(path string) string {
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "---") {
 			continue
 		}
-		if len(line) > 80 {
-			return line[:80]
+		// Truncate by runes, not bytes: a Korean character is 3 bytes in UTF-8, so
+		// line[:80] would slice one in half and the description reached the UI as
+		// replacement characters (…놓친 ��).
+		if r := []rune(line); len(r) > 80 {
+			return string(r[:80]) + "…"
 		}
 		return line
 	}

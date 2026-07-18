@@ -3,6 +3,7 @@ package handlers
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +88,26 @@ func TestScanSlashRootMergesProjectOverUser(t *testing.T) {
 func TestScanSlashRootMissingDirIsEmpty(t *testing.T) {
 	if got := collect([2]string{filepath.Join(t.TempDir(), "nope"), "user"}); len(got) != 0 {
 		t.Errorf("expected no commands, got %+v", got)
+	}
+}
+
+// A long Korean first line must not be sliced mid-character: Hangul is 3 bytes in
+// UTF-8, so a byte-based cut produced U+FFFD in the picker's description.
+func TestReadFirstLineTruncatesByRune(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cmd.md")
+	long := ""
+	for i := 0; i < 120; i++ {
+		long += "가"
+	}
+	if err := os.WriteFile(path, []byte(long+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := readFirstLine(path)
+	if strings.ContainsRune(got, '�') {
+		t.Fatalf("description contains a replacement character: %q", got)
+	}
+	if r := []rune(got); len(r) != 81 { // 80 runes + the ellipsis
+		t.Errorf("want 80 runes plus ellipsis, got %d runes: %q", len(r), got)
 	}
 }
