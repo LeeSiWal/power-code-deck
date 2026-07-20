@@ -294,16 +294,25 @@ func (s *NativeService) pump(sess *nativeSession) {
 	}
 
 	// The process is gone: release anything waiting on a human for it, or the
-	// bridge's HTTP call (and its goroutine) would hang forever.
-	s.broker.CancelSession(sess.id)
-	s.tokens.Revoke(sess.id)
+	// bridge's HTTP call (and its goroutine) would hang forever. But only when THIS
+	// session is still the live one. A model/mode switch (restart) issues a NEW
+	// approve token for the same session id before this old pump has drained; an
+	// unconditional Revoke here raced that Issue and deleted the fresh token —
+	// after which every ask from the new bridge got 403 and every gated tool
+	// (git commit included) was silently refused. Same for CancelSession: it must
+	// not close prompts the replacement session has already raised.
 	s.mu.Lock()
 	// Only clear the map slot if it still points at THIS session — a model switch
 	// replaces the driver, so this old pump's exit must not evict the new session.
-	if s.sessions[sess.id] == sess {
+	current := s.sessions[sess.id] == sess
+	if current {
 		delete(s.sessions, sess.id)
 	}
 	s.mu.Unlock()
+	if current {
+		s.broker.CancelSession(sess.id)
+		s.tokens.Revoke(sess.id)
+	}
 }
 
 // restart replaces a running session's driver with a new one — same conversation
