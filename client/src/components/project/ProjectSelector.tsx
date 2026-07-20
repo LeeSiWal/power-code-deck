@@ -82,7 +82,7 @@ export function ProjectSelector() {
         </button>
 
         {showBrowser && (
-          <div className="mt-2 rounded-lg max-h-72 overflow-y-auto card">
+          <div className="mt-2 rounded-lg max-h-72 overflow-y-auto bg-deck-surface border border-deck-border">
             {/* Current folder bar: go up, and open THIS folder as the project.
                 Clicking a row below navigates into it (VSCode "Open Folder"). */}
             <div className="px-3 py-2 flex items-center gap-2 border-b border-deck-border sticky top-0 bg-deck-surface z-10">
