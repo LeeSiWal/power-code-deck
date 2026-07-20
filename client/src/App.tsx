@@ -12,6 +12,7 @@ import { TerminalPage } from './pages/TerminalPage';
 import { LogsPage } from './pages/LogsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { CommandPalette } from './components/CommandPalette';
+import { ConnectionBanner } from './components/ConnectionBanner';
 
 function AuthGuard() {
   const { isAuthenticated, authReady } = useAppStore();
@@ -128,6 +129,7 @@ export default function App() {
     <BrowserRouter>
       <WebSocketProvider>
         <CommandPalette />
+        <ConnectionBanner />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
 

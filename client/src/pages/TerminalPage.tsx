@@ -18,7 +18,7 @@ import { BrowserPanel } from '../components/browser/BrowserPanel';
 import { useDevice } from '../hooks/useDevice';
 import { useFileExplorer } from '../hooks/useFileExplorer';
 import { useAgentActivity } from '../hooks/useAgentActivity';
-import { IconBack, IconFiles, IconClose, IconTerminal, IconHistory, IconPhone, IconGlobe, IconExpand, AGENT_ICON_MAP } from '../components/icons';
+import { IconBack, IconFiles, IconClose, IconTerminal, IconHistory, IconPhone, IconGlobe, IconExpand, IconRefresh, AGENT_ICON_MAP } from '../components/icons';
 import { api } from '../lib/api';
 import { writeClipboard, readClipboard } from '../lib/clipboard';
 import { generatePalette } from '../lib/paletteGenerator';
@@ -303,6 +303,15 @@ export function TerminalPage() {
           {AgentIcon && <AgentIcon size={18} />}
           <span className="font-medium text-sm truncate flex-1">{agent.name}</span>
           <StatusBadge status={agent.status} />
+          {/* Full reload — iOS standalone PWA has no browser refresh, so a wedged
+              session would otherwise be unrecoverable without deleting the app. */}
+          <button
+            onClick={() => window.location.reload()}
+            className="p-1.5 rounded active:bg-deck-border/30 text-deck-text-dim"
+            title="새로고침 — 세션이 멈췄을 때"
+          >
+            <IconRefresh size={16} />
+          </button>
           <button
             onClick={() => setMobileSessionsOpen(true)}
             className="p-1.5 rounded active:bg-deck-border/30 text-sm"
@@ -583,6 +592,15 @@ export function TerminalPage() {
           title="Cmd+Shift+Z"
         >
           <IconExpand size={14} />
+        </button>
+        {/* Full reload — the PWA (esp. iOS standalone) has no browser refresh, so a
+            wedged session needs an in-app way to reload. */}
+        <button
+          onClick={() => window.location.reload()}
+          className="text-xs px-2 py-0.5 rounded transition-colors bg-deck-bg text-deck-text-dim hover:bg-deck-accent/20 hover:text-deck-accent"
+          title="새로고침 — 세션이 멈췄을 때"
+        >
+          <IconRefresh size={14} />
         </button>
       </header>
 
