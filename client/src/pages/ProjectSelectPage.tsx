@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ProjectSelector } from '../components/project/ProjectSelector';
-import { IconLogout } from '../components/icons';
+import { IconLogout, IconSettings } from '../components/icons';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
 
@@ -53,9 +53,17 @@ export function ProjectSelectPage() {
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       <header className="flex items-center justify-between px-4 py-2 bg-deck-surface border-b border-deck-border shrink-0">
         <span className="text-sm font-medium">PowerCodeDeck</span>
-        <button onClick={logout} className="p-1.5 rounded hover:bg-deck-border/30" title="Logout">
-          <IconLogout size={14} color="#8791a4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {/* Settings entry point — the only nav on this screen, and BottomNav is
+              mobile-only, so without this desktop/iPad (and even mobile here) had no
+              way to reach 알림/설정 short of typing the URL. */}
+          <Link to="/settings" className="p-1.5 rounded hover:bg-deck-border/30" title="설정">
+            <IconSettings size={15} color="#8791a4" />
+          </Link>
+          <button onClick={logout} className="p-1.5 rounded hover:bg-deck-border/30" title="Logout">
+            <IconLogout size={14} color="#8791a4" />
+          </button>
+        </div>
       </header>
       <main className="flex-1 overflow-y-auto min-h-0">
         <ProjectSelector />
