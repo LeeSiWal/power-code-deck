@@ -107,15 +107,15 @@ export function IconRocket({ size, color = 'currentColor', className }: IconProp
   return <I size={size} className={className}><path d="M8 1c3 2 5 6 5 10l-2.5-1.5L8 12l-2.5-2.5L3 11c0-4 2-8 5-10z" stroke={color} strokeWidth="1" fill="none" /><circle cx="8" cy="6" r="1.5" stroke={color} strokeWidth="0.8" fill="none" /></I>;
 }
 
-// Agent preset icons
+// Agent preset icons — brand-inspired line marks
 export function IconClaude({ size = 16, className }: IconProps) {
-  return <I size={size} className={className}><rect x="2" y="2" width="12" height="12" rx="3" fill="#D97706" opacity="0.15" /><path d="M5 6.5C5 5.67 5.67 5 6.5 5h3c.83 0 1.5.67 1.5 1.5S10.33 8 9.5 8h-3C5.67 8 5 7.33 5 6.5z" fill="#D97706" /><circle cx="6.5" cy="10.5" r="1" fill="#D97706" /><circle cx="9.5" cy="10.5" r="1" fill="#D97706" /></I>;
+  return <I size={size} className={className}><rect x="1.5" y="1.5" width="13" height="13" rx="4" fill="#D97757" opacity="0.14" /><g stroke="#D97757" strokeWidth="1.4" strokeLinecap="round"><path d="M8 3.4v9.2" /><path d="M3.4 8h9.2" /><path d="M4.75 4.75l6.5 6.5" /><path d="M11.25 4.75l-6.5 6.5" /></g></I>;
 }
 export function IconCodex({ size = 16, className }: IconProps) {
-  return <I size={size} className={className}><rect x="2" y="2" width="12" height="12" rx="3" fill="#16A34A" opacity="0.15" /><circle cx="8" cy="8" r="3.5" stroke="#16A34A" strokeWidth="1.5" fill="none" /><circle cx="8" cy="8" r="1" fill="#16A34A" /></I>;
+  return <I size={size} className={className}><rect x="1.5" y="1.5" width="13" height="13" rx="4" fill="#10A37F" opacity="0.14" /><g stroke="#10A37F" strokeWidth="1.1" fill="none"><ellipse cx="8" cy="8" rx="2.3" ry="4.9" /><ellipse cx="8" cy="8" rx="2.3" ry="4.9" transform="rotate(60 8 8)" /><ellipse cx="8" cy="8" rx="2.3" ry="4.9" transform="rotate(120 8 8)" /></g></I>;
 }
 export function IconCustom({ size = 16, className }: IconProps) {
-  return <I size={size} className={className}><rect x="2" y="2" width="12" height="12" rx="3" fill="#9333EA" opacity="0.15" /><path d="M5 8l3-4 3 4-3 4-3-4z" stroke="#9333EA" strokeWidth="1" fill="none" /></I>;
+  return <I size={size} className={className}><rect x="1.5" y="1.5" width="13" height="13" rx="4" fill="#8B5CF6" opacity="0.14" /><g stroke="#8B5CF6" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" fill="none"><path d="M4.6 5.4L7.2 8l-2.6 2.6" /><path d="M8 10.6h3.4" /></g></I>;
 }
 
 // Sub-agent icons
