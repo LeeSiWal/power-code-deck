@@ -702,6 +702,9 @@ function AskRow({ item, onAnswer }: {
   // Per-question selections, keyed by question index. State lives here (the row is
   // keyed by the stable tool_use id) so it survives history re-folds.
   const [picked, setPicked] = useState<Record<number, string[]>>({});
+  // Free-text "기타" per question — the answer Claude's fixed options didn't cover.
+  // Always available, mirroring how AskUserQuestion always offers an "Other".
+  const [custom, setCustom] = useState<Record<number, string>>({});
   const [sent, setSent] = useState('');
 
   const toggle = (qi: number, q: AskQuestion, label: string) => {
@@ -713,16 +716,34 @@ function AskRow({ item, onAnswer }: {
       // Single select: tapping the picked option again unpicks it.
       return { ...p, [qi]: cur[0] === label ? [] : [label] };
     });
+    // Single select: a preset and the free-text field are mutually exclusive, so
+    // choosing an option clears whatever was typed.
+    if (!q.multiSelect) setCustom((c) => ({ ...c, [qi]: '' }));
   };
 
-  const complete = item.questions.every((_, qi) => (picked[qi] ?? []).length > 0);
+  const setCustomText = (qi: number, q: AskQuestion, text: string) => {
+    setCustom((c) => ({ ...c, [qi]: text }));
+    // Single select: typing overrides any picked option (they can't both win).
+    if (!q.multiSelect && text.trim()) setPicked((p) => ({ ...p, [qi]: [] }));
+  };
+
+  // The effective answer for a question: preset picks plus (multi) or instead of
+  // (single) the free-text entry.
+  const answersFor = (qi: number, q: AskQuestion): string[] => {
+    const presets = picked[qi] ?? [];
+    const c = (custom[qi] ?? '').trim();
+    if (q.multiSelect) return c ? [...presets, c] : presets;
+    return c ? [c] : presets;
+  };
+
+  const complete = item.questions.every((q, qi) => answersFor(qi, q).length > 0);
   const submit = () => {
     if (!complete || sent) return;
     // One question → just the label(s); several → prefix each with its header so
     // Claude can tell which answer belongs to which question.
     const answer = item.questions
       .map((q, qi) => {
-        const sel = (picked[qi] ?? []).join(', ');
+        const sel = answersFor(qi, q).join(', ');
         return item.questions.length > 1 ? `${q.header || q.question}: ${sel}` : sel;
       })
       .join('\n');
@@ -738,7 +759,7 @@ function AskRow({ item, onAnswer }: {
           <div className="text-sm text-deck-text">{q.question}</div>
           <div className="space-y-1.5">
             {q.options.map((o) => {
-              const on = (picked[qi] ?? []).includes(o.label);
+              const on = answersFor(qi, q).includes(o.label);
               return (
                 <button
                   key={o.label}
@@ -756,6 +777,28 @@ function AskRow({ item, onAnswer }: {
                 </button>
               );
             })}
+            {/* Always-present free-text escape hatch: none of the options fit, so say
+                it in your own words. Highlights like a selected option when filled. */}
+            <div
+              className={`rounded-lg border text-xs ${
+                (custom[qi] ?? '').trim() ? 'border-deck-accent bg-deck-accent/20' : 'border-deck-border'
+              }`}
+            >
+              <input
+                type="text"
+                value={custom[qi] ?? ''}
+                onChange={(e) => setCustomText(qi, q, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing && complete) {
+                    e.preventDefault();
+                    submit();
+                  }
+                }}
+                disabled={!!sent}
+                placeholder="기타 — 직접 입력…"
+                className="w-full bg-transparent px-3 py-2 text-deck-text outline-none placeholder:text-deck-muted disabled:opacity-60"
+              />
+            </div>
           </div>
         </div>
       ))}
