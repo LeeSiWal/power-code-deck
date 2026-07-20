@@ -7,6 +7,10 @@
     -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
     height: 100%;
+    /* Paint the whole canvas — incl. the iOS safe areas / home-indicator strip a
+       standalone PWA exposes below the app — in the app background, so it reads as
+       part of the app instead of an empty (often white) gap. */
+    background-color: theme('colors.deck.bg');
   }
 
   body {
