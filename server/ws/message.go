@@ -165,6 +165,7 @@ type AgentMetaLogPayload struct {
 // when it isn't already running.
 type NativeOpenPayload struct {
 	AgentID string `json:"agentId"`
+	Driver  string `json:"driver"` // claude | codex
 	Cwd     string `json:"cwd"`
 	Model   string `json:"model"`
 	Mode    string `json:"mode"`   // permission mode: "" | acceptEdits | plan | bypassPermissions

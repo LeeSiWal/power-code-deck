@@ -49,7 +49,7 @@ func TestOldPumpDoesNotRevokeReplacementToken(t *testing.T) {
 	}
 
 	// The old driver exits; its pump drains and cleans up.
-	close(oldSess.driver.events)
+	close(oldSess.driver.(*ClaudeDriver).events)
 	s.pump(oldSess)
 
 	if !s.tokens.Valid("agent-1", tok) {

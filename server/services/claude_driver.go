@@ -284,6 +284,8 @@ func (d *ClaudeDriver) ClaudeSessionID() string {
 	return d.claudeSessionID
 }
 
+func (d *ClaudeDriver) ConversationID() string { return d.ClaudeSessionID() }
+
 // Stop ends the session. Closing stdin is the polite exit (the CLI finishes and
 // exits on EOF); Kill is the fallback if it doesn't.
 func (d *ClaudeDriver) Stop() {

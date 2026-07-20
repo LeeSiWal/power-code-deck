@@ -35,15 +35,20 @@ const UNIFIED_INPUT = typeof window === 'undefined' || !window.location.search.i
  * Claude agents render as a chat driven by the CLI's stream-json events, not as a
  * terminal. `?terminal` forces the old TUI path back for one session.
  *
- * Native is the default only where a driver exists — Claude. Codex (app-server) is
- * not wired yet, and a shell or a custom command has no structured stream at all,
+ * Native is the default where a structured driver exists — Claude stream-json or
+ * Codex app-server. A shell or a custom command has no structured stream at all,
  * so those must stay on the terminal: rendering them as a chat would show an empty
  * screen forever.
  */
 const CLASSIC_TERMINAL = typeof window !== 'undefined' && window.location.search.includes('terminal');
 
 function nativeCapable(agent: { preset?: string; command?: string }): boolean {
-  return agent.preset === 'claude-code' || agent.command === 'claude';
+  return agent.preset === 'claude-code' || agent.command === 'claude'
+    || agent.preset === 'codex-cli' || agent.command === 'codex';
+}
+
+function nativeDriver(agent: { preset?: string; command?: string }): 'claude' | 'codex' {
+  return agent.preset === 'codex-cli' || agent.command === 'codex' ? 'codex' : 'claude';
 }
 
 /** Whether this agent is rendered as a chat rather than a terminal. */
@@ -387,7 +392,7 @@ export function TerminalPage() {
         {activeTab === 'terminal' && (
           <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
             {usesNative(agent) ? (
-              <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} />
+              <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} />
             ) : (
               <TerminalView
                 key={agentId}
@@ -661,7 +666,7 @@ export function TerminalPage() {
           {activeTab === 'terminal' && (
             <div className="flex-1 min-h-0">
               {usesNative(agent) ? (
-                <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} />
+                <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} />
               ) : (
                 <TerminalView
                   key={agentId}

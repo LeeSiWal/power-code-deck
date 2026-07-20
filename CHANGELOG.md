@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## v0.2.6 — Codex 네이티브 UI
+
+### Added
+- **Codex `app-server` 드라이버** — JSON-RPC 2.0/stdio로 Codex 스레드 시작·재개, 턴 전송·중단, 명령/파일 변경 승인 응답을 처리합니다.
+- **Claude·Codex 공통 네이티브 세션 인터페이스** — 기존 Claude 네이티브 채팅의 반응형 메시지, 도구 호출/결과, 승인 카드, 모델·권한 모드, 대화 재접속 경험을 Codex에도 적용합니다.
+- Codex 명령 실행, 파일 변경, MCP 도구 호출을 기존 네이티브 도구 카드 형식으로 정규화합니다.
+
+### Changed
+- Codex 프리셋은 기본적으로 PTY TUI 대신 네이티브 채팅을 사용합니다. URL에 `?terminal`을 붙이면 기존 터미널 경로를 사용할 수 있습니다.
+- 프로젝트 한 줄 소개와 README 아키텍처를 터미널 중심 설명에서 Claude·Codex 구조화 네이티브 워크스페이스 중심으로 갱신했습니다.
+
+### Tests
+- Go 서비스/웹소켓/핸들러 테스트와 TypeScript/Vite 프로덕션 빌드를 검증했습니다.
+
 ## v0.2.5 — 리버스 프록시 접속 복구 (fix)
 
 > **v0.2.4에서 리버스 프록시/도메인으로 접속하던 배포가 깨졌던 문제를 수정합니다.** 도메인만 `CORS_ORIGINS`에 설정한 사용자는 v0.2.4로 올리면 에이전트가 "connecting"에서 멈췄습니다 — 아래 수정으로 해결됩니다.

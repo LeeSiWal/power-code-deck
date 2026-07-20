@@ -73,7 +73,8 @@ type NativeService struct {
 
 type nativeSession struct {
 	id     string
-	driver *ClaudeDriver
+	driver NativeDriver
+	kind   string // claude | codex
 	cwd    string
 	model  string // remembered so a mode switch keeps the model, and vice-versa
 	mode   string // permission mode: "" | acceptEdits | plan | bypassPermissions
@@ -161,11 +162,11 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 	})
 }
 
-// Start launches a native Claude session for an agent. Idempotent: starting one
-// that already runs is a no-op, so a second device opening the page doesn't spawn
-// a second agent.
-func (s *NativeService) Start(sessionID, cwd, model, resumeID, mode string) error {
-	return s.startSession(sessionID, cwd, model, resumeID, mode, true)
+// Start launches a native Claude or Codex session for an agent. Idempotent:
+// starting one that already runs is a no-op, so a second device opening the page
+// doesn't spawn a second agent.
+func (s *NativeService) Start(sessionID, kind, cwd, model, resumeID, mode string) error {
+	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, true)
 }
 
 // startSession is the shared launch path. fromDB distinguishes a fresh open (where
@@ -173,7 +174,7 @@ func (s *NativeService) Start(sessionID, cwd, model, resumeID, mode string) erro
 // a restart (where the caller passes the exact model/mode to use, so the DB must
 // not override them — e.g. switching model must keep the current default mode, not
 // resurrect an old persisted one).
-func (s *NativeService) startSession(sessionID, cwd, model, resumeID, mode string, fromDB bool) error {
+func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode string, fromDB bool) error {
 	s.mu.Lock()
 	if _, ok := s.sessions[sessionID]; ok {
 		s.mu.Unlock()
@@ -211,26 +212,33 @@ func (s *NativeService) startSession(sessionID, cwd, model, resumeID, mode strin
 		}
 	}
 
-	token, err := s.tokens.Issue(sessionID)
-	if err != nil {
-		return err
+	if kind == "" {
+		kind = "claude"
 	}
-
-	d := NewClaudeDriver(ClaudeConfig{
-		SessionID:      sessionID,
-		Cwd:            cwd,
-		Model:          model,
-		PermissionMode: mode,
-		ResumeID:       resumeID,
-		ApproveURL:     s.baseURL + "/internal/native/approve",
-		ApproveToken:   token,
-		SelfPath:       s.selfBin,
-	})
+	var d NativeDriver
+	var token string
+	var err error
+	if kind == "codex" {
+		d = NewCodexDriver(CodexConfig{
+			SessionID: sessionID, Cwd: cwd, Model: model, Mode: mode,
+			ResumeID: resumeID, Broker: s.broker,
+		})
+	} else {
+		token, err = s.tokens.Issue(sessionID)
+		if err != nil {
+			return err
+		}
+		d = NewClaudeDriver(ClaudeConfig{
+			SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: mode,
+			ResumeID: resumeID, ApproveURL: s.baseURL + "/internal/native/approve",
+			ApproveToken: token, SelfPath: s.selfBin,
+		})
+	}
 	if err := d.Start(); err != nil {
 		// A stale resume id (its transcript was deleted, or the CLI rejects it)
 		// must not lock the agent out of ever starting. Drop it and try fresh
 		// once, rather than failing every open from here on.
-		if resumeID != "" {
+		if resumeID != "" && kind == "claude" {
 			d = NewClaudeDriver(ClaudeConfig{
 				SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: mode,
 				ApproveURL: s.baseURL + "/internal/native/approve", ApproveToken: token,
@@ -246,12 +254,12 @@ func (s *NativeService) startSession(sessionID, cwd, model, resumeID, mode strin
 		}
 	}
 
-	sess := &nativeSession{id: sessionID, driver: d, cwd: cwd, model: model, mode: mode}
+	sess := &nativeSession{id: sessionID, driver: d, kind: kind, cwd: cwd, model: model, mode: mode}
 	// A resumed session's PRIOR conversation is not re-emitted as events by
 	// `claude --resume` — it just continues. So seed history from the transcript on
 	// disk, or the chat opens blank until the next reply. (Only when we actually
 	// resumed a real id, and only useful before the first client renders history.)
-	if resumeID != "" {
+	if resumeID != "" && kind == "claude" {
 		seedNativeHistory(sess, cwd, resumeID)
 	}
 	s.mu.Lock()
@@ -341,10 +349,11 @@ func (s *NativeService) restart(sessionID, model, mode string) error {
 	if old == nil {
 		return fmt.Errorf("native session %s is not running", sessionID)
 	}
-	resumeID := old.driver.ClaudeSessionID()
+	resumeID := old.driver.ConversationID()
 	cwd := old.cwd
+	kind := old.kind
 	old.driver.Stop() // its pump exits; the pump guard keeps it from evicting the new one
-	return s.startSession(sessionID, cwd, model, resumeID, mode, false)
+	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, false)
 }
 
 // SetModel switches model, keeping the current permission mode.

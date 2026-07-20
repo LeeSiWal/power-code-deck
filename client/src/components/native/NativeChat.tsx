@@ -29,6 +29,7 @@ interface NativeChatProps {
   agentId: string;
   cwd: string;
   model?: string;
+  driver?: 'claude' | 'codex';
 }
 
 // Model choices for the switcher. `id` is passed straight to the CLI's --model;
@@ -41,6 +42,13 @@ const MODELS: { id: string; label: string; desc: string }[] = [
   { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 · 1M', desc: '초대용량 컨텍스트(1M)' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5', desc: '균형 · 빠르고 똑똑' },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', desc: '가장 빠름 · 가벼운 작업' },
+];
+
+const CODEX_MODELS: typeof MODELS = [
+  { id: '', label: 'Auto', desc: 'Codex 기본 모델' },
+  { id: 'gpt-5.4', label: 'GPT-5.4', desc: '복잡한 코딩 작업' },
+  { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', desc: 'Codex 최적화 모델' },
+  { id: 'gpt-5.3-codex-spark', label: 'Codex Spark', desc: '빠른 코딩 작업' },
 ];
 
 // Permission modes — the TUI's Shift+Tab cycle. `id` → --permission-mode.
@@ -56,7 +64,7 @@ const MODES: { id: string; label: string; desc: string; icon: React.ComponentTyp
   { id: 'bypassPermissions', label: '전체 허용', desc: '모든 도구를 묻지 않고 승인합니다 — 주의해서 사용', icon: IconBolt, pill: 'border-amber-400/45 bg-amber-400/10 text-amber-300' },
 ];
 
-export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
+export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeChatProps) {
   const navigate = useNavigate(); // /clear swaps to a freshly created session
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pending, setPending] = useState<PendingApproval[]>([]);
@@ -106,7 +114,8 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
     pickMode(MODES[(i + 1) % MODES.length].id);
   }, [pickMode]);
 
-  const modelLabel = MODELS.find((m) => m.id === modelId)?.label ?? modelId ?? 'Auto';
+  const models = driver === 'codex' ? CODEX_MODELS : MODELS;
+  const modelLabel = models.find((m) => m.id === modelId)?.label ?? modelId ?? 'Auto';
   const currentMode = MODES.find((m) => m.id === modeId) ?? MODES[0];
 
   // Grow the input with its content (up to a cap, then it scrolls internally).
@@ -229,12 +238,12 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
       setError(p.message ?? '알 수 없는 오류');
     });
 
-    const open = () => agentDeckWS.send('native:open', { agentId, cwd, model: modelIdRef.current, mode: modeIdRef.current });
+    const open = () => agentDeckWS.send('native:open', { agentId, driver, cwd, model: modelIdRef.current, mode: modeIdRef.current });
     open();
     const offOpen = agentDeckWS.on('open', open); // re-open after a reconnect
 
     return () => { offEvent(); offHistory(); offApproval(); offState(); offError(); offOpen(); };
-  }, [agentId, cwd, model]);
+  }, [agentId, cwd, model, driver]);
 
   // Stick to the bottom unless the user scrolled up to read something.
   useEffect(() => {
@@ -348,7 +357,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
         {menu === 'model' && (
           <div className="absolute bottom-14 right-2 z-20 w-64 max-w-[calc(100vw-1rem)] bg-deck-raised border border-deck-border rounded-lg shadow-xl overflow-hidden">
             <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim">모델</div>
-            {MODELS.map((m) => (
+            {models.map((m) => (
               <button
                 key={m.id}
                 onClick={() => pickModel(m.id)}

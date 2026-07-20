@@ -353,7 +353,7 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		// history replay — otherwise events racing the reply would be lost.
 		c.watchingAgent = payload.AgentID
 		if !h.native.Running(payload.AgentID) {
-			if err := h.native.Start(payload.AgentID, payload.Cwd, payload.Model, payload.Resume, payload.Mode); err != nil {
+			if err := h.native.Start(payload.AgentID, payload.Driver, payload.Cwd, payload.Model, payload.Resume, payload.Mode); err != nil {
 				log.Printf("native: start %s failed: %v", payload.AgentID, err)
 				c.sendEvent(EventNativeError, NativeErrorPayload{
 					AgentID: payload.AgentID,
