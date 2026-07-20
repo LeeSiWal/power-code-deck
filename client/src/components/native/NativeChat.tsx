@@ -824,7 +824,10 @@ function ApprovalCard({ req, onDecide }: {
         <span className="font-semibold">{req.toolName}</span> 실행을 요청했습니다
       </div>
       {summary && (
-        <pre className="text-[11px] text-deck-muted bg-deck-bg rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
+        // Cap the height and scroll inside: a long Bash command must never push the
+        // 허용/거부 buttons off-screen (unreachable on a phone). Buttons stay pinned
+        // right below this box no matter how long the command is.
+        <pre className="text-[11px] text-deck-muted bg-deck-bg rounded p-2 overflow-auto max-h-40 whitespace-pre-wrap break-all">
           {summary}
         </pre>
       )}
