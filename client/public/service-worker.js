@@ -37,7 +37,20 @@ self.addEventListener('push', (event) => {
   // "silent" pushes get the subscription revoked. (An earlier version suppressed the
   // notification when the app was focused — which meant nothing ever showed while you
   // were testing with the app open, and quietly put the iOS subscription at risk.)
-  event.waitUntil(self.registration.showNotification(title, options));
+  //
+  // Defensive fallback: if showNotification rejects for ANY reason (e.g. a bad
+  // icon/badge URL — iOS is strict and can refuse the whole notification), retry with
+  // the bare essentials so a notification still appears. Never let a display detail
+  // swallow the alert entirely.
+  event.waitUntil(
+    self.registration.showNotification(title, options).catch(() =>
+      self.registration.showNotification(title, {
+        body: options.body,
+        tag: options.tag,
+        data: options.data,
+      }),
+    ),
+  );
 });
 
 self.addEventListener('notificationclick', (event) => {

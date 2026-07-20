@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
 	"testing"
@@ -102,6 +103,36 @@ func decryptRFC8291(t *testing.T, body, uaPublic, uaPrivRaw, auth []byte) []byte
 		record = record[:n-1]
 	}
 	return record
+}
+
+// TestEncryptPayloadProductionRoundTrip proves the REAL production path end to end:
+// a simulated browser subscription (fresh ECDH keypair + auth, base64url-encoded like
+// a real PushManager gives us), fed through decodeB64 + encryptPayload (random
+// ephemeral + salt), then decrypted with the subscription's private key. If a browser
+// couldn't read our messages, this fails — closing the gap the fixed-vector test
+// leaves (random keys, the decodeB64 path).
+func TestEncryptPayloadProductionRoundTrip(t *testing.T) {
+	uaPriv, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authRaw := make([]byte, 16)
+	if _, err := rand.Reader.Read(authRaw); err != nil {
+		t.Fatal(err)
+	}
+	// Encode exactly as a browser subscription would deliver them.
+	p256dhB64 := base64.RawURLEncoding.EncodeToString(uaPriv.PublicKey().Bytes())
+	authB64 := base64.RawURLEncoding.EncodeToString(authRaw)
+
+	plaintext := []byte(`{"title":"작업 완료","body":"에이전트가 끝났어요"}`)
+	body, err := encryptPayload(decodeB64(p256dhB64), decodeB64(authB64), plaintext)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	got := decryptRFC8291(t, body, uaPriv.PublicKey().Bytes(), uaPriv.Bytes(), authRaw)
+	if !bytes.Equal(got, plaintext) {
+		t.Errorf("production round-trip mismatch\n got: %q\nwant: %q", got, plaintext)
+	}
 }
 
 // TestVAPIDKeysRoundTrip checks a generated keypair serializes and parses back, and
