@@ -311,7 +311,9 @@ function Test-Health {
 function Test-Port {
   try {
     `$c = New-Object System.Net.Sockets.TcpClient
-    `$ok = `$c.BeginConnect('127.0.0.1', 33033, `$null, `$null).AsyncWaitHandle.WaitOne(200)
+    `$pending = `$c.BeginConnect('127.0.0.1', 33033, `$null, `$null)
+    if (-not `$pending.AsyncWaitHandle.WaitOne(200)) { `$c.Close(); return `$false }
+    try { `$c.EndConnect(`$pending); `$ok = `$c.Connected } catch { `$ok = `$false }
     `$c.Close(); return `$ok
   } catch { return `$false }
 }
@@ -324,9 +326,26 @@ if (Test-Port) {
   Start-Sleep -Seconds 4
 }
 # Minimized (not hidden) window keeps the WSL distro + pcd alive; close it to stop.
-Start-Process wsl -ArgumentList '-d','Ubuntu','-u',`$user,'--','bash','-lc','exec ~/PowerCodeDeck/pcd' -WindowStyle Minimized
-for (`$i = 0; `$i -lt 100; `$i++) { if (Test-Health) { break }; Start-Sleep -Milliseconds 300 }
-Start-Process 'http://localhost:33033'
+# Start-Process joins an ArgumentList array with spaces and does not preserve the
+# boundary around "cd ... && exec ...". Pass one explicitly quoted argument string;
+# otherwise bash receives only "cd" as the -lc command and exits immediately.
+`$wslArgs = "-d Ubuntu -u ```"`$user```" -- bash -lc ```"cd ~/PowerCodeDeck && exec ./pcd```""
+`$proc = Start-Process -FilePath 'wsl.exe' -ArgumentList `$wslArgs -WindowStyle Minimized -PassThru
+for (`$i = 0; `$i -lt 100; `$i++) {
+  if (Test-Health) { Start-Process 'http://localhost:33033'; return }
+  if (`$proc.HasExited) { break }
+  Start-Sleep -Milliseconds 300
+}
+
+# Never open a dead localhost page with no explanation. The shortcut itself runs
+# hidden, so surface a useful recovery command in a dialog when startup fails.
+`$msg = "PowerCodeDeck could not start.``n``nOpen PowerShell and run:``n``nwsl -d Ubuntu -u `$user -- bash -lc ```"cd ~/PowerCodeDeck && ./pcd```"``n``nThe command window will show the actual error."
+try {
+  Add-Type -AssemblyName PresentationFramework
+  [System.Windows.MessageBox]::Show(`$msg, 'PowerCodeDeck startup failed', 'OK', 'Error') | Out-Null
+} catch {
+  Start-Process powershell.exe -ArgumentList '-NoExit', '-Command', "Write-Host ```"`$msg```" -ForegroundColor Red"
+}
 "@
     Set-Content -Path (Join-Path $appDir 'launch-powercodedeck.ps1') -Value $launchPs1 -Encoding UTF8
 
