@@ -222,9 +222,41 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 		return nil, err
 	}
 
+	// A new session inherits the model + permission mode from your last session, so
+	// continuing work doesn't reset those choices back to Auto/수동 every time. (The
+	// /clear and 이어하기 paths copy from their exact source agent afterwards; this is
+	// the general case — a fresh agent from the dashboard or a new project.)
+	if model, mode := s.inheritedNativeConfig(workingDir); model != "" || mode != "" {
+		s.SetNativeConfig(agent.ID, model, mode)
+	}
+
 	insertAgentLog(s.db, agent.ID, "세션 생성됨 · "+agent.Name+" ("+agent.Command+")")
 	s.startActivity(agent)
 	return agent, nil
+}
+
+// inheritedNativeConfig picks the model + permission mode a new session should start
+// with: the most recent prior session in the SAME project, or — if this project has
+// none yet — the last choice made anywhere. Empty strings mean no prior choice
+// (Claude's defaults). The just-created row can't match itself: it's still empty, so
+// the "!= ''" filter excludes it.
+func (s *AgentService) inheritedNativeConfig(workingDir string) (model, mode string) {
+	err := s.db.QueryRow(
+		`SELECT COALESCE(native_model, ''), COALESCE(native_mode, '')
+		   FROM agents
+		  WHERE working_dir = ? AND (native_model != '' OR native_mode != '')
+		  ORDER BY created_at DESC LIMIT 1`, workingDir,
+	).Scan(&model, &mode)
+	if err == nil && (model != "" || mode != "") {
+		return model, mode
+	}
+	_ = s.db.QueryRow(
+		`SELECT COALESCE(native_model, ''), COALESCE(native_mode, '')
+		   FROM agents
+		  WHERE native_model != '' OR native_mode != ''
+		  ORDER BY created_at DESC LIMIT 1`,
+	).Scan(&model, &mode)
+	return model, mode
 }
 
 func (s *AgentService) Delete(id string) error {
