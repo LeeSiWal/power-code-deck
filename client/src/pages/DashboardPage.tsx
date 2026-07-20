@@ -6,7 +6,7 @@ import { AgentGrid } from '../components/agent/AgentGrid';
 import { AgentList } from '../components/agent/AgentList';
 import { CreateAgentSheet } from '../components/agent/CreateAgentSheet';
 import { BottomNav } from '../components/layout/BottomNav';
-import { IconPlus, IconSettings } from '../components/icons';
+import { IconPlus, IconSettings, IconLog } from '../components/icons';
 import { Link } from 'react-router-dom';
 
 export function DashboardPage() {
@@ -60,9 +60,15 @@ export function DashboardPage() {
             <IconPlus size={14} />
             <span>프로젝트 추가</span>
           </Link>
-          {/* Desktop/iPad have no BottomNav (md:hidden), so this is their path to
-              settings — 알림 토글 included. Shown on md+ to avoid doubling the
-              mobile BottomNav's Settings entry. */}
+          {/* Desktop/iPad have no BottomNav (md:hidden), so these are their path to
+              Logs + Settings. Shown on md+ to avoid doubling the mobile BottomNav. */}
+          <Link
+            to="/logs"
+            className="hidden md:inline-flex items-center p-2 rounded-lg text-deck-text-dim hover:bg-deck-border/30"
+            title="로그"
+          >
+            <IconLog size={16} />
+          </Link>
           <Link
             to="/settings"
             className="hidden md:inline-flex items-center p-2 rounded-lg text-deck-text-dim hover:bg-deck-border/30"

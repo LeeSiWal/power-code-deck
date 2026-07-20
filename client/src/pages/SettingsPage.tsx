@@ -1,7 +1,9 @@
+import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { SoundSettings } from '../components/settings/SoundSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
 import { BottomNav } from '../components/layout/BottomNav';
+import { IconBack } from '../components/icons';
 import { useAppStore } from '../stores/appStore';
 
 export function SettingsPage() {
@@ -10,7 +12,16 @@ export function SettingsPage() {
 
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
-      <header className="px-4 py-2 bg-deck-surface border-b border-deck-border">
+      <header className="flex items-center gap-2 px-4 py-2 bg-deck-surface border-b border-deck-border">
+        {/* Back to the dashboard — desktop/iPad have no BottomNav, so without this
+            they'd be stranded here (PWA has no browser back). */}
+        <Link
+          to="/dashboard"
+          className="hidden md:inline-flex p-1 -ml-1 rounded hover:bg-deck-border/30 text-deck-text-dim"
+          title="대시보드로"
+        >
+          <IconBack size={15} />
+        </Link>
         <span className="text-sm font-medium">Settings</span>
       </header>
 
