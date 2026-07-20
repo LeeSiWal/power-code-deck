@@ -622,21 +622,45 @@ function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) 
  * user did not answer the questions" the moment it's called. But the questions and
  * options ride along in the tool input, so we render them as real buttons and send
  * the pick as the next user turn — which is exactly how Claude expects to be
- * answered ("just tell me which one you want"). Tap instead of typing.
+ * answered ("just tell me which one you want").
+ *
+ * Selecting and sending are two separate acts: a tap only highlights, and one
+ * explicit 보내기 button submits every question's pick at once. Tap-to-send felt
+ * fast but a phone thumb has no undo — the answer left before you could read it.
  */
 function AskRow({ item, onAnswer }: {
   item: Extract<ChatItem, { kind: 'ask' }>;
   onAnswer: (text: string) => void;
 }) {
-  const [picked, setPicked] = useState<string[]>([]);
+  // Per-question selections, keyed by question index. State lives here (the row is
+  // keyed by the stable tool_use id) so it survives history re-folds.
+  const [picked, setPicked] = useState<Record<number, string[]>>({});
+  const [sent, setSent] = useState('');
 
-  const answer = (q: AskQuestion, label: string) => {
-    if (q.multiSelect) {
-      setPicked((p) => (p.includes(label) ? p.filter((x) => x !== label) : [...p, label]));
-      return;
-    }
-    setPicked([label]);
-    onAnswer(label);
+  const toggle = (qi: number, q: AskQuestion, label: string) => {
+    setPicked((p) => {
+      const cur = p[qi] ?? [];
+      if (q.multiSelect) {
+        return { ...p, [qi]: cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label] };
+      }
+      // Single select: tapping the picked option again unpicks it.
+      return { ...p, [qi]: cur[0] === label ? [] : [label] };
+    });
+  };
+
+  const complete = item.questions.every((_, qi) => (picked[qi] ?? []).length > 0);
+  const submit = () => {
+    if (!complete || sent) return;
+    // One question → just the label(s); several → prefix each with its header so
+    // Claude can tell which answer belongs to which question.
+    const answer = item.questions
+      .map((q, qi) => {
+        const sel = (picked[qi] ?? []).join(', ');
+        return item.questions.length > 1 ? `${q.header || q.question}: ${sel}` : sel;
+      })
+      .join('\n');
+    onAnswer(answer);
+    setSent(answer);
   };
 
   return (
@@ -647,32 +671,35 @@ function AskRow({ item, onAnswer }: {
           <div className="text-sm text-deck-text">{q.question}</div>
           <div className="space-y-1.5">
             {q.options.map((o) => {
-              const on = picked.includes(o.label);
+              const on = (picked[qi] ?? []).includes(o.label);
               return (
                 <button
                   key={o.label}
-                  onClick={() => answer(q, o.label)}
-                  className={`w-full text-left px-3 py-2 rounded-lg border text-xs ${
+                  onClick={() => { if (!sent) toggle(qi, q, o.label); }}
+                  disabled={!!sent}
+                  className={`w-full text-left px-3 py-2 rounded-lg border text-xs disabled:opacity-60 ${
                     on ? 'border-deck-accent bg-deck-accent/20 text-deck-text' : 'border-deck-border text-deck-text'
                   }`}
                 >
-                  <div className="font-medium">{o.label}</div>
+                  <div className="font-medium">{on ? '✓ ' : ''}{o.label}</div>
                   {o.description && <div className="text-deck-muted mt-0.5">{o.description}</div>}
                 </button>
               );
             })}
           </div>
-          {q.multiSelect && (
-            <button
-              onClick={() => { if (picked.length) onAnswer(picked.join(', ')); }}
-              disabled={!picked.length}
-              className="w-full py-2 rounded-lg bg-deck-accent text-white text-xs font-medium disabled:opacity-40"
-            >
-              {picked.length ? `${picked.length}개 선택 · 보내기` : '선택하세요'}
-            </button>
-          )}
         </div>
       ))}
+      {sent ? (
+        <div className="text-[11px] text-deck-muted px-1">보냄: {sent}</div>
+      ) : (
+        <button
+          onClick={submit}
+          disabled={!complete}
+          className="w-full py-2 rounded-lg bg-deck-accent text-white text-xs font-medium disabled:opacity-40"
+        >
+          {complete ? '선택 보내기' : '항목을 선택하세요'}
+        </button>
+      )}
     </div>
   );
 }
