@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { agentDeckWS } from '../../lib/ws';
+import { IconChevronDown, IconChevronUp, IconClose, IconEdit } from '../icons';
 
 /**
  * How Prompt Bar text is delivered to the terminal. The server (ws/hub.go)
@@ -101,9 +102,9 @@ export function PromptBar({
           onMouseDown={(e) => { e.preventDefault(); onToggleCollapse(); }}
           className="flex w-full items-center gap-2 px-4 py-3 rounded-xl text-sm font-medium touch-manipulation active:opacity-70 bg-deck-accent/15 text-deck-accent"
         >
-          <span className="text-base leading-none">⌨</span>
+          <IconEdit size={14} />
           한글·프롬프트 입력
-          <span className="ml-auto text-xs opacity-70">펼치기 ▲</span>
+          <span className="ml-auto text-xs opacity-70 inline-flex items-center gap-1">펼치기 <IconChevronUp size={11} /></span>
         </button>
       </div>
     );
@@ -120,7 +121,7 @@ export function PromptBar({
           className="ml-auto shrink-0 px-2.5 py-1 rounded-md text-xs touch-manipulation active:opacity-70 bg-deck-surface text-deck-text-dim"
           title={forced ? '접기' : '닫기 (Esc)'}
         >
-          {forced ? '접기 ▼' : '닫기 ✕'}
+          {forced ? <span className="inline-flex items-center gap-1">접기 <IconChevronDown size={11} /></span> : <span className="inline-flex items-center gap-1">닫기 <IconClose size={11} /></span>}
         </button>
       </div>
 

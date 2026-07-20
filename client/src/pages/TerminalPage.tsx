@@ -18,7 +18,7 @@ import { BrowserPanel } from '../components/browser/BrowserPanel';
 import { useDevice } from '../hooks/useDevice';
 import { useFileExplorer } from '../hooks/useFileExplorer';
 import { useAgentActivity } from '../hooks/useAgentActivity';
-import { IconBack, IconFiles, IconClose, IconTerminal, AGENT_ICON_MAP } from '../components/icons';
+import { IconBack, IconFiles, IconClose, IconTerminal, IconHistory, IconPhone, IconGlobe, IconExpand, AGENT_ICON_MAP } from '../components/icons';
 import { api } from '../lib/api';
 import { writeClipboard, readClipboard } from '../lib/clipboard';
 import { generatePalette } from '../lib/paletteGenerator';
@@ -308,7 +308,7 @@ export function TerminalPage() {
             className="p-1.5 rounded active:bg-deck-border/30 text-sm"
             title="지난 세션 기록"
           >
-            🗂
+            <IconHistory size={16} />
           </button>
           {handoffEnabled && (
             <button
@@ -316,7 +316,7 @@ export function TerminalPage() {
               className="p-1.5 rounded active:bg-deck-border/30 text-sm"
               title="모바일에서 이어하기"
             >
-              📱
+              <IconPhone size={16} />
             </button>
           )}
           <button
@@ -337,7 +337,7 @@ export function TerminalPage() {
             className="p-1.5 rounded active:bg-deck-border/30 text-sm"
             title="Browser"
           >
-            🌐
+            <IconGlobe size={16} />
           </button>
           <button onClick={() => setMobileFilesOpen(true)} className="p-1.5 rounded active:bg-deck-border/30">
             <IconFiles size={16} />
@@ -525,7 +525,7 @@ export function TerminalPage() {
           }`}
           title="지난 세션 기록 보기 · 이어하기 · 삭제"
         >
-          🗂 세션 기록
+          <span className="inline-flex items-center gap-1"><IconHistory size={13} /> 세션 기록</span>
         </button>
 
         {handoffEnabled && (
@@ -534,7 +534,7 @@ export function TerminalPage() {
             className="text-xs px-2 py-0.5 rounded transition-colors bg-deck-bg text-deck-text-dim hover:bg-deck-accent/20 hover:text-deck-accent"
             title="Continue on Mobile — 모바일에서 이어하기"
           >
-            📱 이어하기
+            <span className="inline-flex items-center gap-1"><IconPhone size={13} /> 이어하기</span>
           </button>
         )}
 
@@ -573,7 +573,7 @@ export function TerminalPage() {
             rightPanelOpen && rightTab === 'browser' ? 'bg-cyan-500/20 text-cyan-400' : 'bg-deck-bg text-deck-text-dim'
           }`}
         >
-          🌐
+          <IconGlobe size={14} />
         </button>
         <button
           onClick={() => setZoomedPanel(zoomedPanel ? null : 'terminal')}
@@ -582,7 +582,7 @@ export function TerminalPage() {
           }`}
           title="Cmd+Shift+Z"
         >
-          ⛶
+          <IconExpand size={14} />
         </button>
       </header>
 

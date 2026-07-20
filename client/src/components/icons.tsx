@@ -76,6 +76,9 @@ export function IconChevronRight({ size, color = 'currentColor', className }: Ic
 export function IconChevronDown({ size, color = 'currentColor', className }: IconProps) {
   return <I size={size} className={className}><path d="M3 6l5 5 5-5" stroke={color} strokeWidth="1.3" fill="none" /></I>;
 }
+export function IconChevronUp({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}><path d="M3 10l5-5 5 5" stroke={color} strokeWidth="1.3" fill="none" /></I>;
+}
 export function IconBack({ size, color = 'currentColor', className }: IconProps) {
   return <I size={size} className={className}><path d="M10 3L5 8l5 5" stroke={color} strokeWidth="1.3" fill="none" /></I>;
 }
@@ -259,6 +262,79 @@ export function IconWarning({ size, color = 'currentColor', className }: IconPro
 export function IconSpinner({ size, color = 'currentColor', className }: IconProps) {
   return <I size={size} className={className}>
     <path d="M8 1.5A6.5 6.5 0 1 1 1.5 8" stroke={color} strokeWidth="1.4" fill="none" strokeLinecap="round" />
+  </I>;
+}
+
+// ---- App-wide replacements for what used to be emoji (🗂 📱 🌐 ⛶ 🌿 🔌 🤖 ↗ …).
+
+// 세션 기록 — a clock wound backwards (history).
+export function IconHistory({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M2.6 8a5.4 5.4 0 1 1 1.6 3.8M2.6 8l-1.2-2M2.6 8l2.2-.8" stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M8 5.2V8l2 1.4" stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+export function IconPhone({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <rect x="4.5" y="1.8" width="7" height="12.4" rx="1.6" stroke={color} strokeWidth="1.2" fill="none" />
+    <path d="M7 12.2h2" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+  </I>;
+}
+export function IconGlobe({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <circle cx="8" cy="8" r="6.2" stroke={color} strokeWidth="1.1" fill="none" />
+    <path d="M1.8 8h12.4M8 1.8c-3.6 3.6-3.6 8.8 0 12.4M8 1.8c3.6 3.6 3.6 8.8 0 12.4" stroke={color} strokeWidth="1" fill="none" />
+  </I>;
+}
+// 전체화면 — four corners.
+export function IconExpand({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+// git branch — trunk with a fork joining in.
+export function IconBranch({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <circle cx="4.5" cy="3.5" r="1.6" stroke={color} strokeWidth="1.1" fill="none" />
+    <circle cx="4.5" cy="12.5" r="1.6" stroke={color} strokeWidth="1.1" fill="none" />
+    <circle cx="11.5" cy="4.5" r="1.6" stroke={color} strokeWidth="1.1" fill="none" />
+    <path d="M4.5 5.1v5.8M11.5 6.1c0 3-7 2.2-7 4.9" stroke={color} strokeWidth="1.1" fill="none" strokeLinecap="round" />
+  </I>;
+}
+// listening ports — a power plug.
+export function IconPlug({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M5.5 1.8v3M10.5 1.8v3M4 4.8h8v2.4a4 4 0 0 1-8 0V4.8zM8 11.2v3" stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+export function IconRobot({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <rect x="3" y="5.5" width="10" height="7.5" rx="1.8" stroke={color} strokeWidth="1.1" fill="none" />
+    <path d="M8 5.5V3M8 3a1 1 0 1 0-.001-2.001A1 1 0 0 0 8 3z" stroke={color} strokeWidth="1.1" fill="none" strokeLinecap="round" />
+    <circle cx="6" cy="9" r="0.9" fill={color} />
+    <circle cx="10" cy="9" r="0.9" fill={color} />
+    <path d="M6.3 11.3h3.4" stroke={color} strokeWidth="1.1" strokeLinecap="round" />
+  </I>;
+}
+// open in new tab — box with an outgoing arrow.
+export function IconExternal({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M7 3.5H3.5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V9" stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M9.5 2.5h4v4M13.2 2.8L7.8 8.2" stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+// device handoff — a monitor with a phone in front.
+export function IconDevices({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M8.5 11H2.6a1 1 0 0 1-1-1V3.6a1 1 0 0 1 1-1h10.8a1 1 0 0 1 1 1V6M5.5 13.5h3" stroke={color} strokeWidth="1.1" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    <rect x="10" y="7" width="4.5" height="7.3" rx="1.1" stroke={color} strokeWidth="1.1" fill="none" />
+    <path d="M11.6 12.6h1.3" stroke={color} strokeWidth="1" strokeLinecap="round" />
+  </I>;
+}
+// jump to the live tail — arrow onto a base line.
+export function IconArrowDownToLine({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M8 2.5v8M4.6 7.2L8 10.6l3.4-3.4M3.5 13.5h9" stroke={color} strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round" />
   </I>;
 }
 

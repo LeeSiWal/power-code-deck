@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAppStore } from '../../stores/appStore';
-import { IconClose } from '../icons';
+import { IconBack, IconChevronRight, IconClose, IconExternal, IconRefresh } from '../icons';
 import { api } from '../../lib/api';
 
 interface BrowserPanelProps {
@@ -97,9 +97,9 @@ export function BrowserPanel({ agentId, onClose }: BrowserPanelProps) {
   return (
     <div className="flex flex-col h-full bg-deck-surface overflow-hidden">
       <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-deck-border shrink-0">
-        <button onClick={() => iframeRef.current?.contentWindow?.history.back()} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs">◀</button>
-        <button onClick={() => iframeRef.current?.contentWindow?.history.forward()} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs">▶</button>
-        <button onClick={() => navigateTo(displayUrl)} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs">↻</button>
+        <button onClick={() => iframeRef.current?.contentWindow?.history.back()} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs"><IconBack size={13} /></button>
+        <button onClick={() => iframeRef.current?.contentWindow?.history.forward()} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs"><IconChevronRight size={13} /></button>
+        <button onClick={() => navigateTo(displayUrl)} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs"><IconRefresh size={13} /></button>
 
         <form onSubmit={(e) => { e.preventDefault(); navigateTo(displayUrl); }} className="flex-1 flex">
           <input
@@ -112,7 +112,7 @@ export function BrowserPanel({ agentId, onClose }: BrowserPanelProps) {
         </form>
 
         {displayUrl && (
-          <a href={displayUrl} target="_blank" rel="noopener" className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs" title="새 탭에서 열기">↗</a>
+          <a href={displayUrl} target="_blank" rel="noopener" className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs" title="새 탭에서 열기"><IconExternal size={13} /></a>
         )}
 
         <button onClick={onClose} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50">

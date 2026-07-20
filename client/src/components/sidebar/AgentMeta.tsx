@@ -1,4 +1,5 @@
 import { useAppStore } from '../../stores/appStore';
+import { IconBranch, IconPlug } from '../icons';
 
 interface AgentMetaProps {
   agentId: string;
@@ -17,14 +18,14 @@ export function AgentMeta({ agentId, compact = false }: AgentMetaProps) {
       <div className="flex items-center gap-2 px-4 py-1.5 text-[11px] text-deck-text-dim truncate border-t border-deck-border/30">
         {meta.gitBranch && (
           <span className="flex items-center gap-0.5">
-            🌿 {meta.gitBranch}
+            <IconBranch size={12} /> {meta.gitBranch}
             {meta.gitAhead > 0 && <span className="text-blue-400 ml-0.5">(+{meta.gitAhead})</span>}
             {meta.gitDirty && <span className="text-amber-400 ml-0.5">●</span>}
           </span>
         )}
         {meta.listeningPorts && meta.listeningPorts.length > 0 && (
           <span className="flex items-center gap-0.5">
-            🔌 {meta.listeningPorts.map(p => `:${p}`).join(' ')}
+            <IconPlug size={12} /> {meta.listeningPorts.map(p => `:${p}`).join(' ')}
           </span>
         )}
       </div>
@@ -35,7 +36,7 @@ export function AgentMeta({ agentId, compact = false }: AgentMetaProps) {
     <div className="px-3 py-1.5 space-y-0.5 text-[11px] text-deck-text-dim border-t border-deck-border/50">
       {meta.gitBranch && (
         <div className="flex items-center gap-1 truncate">
-          <span>🌿</span>
+          <IconBranch size={12} className="shrink-0" />
           <span className="font-mono">{meta.gitBranch}</span>
           {meta.gitAhead > 0 && <span className="text-blue-400">(+{meta.gitAhead})</span>}
           {meta.gitDirty && <span className="text-amber-400">●</span>}
@@ -43,7 +44,7 @@ export function AgentMeta({ agentId, compact = false }: AgentMetaProps) {
       )}
       {meta.listeningPorts && meta.listeningPorts.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span>🔌</span>
+          <IconPlug size={12} className="shrink-0" />
           {meta.listeningPorts.map((port) => (
             <a
               key={port}

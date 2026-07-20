@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Agent } from '../../stores/appStore';
 import { StatusBadge } from '../layout/StatusBadge';
-import { AGENT_ICON_MAP } from '../icons';
+import { AGENT_ICON_MAP, IconRobot } from '../icons';
 import { NotificationRing } from '../notification/NotificationRing';
 import { AgentMeta } from '../sidebar/AgentMeta';
 import { useAgentNotification } from '../../hooks/useAgentNotification';
@@ -45,7 +45,7 @@ export function AgentList({ agents, onDestroy }: AgentListProps) {
   if (agents.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-deck-text-dim">
-        <span className="text-3xl mb-3">🤖</span>
+        <IconRobot size={34} className="mb-3 opacity-70" />
         <span className="text-sm">에이전트가 없습니다</span>
         <span className="text-xs mt-1">상단의 New 버튼으로 추가하세요</span>
       </div>

@@ -12,6 +12,7 @@ import '@fontsource/nanum-gothic-coding/700.css';
 import { agentDeckWS } from '../../lib/ws';
 import { writeClipboard } from '../../lib/clipboard';
 import { useDevice } from '../../hooks/useDevice';
+import { IconArrowDownToLine, IconCheck, IconDevices } from '../icons';
 
 export interface TerminalHandle {
   /** Move keyboard focus into the terminal (used after Prompt Bar Send). */
@@ -918,7 +919,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
       {evicted && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 px-6 text-center bg-deck-bg/95">
-          <div className="text-2xl">🖥️📱</div>
+          <IconDevices size={30} className="text-deck-text-dim" />
           <div className="text-sm text-deck-text-dim max-w-xs">
             다른 기기에서 이 세션을 열었습니다.<br />한 번에 한 기기에서만 볼 수 있어요.
           </div>
@@ -978,7 +979,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
                      rounded-full shadow-lg touch-manipulation active:opacity-70 bg-deck-accent text-white text-lg leading-none"
           title="최하단으로 이동"
         >
-          ↓
+          <IconArrowDownToLine size={16} />
         </button>
       )}
 
@@ -1004,7 +1005,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
                          bg-deck-accent text-white"
               title="선택 영역 복사"
             >
-              {copied ? '복사됨 ✓' : '복사'}
+              {copied ? <span className="inline-flex items-center gap-1">복사됨 <IconCheck size={12} /></span> : '복사'}
             </button>
           )}
         </div>

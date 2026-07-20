@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { qrToSvgString } from '../../lib/qrcode';
 import { api } from '../../lib/api';
-import { IconClose } from '../icons';
+import { IconCheck, IconClose, IconPhone, IconWarning } from '../icons';
 
 interface HandoffResponse {
   token: string;
@@ -112,7 +112,7 @@ export function HandoffModal({ agentId, agentName, onClose }: HandoffModalProps)
       >
         {/* Header */}
         <div className="flex items-center gap-2 px-4 py-3 border-b border-deck-border">
-          <span className="text-base">📱</span>
+          <IconPhone size={17} className="text-deck-text-dim" />
           <div className="min-w-0">
             <div className="text-sm font-semibold text-deck-text">모바일에서 이어하기</div>
             <div className="text-[11px] text-deck-text-dim">Continue on Mobile</div>
@@ -187,7 +187,7 @@ export function HandoffModal({ agentId, agentName, onClose }: HandoffModalProps)
           {/* localhost is not reachable from another device */}
           {isLocalhostOnly && (
             <div className="w-full text-[11px] leading-relaxed text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
-              ⚠ 이 주소(<b>localhost</b>)는 이 PC에서만 열립니다. 폰 등 다른 기기에서 열려면 같은 Wi-Fi의 <b>LAN 주소</b>가 필요합니다 →
+              <IconWarning size={12} className="inline align-[-2px] mr-1" />이 주소(<b>localhost</b>)는 이 PC에서만 열립니다. 폰 등 다른 기기에서 열려면 같은 Wi-Fi의 <b>LAN 주소</b>가 필요합니다 →
               서버에 <code>POWERCODEDECK_LAN_URL=http://&lt;PC의 LAN IP&gt;:33033</code> (또는 <code>POWERCODEDECK_PUBLIC_URL</code>)을 설정하세요.
             </div>
           )}
@@ -195,7 +195,7 @@ export function HandoffModal({ agentId, agentName, onClose }: HandoffModalProps)
           {/* LAN security warning */}
           {data?.warning && (
             <div className="w-full text-[11px] leading-relaxed text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
-              ⚠ {data.warning}
+              <IconWarning size={12} className="inline align-[-2px] mr-1" />{data.warning}
             </div>
           )}
         </div>
@@ -207,14 +207,14 @@ export function HandoffModal({ agentId, agentName, onClose }: HandoffModalProps)
             disabled={!data?.publicUrl}
             className="flex-1 min-w-[calc(50%-4px)] px-3 py-2 rounded-lg text-xs bg-deck-bg text-deck-text-dim disabled:opacity-40 active:opacity-70"
           >
-            {copied === 'public' ? '복사됨 ✓' : '공개 주소 복사'}
+            {copied === 'public' ? <span className="inline-flex items-center gap-1">복사됨 <IconCheck size={12} /></span> : '공개 주소 복사'}
           </button>
           <button
             onClick={() => copy('local')}
             disabled={!data?.localUrl}
             className="flex-1 min-w-[calc(50%-4px)] px-3 py-2 rounded-lg text-xs bg-deck-bg text-deck-text-dim disabled:opacity-40 active:opacity-70"
           >
-            {copied === 'local' ? '복사됨 ✓' : '로컬 주소 복사'}
+            {copied === 'local' ? <span className="inline-flex items-center gap-1">복사됨 <IconCheck size={12} /></span> : '로컬 주소 복사'}
           </button>
           <button
             onClick={load}
