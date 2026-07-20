@@ -65,6 +65,12 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<{ name: string; path: string }[]>([]);
   const [uploading, setUploading] = useState(false);
+  // Optimistic "the agent is on it" flag. `busy` (below) only turns true once the
+  // server has echoed your turn back — a WS round-trip you can feel on a phone. This
+  // flips the instant you hit send, so the composer shows motion immediately instead
+  // of a dead pause. Cleared when the real turn takes over or ends (see effect).
+  const [justSent, setJustSent] = useState(false);
+  const sentTimer = useRef<number | null>(null);
   const [modelId, setModelId] = useState(() => localStorage.getItem(`pcd:model:${agentId}`) || '');
   const [modeId, setModeId] = useState(() => localStorage.getItem(`pcd:mode:${agentId}`) || '');
   const [menu, setMenu] = useState<null | 'add' | 'model' | 'mode'>(null);
@@ -168,6 +174,20 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
   // the history alone says whether a turn is still in flight.
   const busy = useMemo(() => isTurnActive(events), [events]);
 
+  // Hand the optimistic flag over to the real `busy` signal: once the turn is
+  // actually in flight the safety timer is moot, and when it ends (or never began)
+  // the optimistic flag must drop so the indicator doesn't linger.
+  useEffect(() => {
+    if (busy) {
+      if (sentTimer.current) { clearTimeout(sentTimer.current); sentTimer.current = null; }
+    } else {
+      setJustSent(false);
+    }
+  }, [busy]);
+  // The composer's "working" indicator: true the instant you send, and for the whole
+  // turn thereafter.
+  const working = busy || justSent;
+
   useEffect(() => {
     const offEvent = agentDeckWS.on('native:event', (p: any) => {
       if (p.agentId !== agentId) return;
@@ -232,6 +252,12 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
     if (!text.trim()) return;
     setError('');
     agentDeckWS.send('native:input', { agentId, text });
+    // Show motion at once — don't wait for the server to echo the turn back. A
+    // safety timeout drops the flag if no real turn ever materialises (e.g. a line
+    // the CLI answers without a turn), so the indicator can't get stuck on.
+    setJustSent(true);
+    if (sentTimer.current) clearTimeout(sentTimer.current);
+    sentTimer.current = window.setTimeout(() => setJustSent(false), 8000);
   }, [agentId]);
 
   const interrupt = useCallback(() => {
@@ -428,6 +454,19 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
                 </span>
               </button>
             ))}
+          </div>
+        )}
+
+        {/* Immediate "agent is working" feedback, right above the composer. Appears
+            the moment you send (justSent) and stays through the turn (busy), so the
+            input never looks like it swallowed your message with no response. */}
+        {working && (
+          <div className="mx-2 mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-deck-accent/10 border border-deck-accent/20 text-deck-accent-light text-xs overflow-hidden">
+            <IconSpinner size={13} className="animate-spin shrink-0" />
+            <span className="shrink-0">에이전트가 작업 중…</span>
+            <span className="relative ml-1 flex-1 h-0.5 rounded-full bg-deck-accent/15 overflow-hidden">
+              <span className="absolute inset-y-0 left-0 w-1/3 rounded-full bg-deck-accent/60 animate-working-bar" />
+            </span>
           </div>
         )}
 

@@ -172,6 +172,87 @@ func ReadSession(workingDir, sessionID string) ([]SessionMessage, error) {
 	return msgs, nil
 }
 
+// ReadSessionEvents reconstructs a resumed conversation's earlier turns as full
+// StreamEvents — text AND tool calls with their input/output — so a resumed chat
+// renders them exactly like live ones, instead of collapsing every tool call to a
+// bare icon (which is what extractSessionText / ReadSession do, deliberately, for
+// the flat history list). Used to seed native history on resume.
+func ReadSessionEvents(workingDir, sessionID string) ([]*StreamEvent, error) {
+	if !sessionIDRe.MatchString(sessionID) {
+		return nil, os.ErrInvalid
+	}
+	dir := claudeProjectDir(workingDir)
+	if dir == "" {
+		return nil, os.ErrNotExist
+	}
+	f, err := os.Open(filepath.Join(dir, sessionID+".jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	out := []*StreamEvent{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
+	for sc.Scan() {
+		var line transcriptLine
+		if json.Unmarshal(sc.Bytes(), &line) != nil {
+			continue
+		}
+		if (line.Type != "user" && line.Type != "assistant") || line.IsSidechain {
+			continue
+		}
+		if ev := historyEvent(line); ev != nil {
+			out = append(out, ev)
+		}
+	}
+	return out, nil
+}
+
+// historyEvent turns one transcript line into a StreamEvent whose Raw is the exact
+// wire JSON the client's foldEvents expects, keeping only the block kinds the chat
+// renders (text, tool_use, tool_result). Returns nil for a line with nothing to show.
+func historyEvent(line transcriptLine) *StreamEvent {
+	if line.Message == nil || len(line.Message.Content) == 0 {
+		return nil
+	}
+	var blocks []ContentBlock
+	var str string
+	if json.Unmarshal(line.Message.Content, &str) == nil {
+		// Plain-string content (an ordinary chat turn) — wrap it as one text block so
+		// foldEvents, which iterates message.content as an array, can read it.
+		if strings.TrimSpace(str) == "" {
+			return nil
+		}
+		blocks = []ContentBlock{{Type: "text", Text: str}}
+	} else if json.Unmarshal(line.Message.Content, &blocks) != nil {
+		return nil
+	}
+	kept := make([]ContentBlock, 0, len(blocks))
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			if strings.TrimSpace(b.Text) != "" {
+				kept = append(kept, b)
+			}
+		case "tool_use", "tool_result":
+			kept = append(kept, b)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	role := line.Type
+	raw, _ := json.Marshal(map[string]any{
+		"type":    role,
+		"message": map[string]any{"role": role, "content": kept},
+	})
+	return &StreamEvent{
+		Type:    role,
+		Message: &StreamMessage{Role: role, Content: kept},
+		Raw:     raw,
+	}
+}
+
 // DeleteSession removes a session's transcript file.
 func DeleteSession(workingDir, sessionID string) error {
 	if !sessionIDRe.MatchString(sessionID) {

@@ -259,21 +259,19 @@ func (s *NativeService) startSession(sessionID, cwd, model, resumeID, mode strin
 	return nil
 }
 
-// seedNativeHistory loads a resumed conversation's earlier user/assistant turns
-// from its transcript into the session history, so the chat shows them at once.
+// seedNativeHistory loads a resumed conversation's earlier turns from its
+// transcript into the session history, so the chat shows them at once — with tool
+// calls and their output intact, not flattened to a bare icon. (A truncated
+// text-only seed was why a resumed session showed Bash/Read as an icon with no way
+// to see the command that ran or what it returned.)
 func seedNativeHistory(sess *nativeSession, cwd, sid string) {
-	msgs, err := ReadSession(cwd, sid)
-	if err != nil || len(msgs) == 0 {
+	evs, err := ReadSessionEvents(cwd, sid)
+	if err != nil || len(evs) == 0 {
 		return
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
-	for _, m := range msgs {
-		if m.Text == "" || (m.Role != "user" && m.Role != "assistant") {
-			continue
-		}
-		sess.history = append(sess.history, nativeTextEvent(m.Role, m.Text))
-	}
+	sess.history = append(sess.history, evs...)
 	if len(sess.history) > maxNativeHistory {
 		sess.history = sess.history[len(sess.history)-maxNativeHistory:]
 	}

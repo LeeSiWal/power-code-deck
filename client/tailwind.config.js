@@ -30,8 +30,15 @@ export default {
         'fade-in': 'fadeIn 0.3s ease-out',
         'slide-up': 'slideUp 0.3s ease-out',
         'slide-down': 'slideDown 0.3s ease-out',
+        'working-bar': 'workingBar 1.1s ease-in-out infinite',
       },
       keyframes: {
+        // An indeterminate progress sweep — a segment sliding left→right to signal
+        // the agent is actively working, without implying a known percentage.
+        workingBar: {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(400%)' },
+        },
         orbital: {
           '0%': { transform: 'rotate(0deg) translateX(30px) rotate(0deg)' },
           '100%': { transform: 'rotate(360deg) translateX(30px) rotate(-360deg)' },

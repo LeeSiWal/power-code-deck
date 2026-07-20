@@ -80,6 +80,11 @@ func NewSession(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Carry the chosen model + permission mode onto the new agent, so continuing
+		// in the same project keeps your choices instead of snapping back to defaults.
+		if model, mode := agentSvc.NativeConfig(agent.ID); model != "" || mode != "" {
+			agentSvc.SetNativeConfig(newAgent.ID, model, mode)
+		}
 		hub.BroadcastAll(ws.EventAgentCreated, newAgent)
 		w.WriteHeader(http.StatusCreated)
 		jsonResponse(w, newAgent)
@@ -113,6 +118,11 @@ func ResumeSession(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFun
 		// opens the resumed agent blank (fresh session, no prior conversation), and
 		// NativeService can't seed history from the transcript either.
 		agentSvc.SetClaudeSessionID(newAgent.ID, sid)
+		// Carry the chosen model + permission mode across the resume, so 이어하기 keeps
+		// your choices instead of resetting to defaults on the freshly created agent.
+		if model, mode := agentSvc.NativeConfig(agent.ID); model != "" || mode != "" {
+			agentSvc.SetNativeConfig(newAgent.ID, model, mode)
+		}
 		hub.BroadcastAll(ws.EventAgentCreated, newAgent)
 		w.WriteHeader(http.StatusCreated)
 		jsonResponse(w, newAgent)
