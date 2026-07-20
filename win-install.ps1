@@ -293,61 +293,11 @@ $appDir  = Join-Path $env:LOCALAPPDATA 'PowerCodeDeck'
 $projUnc = "\\wsl.localhost\Ubuntu\home\$LinuxUser\code"
 try {
     New-Item -ItemType Directory -Force -Path $appDir | Out-Null
-
-    # Launcher: self-healing. One button that guarantees a HEALTHY pcd, then
-    # opens the browser. It repairs the stuck states we used to hit manually —
-    # a stale/dead server or a leftover port-forward on 33033.
-    $launchPs1 = @"
-`$ErrorActionPreference = 'SilentlyContinue'
-`$user = '$LinuxUser'
-# Is a real, healthy PowerCodeDeck answering? (HTTP, not just an open port —
-# a leftover port-forward can keep 33033 "listening" with nothing behind it.)
-function Test-Health {
-  try {
-    `$r = Invoke-WebRequest -Uri 'http://localhost:33033/api/health' -UseBasicParsing -TimeoutSec 2
-    return (`$r.StatusCode -eq 200 -and `$r.Content -match 'PowerCodeDeck')
-  } catch { return `$false }
-}
-function Test-Port {
-  try {
-    `$c = New-Object System.Net.Sockets.TcpClient
-    `$pending = `$c.BeginConnect('127.0.0.1', 33033, `$null, `$null)
-    if (-not `$pending.AsyncWaitHandle.WaitOne(200)) { `$c.Close(); return `$false }
-    try { `$c.EndConnect(`$pending); `$ok = `$c.Connected } catch { `$ok = `$false }
-    `$c.Close(); return `$ok
-  } catch { return `$false }
-}
-if (Test-Health) { Start-Process 'http://localhost:33033'; return }   # already up -> instant
-# Not healthy. If something is squatting on the port (dead server / stale
-# forward), clean it up and hard-restart; otherwise just start pcd.
-if (Test-Port) {
-  netsh interface portproxy delete v4tov4 listenport=33033 listenaddress=0.0.0.0 2>`$null | Out-Null
-  wsl --shutdown
-  Start-Sleep -Seconds 4
-}
-# Minimized (not hidden) window keeps the WSL distro + pcd alive; close it to stop.
-# Invoke the binary directly with wsl --exec. This command has no shell expression
-# or whitespace-bearing argument, avoiding Start-Process/cmd/PowerShell quoting
-# differences entirely. pcd resolves .env and its DB next to the executable.
-`$wslArgs = "-d Ubuntu -u `$user --exec /home/`$user/PowerCodeDeck/pcd"
-`$proc = Start-Process -FilePath 'wsl.exe' -ArgumentList `$wslArgs -WindowStyle Minimized -PassThru
-for (`$i = 0; `$i -lt 100; `$i++) {
-  if (Test-Health) { Start-Process 'http://localhost:33033'; return }
-  if (`$proc.HasExited) { break }
-  Start-Sleep -Milliseconds 300
-}
-
-# Never open a dead localhost page with no explanation. The shortcut itself runs
-# hidden, so surface a useful recovery command in a dialog when startup fails.
-`$msg = "PowerCodeDeck could not start.``n``nOpen PowerShell and run:``n``nwsl -d Ubuntu -u `$user -- bash -lc ```"cd ~/PowerCodeDeck && ./pcd```"``n``nThe command window will show the actual error."
-try {
-  Add-Type -AssemblyName PresentationFramework
-  [System.Windows.MessageBox]::Show(`$msg, 'PowerCodeDeck startup failed', 'OK', 'Error') | Out-Null
-} catch {
-  Start-Process powershell.exe -ArgumentList '-NoExit', '-Command', "Write-Host ```"`$msg```" -ForegroundColor Red"
-}
-"@
-    Set-Content -Path (Join-Path $appDir 'launch-powercodedeck.ps1') -Value $launchPs1 -Encoding UTF8
+    # Older installers routed the Run shortcut through a hidden PowerShell
+    # Start-Process wrapper. Its argument re-serialization broke an otherwise
+    # valid wsl command on Windows PowerShell 5. Remove it; the shortcut below
+    # now invokes wsl.exe directly with the exact command users can run manually.
+    Remove-Item -LiteralPath (Join-Path $appDir 'launch-powercodedeck.ps1') -ErrorAction SilentlyContinue
 
     # Launcher 3: open the projects folder in VS Code via Remote WSL.
     $vscodePs1 = @"
@@ -406,9 +356,10 @@ if ("`$has".Trim() -eq 'yes') {
         New-Item -ItemType Directory -Force -Path $grp | Out-Null
 
         $s1 = $ws.CreateShortcut((Join-Path $grp "$lblRun.lnk"))
-        $s1.TargetPath   = 'powershell.exe'
-        $s1.Arguments    = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$appDir\launch-powercodedeck.ps1`""
+        $s1.TargetPath   = "$env:SystemRoot\System32\wsl.exe"
+        $s1.Arguments    = "-d Ubuntu -u $LinuxUser --exec /home/$LinuxUser/PowerCodeDeck/pcd"
         $s1.IconLocation = "$env:SystemRoot\System32\wsl.exe,0"
+        $s1.WindowStyle  = 7  # minimized; restore this window to see logs or Ctrl+C to stop
         $s1.Save()
 
         $s2 = $ws.CreateShortcut((Join-Path $grp "$lblWork.lnk"))
