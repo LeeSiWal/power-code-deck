@@ -326,10 +326,10 @@ if (Test-Port) {
   Start-Sleep -Seconds 4
 }
 # Minimized (not hidden) window keeps the WSL distro + pcd alive; close it to stop.
-# Start-Process joins an ArgumentList array with spaces and does not preserve the
-# boundary around "cd ... && exec ...". Pass one explicitly quoted argument string;
-# otherwise bash receives only "cd" as the -lc command and exits immediately.
-`$wslArgs = "-d Ubuntu -u ```"`$user```" -- bash -lc ```"cd ~/PowerCodeDeck && exec ./pcd```""
+# Invoke the binary directly with wsl --exec. This command has no shell expression
+# or whitespace-bearing argument, avoiding Start-Process/cmd/PowerShell quoting
+# differences entirely. pcd resolves .env and its DB next to the executable.
+`$wslArgs = "-d Ubuntu -u `$user --exec /home/`$user/PowerCodeDeck/pcd"
 `$proc = Start-Process -FilePath 'wsl.exe' -ArgumentList `$wslArgs -WindowStyle Minimized -PassThru
 for (`$i = 0; `$i -lt 100; `$i++) {
   if (Test-Health) { Start-Process 'http://localhost:33033'; return }
@@ -431,7 +431,7 @@ if ("`$has".Trim() -eq 'yes') {
     # Keep a one-word `pcd` command on PATH too (WindowsApps is on PATH).
     $winApps = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
     New-Item -ItemType Directory -Force -Path $winApps | Out-Null
-    Set-Content -Path (Join-Path $winApps 'pcd.cmd') -Value "@echo off`r`nwsl -d Ubuntu -u $LinuxUser -- bash -lc `"cd ~/PowerCodeDeck && ./pcd`"" -Encoding ASCII
+    Set-Content -Path (Join-Path $winApps 'pcd.cmd') -Value "@echo off`r`nwsl -d Ubuntu -u $LinuxUser --exec /home/$LinuxUser/PowerCodeDeck/pcd" -Encoding ASCII
 
     if ($made.Count -gt 0) {
         Say "Created a 'PowerCodeDeck' folder on your Desktop (Run / Workspace / VS Code):" Green
