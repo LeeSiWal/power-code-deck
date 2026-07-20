@@ -41,12 +41,15 @@ const MODELS: { id: string; label: string; desc: string }[] = [
 
 // Permission modes — the TUI's Shift+Tab cycle. `id` → --permission-mode.
 // Switching restarts the session on the same conversation (server SetMode).
-// `pill`/`dot` encode risk in colour: neutral → indigo → sky (plan) → amber (careful).
-const MODES: { id: string; label: string; desc: string; pill: string; dot: string }[] = [
-  { id: '', label: '기본', desc: '도구마다 승인 요청', pill: 'border-deck-border bg-deck-surface text-deck-text-dim', dot: 'bg-deck-text-dim' },
-  { id: 'acceptEdits', label: '자동 수정', desc: '파일 편집 자동 승인', pill: 'border-deck-accent/50 bg-deck-accent/10 text-deck-accent-light', dot: 'bg-deck-accent-light' },
-  { id: 'plan', label: '플랜', desc: '실행 없이 계획만 세움', pill: 'border-sky-400/40 bg-sky-400/10 text-sky-300', dot: 'bg-sky-300' },
-  { id: 'bypassPermissions', label: '전체 허용', desc: '모든 도구 자동 승인', pill: 'border-amber-400/45 bg-amber-400/10 text-amber-300', dot: 'bg-amber-300' },
+// `pill` encodes risk in colour: neutral → indigo → sky (plan) → amber (careful).
+// NOTE: the VS Code extension's "Auto (safety check)" mode is extension-only — the
+// CLI has no such --permission-mode, so it is deliberately absent here. 전체 허용 is
+// bypassPermissions and approves EVERYTHING; it must never be dressed up as "Auto".
+const MODES: { id: string; label: string; desc: string; icon: string; pill: string }[] = [
+  { id: '', label: '수동', desc: '도구를 실행할 때마다 승인을 요청합니다', icon: '✋', pill: 'border-deck-border bg-deck-surface text-deck-text-dim' },
+  { id: 'acceptEdits', label: '자동 편집', desc: '파일 편집은 자동 승인, 명령 실행은 물어봅니다', icon: '</>', pill: 'border-deck-accent/50 bg-deck-accent/10 text-deck-accent-light' },
+  { id: 'plan', label: '플랜', desc: '실행 없이 코드를 탐색하고 계획을 먼저 제시합니다', icon: '🗺', pill: 'border-sky-400/40 bg-sky-400/10 text-sky-300' },
+  { id: 'bypassPermissions', label: '전체 허용', desc: '모든 도구를 묻지 않고 승인합니다 — 주의해서 사용', icon: '⚡', pill: 'border-amber-400/45 bg-amber-400/10 text-amber-300' },
 ];
 
 export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
@@ -331,26 +334,43 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
           </div>
         )}
 
-        {/* Permission-mode menu (also cycled by Shift+Tab). */}
+        {/* Permission-mode menu (also cycled by Shift+Tab) — the VS Code extension's
+            Modes panel, rebuilt for the deck: icon · name · full description per row,
+            check on the active one, and the shortcut spelled out in the header. */}
         {menu === 'mode' && (
-          <div className="absolute bottom-14 right-2 z-20 w-64 max-w-[calc(100vw-1rem)] bg-deck-raised border border-deck-border rounded-lg shadow-xl overflow-hidden">
-            <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim">권한 모드 · Shift+Tab</div>
-            {MODES.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => pickMode(m.id)}
-                className={`w-full text-left px-3 py-2 hover:bg-deck-bg/60 flex items-start gap-2 ${m.id === modeId ? 'bg-deck-bg/40' : ''}`}
-              >
-                <span className={`mt-0.5 shrink-0 w-3 ${m.id === modeId ? 'text-deck-accent' : 'text-transparent'}`}>✓</span>
-                <span className="min-w-0">
-                  <span className="flex items-center gap-1.5">
-                    <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} />
-                    <span className={`text-sm ${m.id === modeId ? 'text-deck-accent' : 'text-deck-text'}`}>{m.label}</span>
+          <div className="absolute bottom-14 right-2 z-20 w-80 max-w-[calc(100vw-1rem)] bg-deck-raised border border-deck-border rounded-xl shadow-xl overflow-hidden p-1.5">
+            <div className="flex items-center justify-between px-2.5 pt-1 pb-2">
+              <span className="text-sm text-deck-text-dim">권한 모드</span>
+              <span className="flex items-center gap-1 text-[10px] text-deck-text-dim">
+                <kbd className="px-1 py-0.5 rounded border border-deck-border bg-deck-surface">⇧</kbd>
+                +
+                <kbd className="px-1 py-0.5 rounded border border-deck-border bg-deck-surface">tab</kbd>
+                전환
+              </span>
+            </div>
+            {MODES.map((m) => {
+              const on = m.id === modeId;
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => pickMode(m.id)}
+                  className={`w-full text-left px-2.5 py-2.5 rounded-lg flex items-start gap-3 ${
+                    on ? 'bg-deck-accent/25' : 'hover:bg-deck-bg/60'
+                  }`}
+                >
+                  <span className={`shrink-0 w-6 text-center text-base leading-6 font-mono ${
+                    m.id === 'bypassPermissions' ? 'text-amber-300' : 'text-deck-text-dim'
+                  }`}>{m.icon}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className={`block text-sm font-medium ${
+                      m.id === 'bypassPermissions' ? 'text-amber-300' : 'text-deck-text'
+                    }`}>{m.label}</span>
+                    <span className="block text-xs text-deck-text-dim leading-snug">{m.desc}</span>
                   </span>
-                  <span className="block text-xs text-deck-text-dim truncate">{m.desc}</span>
-                </span>
-              </button>
-            ))}
+                  {on && <span className="shrink-0 text-deck-accent-light leading-6">✓</span>}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -528,10 +548,12 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
             </button>
             <button
               onClick={() => setMenu(menu === 'mode' ? null : 'mode')}
-              className={`shrink-0 h-8 px-2.5 rounded-full border text-xs font-medium flex items-center gap-1.5 ${currentMode.pill}`}
+              className={`shrink-0 h-8 px-2.5 rounded-full border text-xs font-medium flex items-center gap-1.5 ${currentMode.pill} ${
+                menu === 'mode' ? 'ring-1 ring-deck-accent' : ''
+              }`}
               title="권한 모드 전환 (Shift+Tab)"
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${currentMode.dot}`} />
+              <span className="font-mono">{currentMode.icon}</span>
               {currentMode.label}
             </button>
             <div className="flex-1" />
