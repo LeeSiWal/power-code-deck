@@ -77,8 +77,21 @@ func main() {
 	handoffSvc := services.NewHandoffService(database)
 	handoffSvc.CleanupExpired()
 
+	// Web Push (VAPID). The "sub" claim is contact info for the push services; prefer
+	// an explicit env, else the deck's own https origin, else a syntactically-valid
+	// mailto fallback. Push services (incl. Apple's) only check it's a well-formed
+	// mailto/https, not that it's reachable.
+	vapidContact := firstNonEmpty(
+		os.Getenv("POWERCODEDECK_VAPID_CONTACT"),
+		os.Getenv("AGENTDECK_VAPID_CONTACT"),
+		firstHTTPSOrigin(cfg.AllowedOrigins()),
+		"mailto:webpush@localhost",
+	)
+	pushSvc := services.NewPushService(database, vapidContact)
+
 	// WebSocket hub. The allow-list rejects cross-origin handshakes (drive-by RCE).
 	hub := ws.NewHub(sessionEngine, watcherSvc, agentSvc, gitSvc, portScanner, notifSvc, cfg.AllowedOrigins())
+	hub.SetPushService(pushSvc) // wired before SetNativeService so triggers can push
 	go hub.Run()
 
 	// Native track: Claude driven as a structured stream (no PTY). The base URL is
@@ -194,6 +207,11 @@ func main() {
 	// Notifications
 	api.HandleFunc("/notifications", handlers.ListNotifications(notifSvc)).Methods("GET")
 	api.HandleFunc("/notifications/clear", handlers.ClearNotifications(notifSvc)).Methods("POST")
+
+	// Web Push — VAPID public key + subscription lifecycle.
+	api.HandleFunc("/push/vapid", handlers.PushVAPIDKey(pushSvc)).Methods("GET")
+	api.HandleFunc("/push/subscribe", handlers.PushSubscribe(pushSvc)).Methods("POST")
+	api.HandleFunc("/push/unsubscribe", handlers.PushUnsubscribe(pushSvc)).Methods("POST")
 
 	// Proxy for external URLs (iframe X-Frame-Options bypass)
 	api.HandleFunc("/proxy", handlers.ProxyHandler()).Methods("GET")
@@ -333,6 +351,27 @@ func main() {
 
 	database.Close()
 	log.Println("Goodbye!")
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// firstHTTPSOrigin returns the first https origin from the allow-list, used as the
+// VAPID contact when no explicit one is set — a real origin is the friendliest
+// "sub" a push service can be handed.
+func firstHTTPSOrigin(origins []string) string {
+	for _, o := range origins {
+		if len(o) >= 8 && o[:8] == "https://" {
+			return o
+		}
+	}
+	return ""
 }
 
 func waitForServer(url string, timeout time.Duration) {

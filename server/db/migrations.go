@@ -98,6 +98,23 @@ CREATE INDEX IF NOT EXISTS idx_handoff_session ON handoff_tokens(session_id);
 CREATE INDEX IF NOT EXISTS idx_handoff_expires ON handoff_tokens(expires_at);
 `
 
+// Web Push: browser push subscriptions (one row per installed PWA / browser), and
+// a tiny key/value store for server-wide config — used to persist the VAPID keypair
+// so every device subscribes against the same application-server identity across
+// restarts. Subscriptions are keyed by their endpoint URL (unique per browser).
+const pushMigration = `
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint TEXT PRIMARY KEY,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS app_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+`
+
 func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return err
@@ -128,6 +145,9 @@ func Migrate(db *sql.DB) error {
 
 	// Handoff tokens table
 	db.Exec(handoffMigration)
+
+	// Web Push subscriptions + app_config KV
+	db.Exec(pushMigration)
 
 	return nil
 }

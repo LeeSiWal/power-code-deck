@@ -1,5 +1,6 @@
 import { useAuth } from '../hooks/useAuth';
 import { SoundSettings } from '../components/settings/SoundSettings';
+import { NotificationSettings } from '../components/settings/NotificationSettings';
 import { BottomNav } from '../components/layout/BottomNav';
 import { useAppStore } from '../stores/appStore';
 
@@ -14,6 +15,7 @@ export function SettingsPage() {
       </header>
 
       <main className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4 max-w-lg mx-auto w-full">
+        <NotificationSettings />
         <SoundSettings />
 
         <div className="card p-3">

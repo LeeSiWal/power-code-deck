@@ -60,6 +60,7 @@ type Hub struct {
 	gitSvc         *services.GitService
 	portScanner    *services.PortScanner
 	notifSvc       *services.NotificationService
+	pushSvc        *services.PushService
 	native         *services.NativeService
 	allowedOrigins map[string]bool
 	upgrader       websocket.Upgrader
@@ -218,6 +219,12 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 	n.SetHandlers(
 		func(agentID string, ev *services.StreamEvent) {
 			h.BroadcastToAgent(agentID, EventNativeEvent, NativeEventPayload{AgentID: agentID, Event: ev.Raw})
+			// A turn's `result` marks the agent going idle — a "come back" moment for a
+			// user who stepped away. Push it (the service worker suppresses it when the
+			// app is focused, so it only interrupts when you're actually elsewhere).
+			if ev.Type == services.StreamTypeResult {
+				h.pushNotify(agentID, "task_complete", "작업 완료", h.agentName(agentID))
+			}
 		},
 		func(req services.PermissionRequest) {
 			h.BroadcastToAgent(req.SessionID, EventNativeApproval, NativeApprovalPayload{
@@ -227,8 +234,43 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 				Input:    req.Input,
 				AskedAt:  req.AskedAt.Format(time.RFC3339),
 			})
+			// A blocked agent goes nowhere until a human answers — the single most
+			// worth-interrupting notification, so it's the reason push exists here.
+			h.pushNotify(req.SessionID, "permission_request",
+				"승인 필요", h.agentName(req.SessionID)+" · "+req.ToolName+" 실행 대기 중")
 		},
 	)
+}
+
+// SetPushService wires the Web Push fan-out. Must be called before SetNativeService
+// so the native handlers above can reach it.
+func (h *Hub) SetPushService(p *services.PushService) { h.pushSvc = p }
+
+// pushNotify records the event for the Logs/notification history and delivers a Web
+// Push to every subscribed device. reason is the stable notification kind (also the
+// notifications-table reason), used as the collapse tag so repeats replace rather
+// than stack. Best-effort and non-blocking — this runs on the event hot path.
+func (h *Hub) pushNotify(agentID, reason, title, body string) {
+	if h.notifSvc != nil {
+		_, _ = h.notifSvc.Create(agentID, reason, body)
+	}
+	if h.pushSvc == nil || !h.pushSvc.Enabled() {
+		return
+	}
+	h.pushSvc.Notify(services.PushMessage{
+		Title: title,
+		Body:  body,
+		Tag:   reason + "-" + agentID,
+		URL:   "/agents/" + agentID,
+	})
+}
+
+// agentName is the display name for a notification, falling back to a generic label.
+func (h *Hub) agentName(agentID string) string {
+	if a, err := h.agentSvc.Get(agentID); err == nil && a.Name != "" {
+		return a.Name
+	}
+	return "에이전트"
 }
 
 func (h *Hub) handleMessage(c *Client, msg WSMessage) {

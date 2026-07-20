@@ -244,6 +244,13 @@ export const api = {
   markNotificationsRead: (agentId: string) =>
     apiFetch(`/agents/${agentId}/notifications/read`, { method: 'POST' }),
 
+  // Web Push — VAPID key + subscription lifecycle.
+  pushVapidKey: () => apiFetch<{ enabled: boolean; publicKey: string }>('/push/vapid'),
+  pushSubscribe: (sub: PushSubscriptionJSON) =>
+    apiFetch('/push/subscribe', { method: 'POST', body: JSON.stringify(sub) }),
+  pushUnsubscribe: (endpoint: string) =>
+    apiFetch('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint }) }),
+
   // Agent meta
   getAgentMeta: (id: string) => apiFetch(`/agents/${id}/meta`),
   sendToAgent: (id: string, data: string) =>
