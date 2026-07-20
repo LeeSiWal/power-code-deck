@@ -70,6 +70,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
+  const [openingSetup, setOpeningSetup] = useState(false);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<{ name: string; path: string }[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -117,6 +118,49 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const models = driver === 'codex' ? CODEX_MODELS : MODELS;
   const modelLabel = models.find((m) => m.id === modelId)?.label ?? modelId ?? 'Auto';
   const currentMode = MODES.find((m) => m.id === modeId) ?? MODES[0];
+
+  // A missing CLI is recoverable from inside the deck. Open a real PTY because
+  // both installers and OAuth login are interactive (especially on WSL/SSH where
+  // the browser returns a code that must be pasted back into the terminal).
+  const cliMissing = /executable file not found|not found in \$PATH|no such file or directory/i.test(error)
+    && error.toLowerCase().includes(driver);
+  const openSetup = useCallback(async () => {
+    setOpeningSetup(true);
+    try {
+      const isCodex = driver === 'codex';
+      const binary = isCodex ? 'codex' : 'claude';
+      const installUrl = isCodex ? 'https://chatgpt.com/codex/install.sh' : 'https://claude.ai/install.sh';
+      const installShell = isCodex ? 'sh' : 'bash';
+      const loginCommand = isCodex ? 'codex login' : 'claude auth login';
+      const label = isCodex ? 'Codex' : 'Claude Code';
+      const script = [
+        'set -e',
+        'export PATH="$HOME/.local/bin:$PATH"',
+        `if ! command -v ${binary} >/dev/null 2>&1; then`,
+        `  printf '\\n${label} CLI를 설치합니다...\\n\\n'`,
+        "  command -v curl >/dev/null 2>&1 || { echo 'curl이 필요합니다. 먼저 curl을 설치해주세요.'; exit 1; }",
+        `  curl -fsSL ${installUrl} | ${installShell}`,
+        '  export PATH="$HOME/.local/bin:$PATH"',
+        'fi',
+        `printf '\\n${label} 로그인을 시작합니다. 브라우저 인증 후 표시되는 코드를 이 터미널에 붙여넣으세요.\\n\\n'`,
+        loginCommand,
+        `printf '\\n설정이 완료되었습니다. 브라우저의 뒤로 가기로 원래 ${label} 세션에 돌아가세요.\\n'`,
+        'exec "${SHELL:-/bin/bash}" -l',
+      ].join('\n');
+      const a = await api.createAgent({
+        preset: 'custom',
+        name: `${label} 설치 및 로그인`,
+        workingDir: cwd,
+        command: '/bin/bash',
+        args: ['-lc', script],
+      }) as { id: string };
+      navigate(`/agents/${a.id}`);
+    } catch (err) {
+      setError('설치 터미널을 열지 못했습니다: ' + String(err));
+    } finally {
+      setOpeningSetup(false);
+    }
+  }, [cwd, driver, navigate]);
 
   // Grow the input with its content (up to a cap, then it scrolls internally).
   useEffect(() => {
@@ -330,7 +374,18 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
 
       {error && (
         <div className="mx-2 mb-1 px-3 py-2 rounded-lg bg-red-500/15 text-red-400 text-xs flex items-start gap-2">
-          <span className="flex-1">{error}</span>
+          <div className="flex-1 min-w-0">
+            <div>{error}</div>
+            {cliMissing && (
+              <button
+                onClick={openSetup}
+                disabled={openingSetup}
+                className="mt-2 px-3 py-1.5 rounded-md bg-deck-accent text-white disabled:opacity-50"
+              >
+                {openingSetup ? '설치 터미널 여는 중…' : `${driver === 'codex' ? 'Codex' : 'Claude Code'} 설치 및 로그인`}
+              </button>
+            )}
+          </div>
           <button onClick={() => setError('')} className="shrink-0 opacity-60">닫기</button>
         </div>
       )}
