@@ -26,6 +26,16 @@ func nativeTextEvent(role, text string) *StreamEvent {
 	}
 }
 
+// nativeResultEvent builds a synthetic `result` StreamEvent — a turn-boundary
+// marker with no denials (so it renders nothing). Seeded history has no result of
+// its own (the transcript doesn't persist one), which left the last historical
+// user turn looking forever in-flight: the composer's "작업 중" bar span on a
+// resumed chat with nothing actually running. Closing the turn here fixes that.
+func nativeResultEvent() *StreamEvent {
+	raw, _ := json.Marshal(map[string]any{"type": StreamTypeResult})
+	return &StreamEvent{Type: StreamTypeResult, Raw: raw}
+}
+
 // NativeService owns the live native sessions: it starts a driver per session,
 // wires that session's approval bridge, and fans the event stream out to whoever
 // is watching (the WS hub).
@@ -272,6 +282,10 @@ func seedNativeHistory(sess *nativeSession, cwd, sid string) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	sess.history = append(sess.history, evs...)
+	// Close the last historical turn so it doesn't read as still in flight — the
+	// transcript carries no result of its own. Without this the resumed chat shows
+	// the "작업 중" indicator with nothing actually running.
+	sess.history = append(sess.history, nativeResultEvent())
 	if len(sess.history) > maxNativeHistory {
 		sess.history = sess.history[len(sess.history)-maxNativeHistory:]
 	}

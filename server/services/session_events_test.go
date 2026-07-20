@@ -75,6 +75,43 @@ func TestReadSessionEventsKeepsToolBlocks(t *testing.T) {
 	}
 }
 
+// TestSeedNativeHistoryClosesTurn guards the "작업 중" bar spinning forever on a
+// resumed chat: the seed must end with a result marker so the last historical user
+// turn reads as finished, not in flight.
+func TestSeedNativeHistoryClosesTurn(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cwd := "/home/tester/code/demo"
+	dir := filepath.Join(home, ".claude", "projects", encodeProjectPath(cwd))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"hi"}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}`,
+	}
+	sid := "22222222-2222-2222-2222-222222222222"
+	if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), []byte(joinLines(lines)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := &nativeSession{id: "a1", cwd: cwd}
+	seedNativeHistory(sess, cwd, sid)
+
+	if n := len(sess.history); n < 1 || sess.history[n-1].Type != StreamTypeResult {
+		t.Fatalf("seeded history must end with a result marker; got %d events, last type %q",
+			len(sess.history), lastType(sess.history))
+	}
+}
+
+func lastType(evs []*StreamEvent) string {
+	if len(evs) == 0 {
+		return ""
+	}
+	return evs[len(evs)-1].Type
+}
+
 func joinLines(lines []string) string {
 	out := ""
 	for _, l := range lines {
