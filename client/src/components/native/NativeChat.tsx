@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { agentDeckWS } from '../../lib/ws';
 import { api } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
+import {
+  IconBolt, IconCheck, IconClose, IconCodeSlash, IconHand, IconPaperclip,
+  IconPlanMap, IconPlus, IconSpinner, IconUpload, IconWarning, type IconProps,
+} from '../icons';
 
 /**
  * NativeChat — a Claude session rendered from its event stream instead of a
@@ -45,11 +49,11 @@ const MODELS: { id: string; label: string; desc: string }[] = [
 // NOTE: the VS Code extension's "Auto (safety check)" mode is extension-only — the
 // CLI has no such --permission-mode, so it is deliberately absent here. 전체 허용 is
 // bypassPermissions and approves EVERYTHING; it must never be dressed up as "Auto".
-const MODES: { id: string; label: string; desc: string; icon: string; pill: string }[] = [
-  { id: '', label: '수동', desc: '도구를 실행할 때마다 승인을 요청합니다', icon: '✋', pill: 'border-deck-border bg-deck-surface text-deck-text-dim' },
-  { id: 'acceptEdits', label: '자동 편집', desc: '파일 편집은 자동 승인, 명령 실행은 물어봅니다', icon: '</>', pill: 'border-deck-accent/50 bg-deck-accent/10 text-deck-accent-light' },
-  { id: 'plan', label: '플랜', desc: '실행 없이 코드를 탐색하고 계획을 먼저 제시합니다', icon: '🗺', pill: 'border-sky-400/40 bg-sky-400/10 text-sky-300' },
-  { id: 'bypassPermissions', label: '전체 허용', desc: '모든 도구를 묻지 않고 승인합니다 — 주의해서 사용', icon: '⚡', pill: 'border-amber-400/45 bg-amber-400/10 text-amber-300' },
+const MODES: { id: string; label: string; desc: string; icon: React.ComponentType<IconProps>; pill: string }[] = [
+  { id: '', label: '수동', desc: '도구를 실행할 때마다 승인을 요청합니다', icon: IconHand, pill: 'border-deck-border bg-deck-surface text-deck-text-dim' },
+  { id: 'acceptEdits', label: '자동 편집', desc: '파일 편집은 자동 승인, 명령 실행은 물어봅니다', icon: IconCodeSlash, pill: 'border-deck-accent/50 bg-deck-accent/10 text-deck-accent-light' },
+  { id: 'plan', label: '플랜', desc: '실행 없이 코드를 탐색하고 계획을 먼저 제시합니다', icon: IconPlanMap, pill: 'border-sky-400/40 bg-sky-400/10 text-sky-300' },
+  { id: 'bypassPermissions', label: '전체 허용', desc: '모든 도구를 묻지 않고 승인합니다 — 주의해서 사용', icon: IconBolt, pill: 'border-amber-400/45 bg-amber-400/10 text-amber-300' },
 ];
 
 export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
@@ -309,7 +313,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
               onClick={() => { setMenu(null); fileRef.current?.click(); }}
               className="w-full text-left px-3 py-2.5 hover:bg-deck-bg/60 text-deck-text flex items-center gap-2"
             >
-              <span>⬆️</span> 컴퓨터에서 업로드
+              <IconUpload size={15} className="text-deck-text-dim" /> 컴퓨터에서 업로드
             </button>
           </div>
         )}
@@ -324,7 +328,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
                 onClick={() => pickModel(m.id)}
                 className={`w-full text-left px-3 py-2 hover:bg-deck-bg/60 flex items-start gap-2 ${m.id === modelId ? 'bg-deck-bg/40' : ''}`}
               >
-                <span className={`mt-0.5 shrink-0 w-3 ${m.id === modelId ? 'text-deck-accent' : 'text-transparent'}`}>✓</span>
+                <span className={`mt-0.5 shrink-0 w-3.5 ${m.id === modelId ? 'text-deck-accent' : 'text-transparent'}`}><IconCheck size={14} /></span>
                 <span className="min-w-0">
                   <span className={`block text-sm ${m.id === modelId ? 'text-deck-accent' : 'text-deck-text'}`}>{m.label}</span>
                   <span className="block text-xs text-deck-text-dim truncate">{m.desc}</span>
@@ -358,16 +362,16 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
                     on ? 'bg-deck-accent/25' : 'hover:bg-deck-bg/60'
                   }`}
                 >
-                  <span className={`shrink-0 w-6 text-center text-base leading-6 font-mono ${
+                  <span className={`shrink-0 w-6 flex items-center justify-center h-6 ${
                     m.id === 'bypassPermissions' ? 'text-amber-300' : 'text-deck-text-dim'
-                  }`}>{m.icon}</span>
+                  }`}><m.icon size={17} /></span>
                   <span className="min-w-0 flex-1">
                     <span className={`block text-sm font-medium ${
                       m.id === 'bypassPermissions' ? 'text-amber-300' : 'text-deck-text'
                     }`}>{m.label}</span>
                     <span className="block text-xs text-deck-text-dim leading-snug">{m.desc}</span>
                   </span>
-                  {on && <span className="shrink-0 text-deck-accent-light leading-6">✓</span>}
+                  {on && <span className="shrink-0 text-deck-accent-light flex items-center h-6"><IconCheck size={15} /></span>}
                 </button>
               );
             })}
@@ -378,13 +382,14 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
           <div className="flex flex-wrap gap-1.5 px-2 pt-2">
             {attachments.map((a, i) => (
               <span key={i} className="flex items-center gap-1 bg-deck-surface border border-deck-border rounded px-2 py-1 text-xs text-deck-text max-w-[70%]">
-                <span className="truncate">📎 {a.name}</span>
+                <IconPaperclip size={12} className="shrink-0 text-deck-text-dim" />
+                <span className="truncate">{a.name}</span>
                 <button
                   onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
                   className="opacity-60 shrink-0"
                   title="첨부 제거"
                 >
-                  ✕
+                  <IconClose size={12} />
                 </button>
               </span>
             ))}
@@ -533,10 +538,10 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
             <button
               onClick={() => setMenu(menu === 'add' ? null : 'add')}
               disabled={uploading}
-              className="shrink-0 w-8 h-8 rounded-lg bg-deck-surface border border-deck-border text-deck-text-dim flex items-center justify-center text-lg disabled:opacity-40"
+              className="shrink-0 w-8 h-8 rounded-lg bg-deck-surface border border-deck-border text-deck-text-dim flex items-center justify-center disabled:opacity-40"
               title="추가"
             >
-              {uploading ? '⏳' : '＋'}
+              {uploading ? <IconSpinner size={15} className="animate-spin" /> : <IconPlus size={15} />}
             </button>
             <button
               onClick={() => setMenu(menu === 'model' ? null : 'model')}
@@ -553,7 +558,7 @@ export function NativeChat({ agentId, cwd, model }: NativeChatProps) {
               }`}
               title="권한 모드 전환 (Shift+Tab)"
             >
-              <span className="font-mono">{currentMode.icon}</span>
+              <currentMode.icon size={13} />
               {currentMode.label}
             </button>
             <div className="flex-1" />
@@ -597,8 +602,9 @@ function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) 
     // must not reproduce, so it stays — and is now the only reason this row renders.
     if (item.bridgeOk) return null;
     return (
-      <div className="text-[11px] text-red-400 border border-red-400/40 bg-red-400/5 rounded-lg px-3 py-2">
-        ⚠ 승인 브리지가 연결되지 않았습니다 — 권한이 필요한 도구가 전부 자동 거부됩니다.
+      <div className="text-[11px] text-red-400 border border-red-400/40 bg-red-400/5 rounded-lg px-3 py-2 flex items-center gap-1.5">
+        <IconWarning size={13} className="shrink-0" />
+        승인 브리지가 연결되지 않았습니다 — 권한이 필요한 도구가 전부 자동 거부됩니다.
       </div>
     );
   }
@@ -703,7 +709,10 @@ function AskRow({ item, onAnswer }: {
                     on ? 'border-deck-accent bg-deck-accent/20 text-deck-text' : 'border-deck-border text-deck-text'
                   }`}
                 >
-                  <div className="font-medium">{on ? '✓ ' : ''}{o.label}</div>
+                  <div className="font-medium flex items-center gap-1.5">
+                    {on && <IconCheck size={12} className="shrink-0 text-deck-accent-light" />}
+                    {o.label}
+                  </div>
                   {o.description && <div className="text-deck-muted mt-0.5">{o.description}</div>}
                 </button>
               );

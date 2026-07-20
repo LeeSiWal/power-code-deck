@@ -200,4 +200,66 @@ export function IconPaste({ size, color = 'currentColor', className }: IconProps
   </I>;
 }
 
+// ---- Native chat: permission modes + composer chrome. All stroke/currentColor so
+// they inherit the surrounding text color (mode pills tint them for free).
+
+// 수동 — a raised hand: three fingers folding into a rounded palm.
+export function IconHand({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M6.1 7V2.9a.9.9 0 0 1 1.8 0V7M7.9 6.8V2.4a.9.9 0 0 1 1.8 0v4.4M9.7 7V3.4a.9.9 0 0 1 1.8 0v5.4a4.7 4.7 0 0 1-9.4 0V5.2a.9.9 0 0 1 1.8 0V7"
+          stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+// 자동 편집 — </> code chevrons with a slash.
+export function IconCodeSlash({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M4.6 5.2L1.8 8l2.8 2.8M11.4 5.2L14.2 8l-2.8 2.8M9.3 3.2l-2.6 9.6"
+          stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+// 플랜 — a folded map.
+export function IconPlanMap({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M1.8 4.2l4-1.7 4.4 1.7 4-1.7v9.3l-4 1.7-4.4-1.7-4 1.7V4.2zM5.8 2.5v9.3M10.2 4.2v9.3"
+          stroke={color} strokeWidth="1.1" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+// 전체 허용 — a lightning bolt.
+export function IconBolt({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M8.8 1.6L3.6 8.9h3l-.6 5.5 5.4-7.3H8.3l.5-5.5z"
+          stroke={color} strokeWidth="1.1" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+export function IconCheck({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M3 8.6l3.2 3.2L13 4.9" stroke={color} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+export function IconUpload({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M8 10.2V2.6M4.8 5.4L8 2.2l3.2 3.2M2.8 10.8v1.7a1 1 0 0 0 1 1h8.4a1 1 0 0 0 1-1v-1.7"
+          stroke={color} strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+export function IconPaperclip({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M11.9 7l-4.6 4.6a2.5 2.5 0 0 1-3.5-3.5L9.2 2.7a1.75 1.75 0 0 1 2.5 2.5L6.5 10.4a.9.9 0 0 1-1.3-1.3l4.4-4.4"
+          stroke={color} strokeWidth="1.1" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </I>;
+}
+export function IconWarning({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M8 2.4l6.4 11H1.6L8 2.4z" stroke={color} strokeWidth="1.1" fill="none" strokeLinejoin="round" />
+    <path d="M8 6.6v3" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    <circle cx="8" cy="11.5" r="0.7" fill={color} />
+  </I>;
+}
+// Spinner — pass className="animate-spin" at the call site.
+export function IconSpinner({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M8 1.5A6.5 6.5 0 1 1 1.5 8" stroke={color} strokeWidth="1.4" fill="none" strokeLinecap="round" />
+  </I>;
+}
+
 export type { IconProps };
