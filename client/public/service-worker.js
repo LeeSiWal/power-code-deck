@@ -32,16 +32,12 @@ self.addEventListener('push', (event) => {
     badge: '/icon-192.png',
   };
 
-  event.waitUntil(
-    (async () => {
-      // Don't interrupt a user who's already looking at the app — only raise a
-      // system notification when no window is focused (phone in pocket, other app).
-      const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      const focused = clientList.some((c) => c.focused || c.visibilityState === 'visible');
-      if (focused) return;
-      await self.registration.showNotification(title, options);
-    })(),
-  );
+  // ALWAYS show a notification for every push. iOS/iPadOS enforces this: a push that
+  // doesn't result in a shown notification is treated as a violation, and repeated
+  // "silent" pushes get the subscription revoked. (An earlier version suppressed the
+  // notification when the app was focused — which meant nothing ever showed while you
+  // were testing with the app open, and quietly put the iOS subscription at risk.)
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', (event) => {
