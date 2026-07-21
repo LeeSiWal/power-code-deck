@@ -30,9 +30,13 @@ export function iosNeedsInstall(): boolean {
   return isIOS && !standalone && !('PushManager' in window);
 }
 
+// The subscription MUST bind to the worker that actually carries the 'push'
+// handler. That worker is /sw.js (registered on every load in main.tsx and
+// controlling scope '/'); it also holds the app-shell cache. Registering it here
+// is idempotent for the same script+scope, so we always end up subscribing on the
+// one worker that will display the notification — never a second, handler-less one.
 async function registerSW(): Promise<ServiceWorkerRegistration> {
-  const existing = await navigator.serviceWorker.getRegistration();
-  return existing ?? navigator.serviceWorker.register('/service-worker.js');
+  return navigator.serviceWorker.register('/sw.js');
 }
 
 // VAPID keys travel as base64url; PushManager wants raw bytes. Backed by an explicit

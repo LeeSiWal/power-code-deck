@@ -1,4 +1,9 @@
-const CACHE_NAME = 'powercodedeck-v5';
+// This is the ONE service worker the PWA registers (from main.tsx). It does two
+// jobs: (1) app-shell caching, and (2) Web Push. Both MUST live here — a second
+// worker (an earlier /service-worker.js) fought this one for the scope-'/'
+// registration, so the push subscription bound to whichever won and pushes were
+// silently dropped by the worker that had no 'push' handler. One worker, no race.
+const CACHE_NAME = 'powercodedeck-v6';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -71,5 +76,69 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() => caches.match(event.request).then((hit) => hit || Promise.reject(new Error('offline')))),
+  );
+});
+
+// --- Web Push -------------------------------------------------------------
+// Receives push messages when the PWA is backgrounded (or, on iOS, at all —
+// iOS only delivers Web Push to an installed PWA).
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: 'PowerCodeDeck', body: event.data ? event.data.text() : '' };
+  }
+  const title = data.title || 'PowerCodeDeck';
+  const options = {
+    body: data.body || '',
+    // Same tag replaces an earlier notification for the same agent/reason instead
+    // of stacking a pile of them.
+    tag: data.tag || 'powercodedeck',
+    renotify: true,
+    data: { url: data.url || '/' },
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+  };
+
+  // ALWAYS show a notification for every push. iOS/iPadOS enforces this: a push that
+  // doesn't result in a shown notification is treated as a violation, and repeated
+  // "silent" pushes get the subscription revoked.
+  //
+  // Defensive fallback: if showNotification rejects for ANY reason (e.g. a bad
+  // icon/badge URL — iOS is strict and can refuse the whole notification), retry with
+  // the bare essentials so a notification still appears.
+  event.waitUntil(
+    self.registration.showNotification(title, options).catch(() =>
+      self.registration.showNotification(title, {
+        body: options.body,
+        tag: options.tag,
+        data: options.data,
+      }),
+    ),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    (async () => {
+      const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      // Reuse an existing tab if one is open — navigate it and focus, rather than
+      // spawning yet another deck window.
+      for (const client of clientList) {
+        if ('focus' in client) {
+          try {
+            await client.navigate(url);
+          } catch {
+            /* cross-origin or navigation blocked — just focus */
+          }
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+    })(),
   );
 });
