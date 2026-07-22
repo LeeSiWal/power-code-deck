@@ -5,6 +5,7 @@ import { NotificationSettings } from '../components/settings/NotificationSetting
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack } from '../components/icons';
 import { useAppStore } from '../stores/appStore';
+import { APP_VERSION } from '../version';
 
 export function SettingsPage() {
   const { logout } = useAuth();
@@ -35,7 +36,7 @@ export function SettingsPage() {
             {authConfig?.appName || 'PowerCodeDeck'} - AI Coding Terminal Console
           </div>
           <div className="text-xs text-deck-text-dim mt-1">
-            Version {authConfig?.version || '0.2.0'} · Auth: {authConfig?.authMethod ?? 'none'}
+            Version {authConfig?.version || APP_VERSION} · Auth: {authConfig?.authMethod ?? 'none'}
           </div>
           <div className="text-xs text-deck-text-dim mt-1">
             Single binary, zero dependencies

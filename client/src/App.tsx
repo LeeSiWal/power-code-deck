@@ -14,6 +14,7 @@ import { LogsPage } from './pages/LogsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { CommandPalette } from './components/CommandPalette';
 import { ConnectionBanner } from './components/ConnectionBanner';
+import { NotificationToaster } from './components/notification/NotificationToaster';
 
 function AuthGuard() {
   const { isAuthenticated, authReady } = useAppStore();
@@ -106,24 +107,45 @@ export default function App() {
     return () => { cancelled = true; };
   }, [setAuthConfig]);
 
-  // Mobile keyboard: override height only when virtual keyboard shrinks the viewport
+  // Mobile keyboard: size the app to the visible viewport AND pin it to the top.
+  //
+  // On iOS the keyboard doesn't shrink the layout viewport (100dvh stays full);
+  // instead it shrinks the VISUAL viewport and — to reveal the focused input — often
+  // scrolls the whole layout viewport up. That scroll dragged the chat header +
+  // composer up under the notch/status bar and left a black gap below (the reported
+  // "터미널이 위로 올라가는" bug). Because iOS signals that scroll with a visualViewport
+  // `scroll` event, NOT a `resize`, listening to resize alone missed it — so it was
+  // intermittent, firing only when the scroll happened without a size change.
+  //
+  // Fix: react to scroll too, and whenever the keyboard is open force the layout
+  // viewport back to the top (scrollTo(0,0)). #root is sized to vv.height, so the
+  // composer already sits right above the keyboard — we never need iOS's scroll, and
+  // pinning it keeps the header where it belongs.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
 
-    const onResize = () => {
-      // Only override when keyboard is actually visible (viewport significantly smaller)
+    const apply = () => {
+      const root = document.getElementById('root');
+      if (!root) return;
+      // Keyboard visible when the visual viewport is notably shorter than layout.
       if (vv.height < window.innerHeight * 0.85) {
+        if (window.scrollY !== 0 || vv.offsetTop !== 0) window.scrollTo(0, 0);
         document.documentElement.style.setProperty('--kb-height', `${vv.height}px`);
-        document.getElementById('root')!.style.height = `${vv.height}px`;
+        root.style.height = `${vv.height}px`;
       } else {
         document.documentElement.style.removeProperty('--kb-height');
-        document.getElementById('root')!.style.height = '';
+        root.style.height = '';
       }
     };
 
-    vv.addEventListener('resize', onResize);
-    return () => vv.removeEventListener('resize', onResize);
+    apply();
+    vv.addEventListener('resize', apply);
+    vv.addEventListener('scroll', apply);
+    return () => {
+      vv.removeEventListener('resize', apply);
+      vv.removeEventListener('scroll', apply);
+    };
   }, []);
 
   return (
@@ -131,6 +153,7 @@ export default function App() {
       <WebSocketProvider>
         <CommandPalette />
         <ConnectionBanner />
+        <NotificationToaster />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
 

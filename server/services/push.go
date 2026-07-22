@@ -110,20 +110,44 @@ func (s *PushService) Notify(msg PushMessage) {
 	}
 	rows.Close()
 
+	// One line per fan-out so delivery is observable: previously only failures logged,
+	// so a "notification didn't arrive" report was undiagnosable — you couldn't tell a
+	// push that was never sent from one the push service accepted (201) but the phone
+	// silently dropped. Now every real event prints where it went and the status.
+	log.Printf("push: notify %q tag=%s → %d subs", msg.Title, msg.Tag, len(subs))
+
 	for _, su := range subs {
 		go func(su sub) {
 			keys := webpushKeys{p256dh: decodeB64(su.p256dh), auth: decodeB64(su.auth)}
 			// 4 weeks: hold for a phone that's offline now but back later.
 			status, err := sendWebPush(s.client, su.endpoint, keys, s.priv, s.pubB64, s.contact, payload, 2419200)
 			if err != nil {
-				log.Printf("push: send failed: %v", err)
+				log.Printf("push:   ✗ %s send error: %v", pushHost(su.endpoint), err)
 				return
 			}
 			if status == http.StatusNotFound || status == http.StatusGone {
+				log.Printf("push:   x %s status=%d → pruning dead subscription", pushHost(su.endpoint), status)
 				s.Unsubscribe(su.endpoint) // subscription is dead — stop trying
+				return
 			}
+			// 201 Created is the success status for Web Push; anything else (413 too
+			// big, 429 rate-limited, 5xx) is worth seeing when a phone reports gaps.
+			log.Printf("push:   → %s status=%d", pushHost(su.endpoint), status)
 		}(su)
 	}
+}
+
+// pushHost shortens a subscription endpoint to its host for readable logs
+// (web.push.apple.com, *.notify.windows.com, fcm.googleapis.com), never the token.
+func pushHost(endpoint string) string {
+	rest := endpoint
+	if i := strings.Index(rest, "://"); i >= 0 {
+		rest = rest[i+3:]
+	}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
 }
 
 // loadOrCreateVAPID returns the persisted VAPID keypair, generating and storing one

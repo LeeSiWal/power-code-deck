@@ -57,7 +57,7 @@ export interface AgentActivity {
 export interface AgentNotification {
   id?: number;
   agentId: string;
-  reason: 'permission_request' | 'waiting_input' | 'error' | 'task_complete';
+  reason: 'permission_request' | 'waiting_input' | 'error' | 'task_complete' | 'stalled';
   message: string;
   timestamp: string;
 }

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -84,6 +85,7 @@ func main() {
 	vapidContact := firstNonEmpty(
 		os.Getenv("POWERCODEDECK_VAPID_CONTACT"),
 		os.Getenv("AGENTDECK_VAPID_CONTACT"),
+		cfg.PublicURL, // the real public origin, when configured
 		firstHTTPSOrigin(cfg.AllowedOrigins()),
 		"mailto:webpush@localhost",
 	)
@@ -116,6 +118,8 @@ func main() {
 	controlRoom.SetEmitter(func(sums []services.AgentSummary) {
 		hub.BroadcastAll(ws.EventAgentSummaries, ws.AgentSummariesPayload{Summaries: sums})
 	})
+	// A session going quiet past the idle threshold raises a one-shot "stalled" push.
+	controlRoom.SetOnStalled(hub.NotifyStalled)
 	hub.SetControlRoom(controlRoom)
 	go controlRoom.Run(
 		time.Duration(cfg.ControlRoomSummaryBatchMs)*time.Millisecond,
@@ -387,14 +391,25 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-// firstHTTPSOrigin returns the first https origin from the allow-list, used as the
-// VAPID contact when no explicit one is set — a real origin is the friendliest
-// "sub" a push service can be handed.
+// firstHTTPSOrigin returns the first PUBLIC https origin from the allow-list, used as
+// the VAPID "sub" contact when none is set explicitly.
+//
+// Loopback origins (https://localhost, https://127.0.0.1, https://[::1]) are SKIPPED:
+// Apple's Web Push service rejects a localhost "sub" with HTTP 403 and silently drops
+// the notification — which is exactly why iPhone push stopped arriving while WNS and
+// others (which don't validate the sub as strictly) still returned 201. The
+// allow-list always leads with loopback entries, so without this the contact was
+// https://localhost:<port> and every Apple push 403'd. Prefer a real reachable origin
+// (the PublicURL or a configured CORS origin like https://pcd.example.com).
 func firstHTTPSOrigin(origins []string) string {
 	for _, o := range origins {
-		if len(o) >= 8 && o[:8] == "https://" {
-			return o
+		if !strings.HasPrefix(o, "https://") {
+			continue
 		}
+		if strings.Contains(o, "localhost") || strings.Contains(o, "127.0.0.1") || strings.Contains(o, "[::1]") {
+			continue
+		}
+		return o
 	}
 	return ""
 }

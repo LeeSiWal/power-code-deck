@@ -31,6 +31,12 @@ type ControlRoomService struct {
 	dirty       map[string]struct{}
 	emit        func([]AgentSummary)
 	nowFn       func() int64
+
+	// onStalled fires ONCE when an agent enters the stalled state; stalledNotified
+	// tracks who is currently in a notified-stalled episode so a session that stays
+	// quiet doesn't re-alert every batch. Cleared when the agent leaves stalled.
+	onStalled       func(agentID string)
+	stalledNotified map[string]bool
 }
 
 func NewControlRoomService(agents *AgentService, broker *PermissionBroker, notifs *NotificationService, th AttentionThresholds) *ControlRoomService {
@@ -39,10 +45,11 @@ func NewControlRoomService(agents *AgentService, broker *PermissionBroker, notif
 		broker:      broker,
 		notifs:      notifs,
 		th:          th,
-		activity:    make(map[string]AgentActivitySnapshot),
-		revision:    make(map[string]int),
-		lastEmitted: make(map[string]AgentSummary),
-		dirty:       make(map[string]struct{}),
+		activity:        make(map[string]AgentActivitySnapshot),
+		revision:        make(map[string]int),
+		lastEmitted:     make(map[string]AgentSummary),
+		dirty:           make(map[string]struct{}),
+		stalledNotified: make(map[string]bool),
 	}
 }
 
@@ -50,6 +57,14 @@ func NewControlRoomService(agents *AgentService, broker *PermissionBroker, notif
 func (s *ControlRoomService) SetEmitter(fn func([]AgentSummary)) {
 	s.mu.Lock()
 	s.emit = fn
+	s.mu.Unlock()
+}
+
+// SetOnStalled wires the callback fired once when a session enters the stalled state
+// (a running agent quiet past the idle threshold). Used to raise a push notification.
+func (s *ControlRoomService) SetOnStalled(fn func(agentID string)) {
+	s.mu.Lock()
+	s.onStalled = fn
 	s.mu.Unlock()
 }
 
@@ -134,6 +149,7 @@ func (s *ControlRoomService) recompute(onlyDirty bool) {
 			}
 		}
 		sum := s.compute(a, now)
+		s.checkStalledTransition(a.ID, sum.Attention.Primary == "stalled")
 		if s.changedAndStore(&sum) {
 			out = append(out, sum)
 		}
@@ -147,6 +163,7 @@ func (s *ControlRoomService) recompute(onlyDirty bool) {
 				delete(s.lastEmitted, id)
 				delete(s.revision, id)
 				delete(s.activity, id)
+				delete(s.stalledNotified, id)
 			}
 		}
 		s.mu.Unlock()
@@ -262,6 +279,26 @@ func (s *ControlRoomService) changedAndStore(sum *AgentSummary) bool {
 	sum.Revision = s.revision[sum.AgentID]
 	s.lastEmitted[sum.AgentID] = baseline
 	return true
+}
+
+// checkStalledTransition fires onStalled exactly once as an agent crosses into the
+// stalled state, and re-arms when it leaves — so a session that stays quiet doesn't
+// re-notify on every batch/correction pass.
+func (s *ControlRoomService) checkStalledTransition(agentID string, isStalled bool) {
+	s.mu.Lock()
+	was := s.stalledNotified[agentID]
+	fire := false
+	if isStalled && !was {
+		s.stalledNotified[agentID] = true
+		fire = true
+	} else if !isStalled && was {
+		delete(s.stalledNotified, agentID)
+	}
+	cb := s.onStalled
+	s.mu.Unlock()
+	if fire && cb != nil {
+		cb(agentID)
+	}
 }
 
 // mainActivityNode returns the "main" node of a snapshot, or nil if absent.

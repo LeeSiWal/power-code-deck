@@ -273,6 +273,16 @@ func (h *Hub) pushNotify(agentID, reason, title, body string) {
 	if h.notifSvc != nil {
 		_, _ = h.notifSvc.Create(agentID, reason, body)
 	}
+	// Broadcast the in-app signal too. This event was defined but never emitted, so
+	// the notification bell/badge and any foreground toast had nothing to react to —
+	// only the Web Push (which iOS delivers SILENTLY while the PWA is focused) fired.
+	// Emitting it lets the app show a banner when it's open, filling exactly that gap.
+	h.BroadcastAll(EventAgentNotification, AgentNotificationPayload{
+		AgentID:   agentID,
+		Reason:    reason,
+		Message:   body,
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
 	// A new notification changes the tile's unread badges — refresh its summary.
 	h.NoteAgentChange(agentID)
 	if h.pushSvc == nil || !h.pushSvc.Enabled() {
@@ -284,6 +294,14 @@ func (h *Hub) pushNotify(agentID, reason, title, body string) {
 		Tag:   reason + "-" + agentID,
 		URL:   "/agents/" + agentID,
 	})
+}
+
+// NotifyStalled fires a "stalled" notification when the Control Room detects a
+// running session has gone quiet past the idle threshold. The transition (fire once
+// per stalled episode, not every batch) is owned by ControlRoomService; this is just
+// the delivery path, reusing pushNotify so it records + pushes like the others.
+func (h *Hub) NotifyStalled(agentID string) {
+	h.pushNotify(agentID, "stalled", "무응답 세션", h.agentName(agentID)+" · 오랫동안 반응이 없습니다")
 }
 
 // agentName is the display name for a notification, falling back to a generic label.
