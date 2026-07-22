@@ -105,6 +105,9 @@ func main() {
 	// restart) continues the conversation instead of starting a blank one.
 	nativeSvc.SetPersistence(agentSvc.SetClaudeSessionID, agentSvc.ClaudeSessionID)
 	nativeSvc.SetConfigPersistence(agentSvc.SetNativeConfig, agentSvc.NativeConfig)
+	// Status truth: a native session counts as "running" too, so a native-track agent
+	// that's working isn't reported stopped for lacking a live PTY.
+	agentSvc.SetNativeLiveness(nativeSvc.Running)
 	hub.SetNativeService(nativeSvc)
 
 	// Control Room (v0.3.0): the multi-session overview aggregator. It projects
@@ -141,6 +144,11 @@ func main() {
 		hub.BroadcastToAgent(agentID, ws.EventAgentActivity, snap)
 		controlRoom.OnActivity(agentID, snap)
 	})
+
+	// Resume transcript activity watchers for existing agents. They live only in
+	// memory, so without this a server restart leaves the dashboard/control room with
+	// no "moving" signal (tool/target blank) until an agent is manually restarted.
+	agentSvc.StartActivityForAll()
 
 	// Router
 	r := mux.NewRouter()

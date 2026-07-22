@@ -65,6 +65,9 @@ type Hub struct {
 	controlRoom    *services.ControlRoomService
 	allowedOrigins map[string]bool
 	upgrader       websocket.Upgrader
+
+	statusMu   sync.Mutex
+	lastStatus map[string]string // last agent:status we broadcast, for change detection
 }
 
 func NewHub(engine services.SessionEngine, watcherSvc *services.WatcherService, agentSvc *services.AgentService, gitSvc *services.GitService, portScanner *services.PortScanner, notifSvc *services.NotificationService, allowedOrigins []string) *Hub {
@@ -104,6 +107,52 @@ func (h *Hub) Run() {
 			h.pollMeta()
 		}
 	}()
+	// A faster, cheap loop that watches session aliveness and pushes status changes.
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			h.pollStatus()
+		}
+	}()
+}
+
+// pollStatus watches every agent's true aliveness and broadcasts agent:status on any
+// change, so the dashboard, control room, and terminal header all reflect a session
+// starting or dying without a manual refresh. Previously agent:status was only sent
+// on an explicit restart, so a session that died — or a native session that came up —
+// left every surface showing the stale state (the "stopped while working" bug).
+//
+// agentSvc.List() already reconciles the real status (PTY OR native session); we diff
+// it against what we last broadcast and emit only transitions.
+func (h *Hub) pollStatus() {
+	agents, err := h.agentSvc.List()
+	if err != nil {
+		return
+	}
+	h.statusMu.Lock()
+	defer h.statusMu.Unlock()
+	if h.lastStatus == nil {
+		h.lastStatus = make(map[string]string)
+	}
+	live := make(map[string]struct{}, len(agents))
+	for _, a := range agents {
+		live[a.ID] = struct{}{}
+		prev, seen := h.lastStatus[a.ID]
+		h.lastStatus[a.ID] = a.Status
+		// Emit only a real transition. The first time we see an agent we just record
+		// its status (the client already has it from its REST load), so a reconnect
+		// doesn't replay a burst of no-op status events.
+		if seen && prev != a.Status {
+			h.BroadcastAll(EventAgentStatus, AgentStatusPayload{AgentID: a.ID, Status: a.Status})
+			h.NoteAgentChange(a.ID)
+		}
+	}
+	for id := range h.lastStatus {
+		if _, ok := live[id]; !ok {
+			delete(h.lastStatus, id)
+		}
+	}
 }
 
 func (h *Hub) pollMeta() {

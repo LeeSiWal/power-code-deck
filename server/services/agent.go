@@ -37,10 +37,45 @@ type AgentService struct {
 	db       *sql.DB
 	engine   SessionEngine
 	activity *ActivityManager
+	// nativeAlive reports whether an agent has a live NATIVE session (Claude/Codex
+	// driven as a structured stream, not a PTY). Injected because AgentService owns
+	// rows, not the native process manager. Without it, a native-track agent that is
+	// actively working reads as "stopped" — it has no live PTY, and the status check
+	// only knew about the PTY engine.
+	nativeAlive func(id string) bool
 }
 
 func NewAgentService(db *sql.DB, engine SessionEngine) *AgentService {
 	return &AgentService{db: db, engine: engine}
+}
+
+// SetNativeLiveness wires the native-session liveness probe (nativeSvc.Running).
+func (s *AgentService) SetNativeLiveness(fn func(id string) bool) { s.nativeAlive = fn }
+
+// isAlive is the true "is this agent running" test: a live PTY session OR a live
+// native session. Either means the agent is doing work.
+func (s *AgentService) isAlive(id string) bool {
+	if s.engine != nil && s.engine.HasSession(id) {
+		return true
+	}
+	return s.nativeAlive != nil && s.nativeAlive(id)
+}
+
+// StartActivityForAll (re)starts transcript activity watchers for every existing
+// agent. Watchers live only in memory, so a server restart loses them and the
+// dashboard/control room show no "moving" signal until an agent is manually
+// restarted. Called once at boot. Non-Claude presets are skipped inside Start.
+func (s *AgentService) StartActivityForAll() {
+	if s.activity == nil {
+		return
+	}
+	agents, err := s.List()
+	if err != nil {
+		return
+	}
+	for i := range agents {
+		s.startActivity(&agents[i])
+	}
 }
 
 // SetActivityManager wires the transcript-based activity watcher so sessions start/stop
@@ -84,7 +119,7 @@ func (s *AgentService) List() ([]Agent, error) {
 	// Second: check session status and update DB after rows are closed
 	for i := range agents {
 		a := &agents[i]
-		if s.engine.HasSession(a.ID) {
+		if s.isAlive(a.ID) {
 			if a.Status != "running" {
 				a.Status = "running"
 				s.db.Exec("UPDATE agents SET status = 'running', updated_at = datetime('now') WHERE id = ?", a.ID)
@@ -112,6 +147,14 @@ func (s *AgentService) Get(id string) (*Agent, error) {
 		return nil, err
 	}
 	json.Unmarshal([]byte(argsJSON), &a.Args)
+	// Reconcile the stored status against real liveness (PTY engine OR native
+	// session) so a native-track agent that's actively working isn't reported
+	// "stopped" just for lacking a live PTY. Read-only — no DB write on a Get.
+	if s.isAlive(a.ID) {
+		a.Status = "running"
+	} else {
+		a.Status = "stopped"
+	}
 	return &a, nil
 }
 
