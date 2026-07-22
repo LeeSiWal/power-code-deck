@@ -44,6 +44,13 @@ type Config struct {
 	HandoffTokenTTL   int    // one-time token lifetime in seconds (default 600)
 	LanHandoffEnabled bool   // expose a http://<lan-ip>:<port> handoff URL as well
 	LanURL            string // explicit LAN base URL; overrides auto-detected IP
+
+	// Control Room (v0.3.0) — attention/summary tunables. All have safe defaults, so
+	// leaving them unset yields a working overview.
+	ControlRoomIdleMinutes           int // stalled threshold (default 10)
+	ControlRoomStartupGraceSeconds   int // suppress stalled right after start (default 60)
+	ControlRoomSummaryBatchMs        int // dirty-batch coalesce window (default 750)
+	ControlRoomSnapshotCorrectionSec int // full re-check interval (default 60)
 }
 
 // Load reads configuration from the environment / .env file.
@@ -83,6 +90,12 @@ func Load() *Config {
 	}
 	cfg.LanHandoffEnabled = parseBool(envDual("LAN_HANDOFF_ENABLED"))
 	cfg.HandoffTokenTTL = parseIntDefault(envDual("HANDOFF_TOKEN_TTL_SECONDS"), 600)
+
+	// Control Room tunables (all default when unset).
+	cfg.ControlRoomIdleMinutes = parseIntDefault(envDual("CONTROL_ROOM_IDLE_MINUTES"), 10)
+	cfg.ControlRoomStartupGraceSeconds = parseIntDefault(envDual("CONTROL_ROOM_STARTUP_GRACE_SECONDS"), 60)
+	cfg.ControlRoomSummaryBatchMs = parseIntDefault(envDual("CONTROL_ROOM_SUMMARY_BATCH_MS"), 750)
+	cfg.ControlRoomSnapshotCorrectionSec = parseIntDefault(envDual("CONTROL_ROOM_SNAPSHOT_CORRECTION_SECONDS"), 60)
 
 	// Session engine is always internal now; keep any set value only so the
 	// server can warn that the setting is deprecated.

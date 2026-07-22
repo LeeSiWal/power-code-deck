@@ -49,15 +49,28 @@ export function ConnectionBanner() {
   if (!down) return null;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-[60] safe-top pointer-events-none">
-      <div className="mx-auto max-w-lg m-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs shadow-lg pointer-events-auto">
+    // Inline padding-top (not the .safe-top utility): env(safe-area-inset-top) alone
+    // sits the banner right at the notch/Dynamic-Island edge and clips it, so add a
+    // fixed gap on top of the inset to clear it on every device. Side gutters via px-2
+    // instead of an inner margin so the box can use its full flex width.
+    <div
+      className="fixed top-0 left-0 right-0 z-[60] px-2 pointer-events-none"
+      style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}
+    >
+      {/* OPAQUE background (bg-amber-950, not amber-500/15): the banner is a fixed
+          overlay that lands on top of each page's own header, and a translucent fill
+          let that header's title + icons bleed through — the two layers mixed into an
+          unreadable garble. An opaque fill covers whatever is behind it cleanly.
+          w-fit keeps it a centered toast rather than a full-width bar over the whole
+          header row. */}
+      <div className="mx-auto w-fit max-w-[92%] flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-950 border border-amber-500/50 text-amber-200 text-xs shadow-lg pointer-events-auto">
         <IconWarning size={14} className="shrink-0" />
-        <span className="flex-1 leading-snug">
-          연결이 끊겼습니다 · 재연결 중… 계속 멈춰 있으면 새로고침하세요.
-        </span>
+        {/* min-w-0 lets the text shrink/wrap inside flex instead of shoving the button
+            off-screen; the button says 새로고침 already, so the message stays short. */}
+        <span className="flex-1 min-w-0 leading-snug">연결이 끊겼습니다 · 재연결 중…</span>
         <button
           onClick={() => window.location.reload()}
-          className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-400/20 text-amber-200 font-medium active:scale-95"
+          className="shrink-0 whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-400/20 text-amber-200 font-medium active:scale-95"
         >
           <IconRefresh size={13} /> 새로고침
         </button>

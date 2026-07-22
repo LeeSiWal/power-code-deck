@@ -62,6 +62,7 @@ type Hub struct {
 	notifSvc       *services.NotificationService
 	pushSvc        *services.PushService
 	native         *services.NativeService
+	controlRoom    *services.ControlRoomService
 	allowedOrigins map[string]bool
 	upgrader       websocket.Upgrader
 }
@@ -227,13 +228,17 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 			}
 		},
 		func(req services.PermissionRequest) {
-			h.BroadcastToAgent(req.SessionID, EventNativeApproval, NativeApprovalPayload{
+			// BroadcastAll (not per-agent): the Control Room approval feed isn't a
+			// viewer of any single session, so a per-agent broadcast would never
+			// reach it. Session-scoped surfaces filter by agentId on the client.
+			h.BroadcastAll(EventNativeApproval, NativeApprovalPayload{
 				AgentID:  req.SessionID,
 				ID:       req.ID,
 				ToolName: req.ToolName,
 				Input:    req.Input,
 				AskedAt:  req.AskedAt.Format(time.RFC3339),
 			})
+			h.NoteAgentChange(req.SessionID)
 			// A blocked agent goes nowhere until a human answers — the single most
 			// worth-interrupting notification, so it's the reason push exists here.
 			h.pushNotify(req.SessionID, "permission_request",
@@ -246,6 +251,20 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 // so the native handlers above can reach it.
 func (h *Hub) SetPushService(p *services.PushService) { h.pushSvc = p }
 
+// SetControlRoom wires the multi-session overview aggregator so lifecycle,
+// approval and notification changes mark the affected session dirty for the next
+// summary batch.
+func (h *Hub) SetControlRoom(c *services.ControlRoomService) { h.controlRoom = c }
+
+// NoteAgentChange marks an agent dirty in the Control Room. Handlers that already
+// hold the hub (create/destroy/restart) call this so a tile updates promptly
+// instead of waiting for the slow correction pass. Empty id is a no-op.
+func (h *Hub) NoteAgentChange(agentID string) {
+	if h.controlRoom != nil {
+		h.controlRoom.MarkDirty(agentID)
+	}
+}
+
 // pushNotify records the event for the Logs/notification history and delivers a Web
 // Push to every subscribed device. reason is the stable notification kind (also the
 // notifications-table reason), used as the collapse tag so repeats replace rather
@@ -254,6 +273,8 @@ func (h *Hub) pushNotify(agentID, reason, title, body string) {
 	if h.notifSvc != nil {
 		_, _ = h.notifSvc.Create(agentID, reason, body)
 	}
+	// A new notification changes the tile's unread badges — refresh its summary.
+	h.NoteAgentChange(agentID)
 	if h.pushSvc == nil || !h.pushSvc.Enabled() {
 		return
 	}
@@ -415,10 +436,29 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		if payload.Behavior != "allow" && payload.Behavior != "deny" {
 			return // never guess a decision the user didn't make
 		}
-		h.native.Decide(payload.ID, services.PermissionDecision{
+		// Decide is a one-shot CAS: Resolve returns false if this request was already
+		// answered (by another device). Tell the deciding client which happened, and
+		// on a real resolution tell EVERY client so the card disappears everywhere —
+		// otherwise a browser that didn't decide keeps showing a dead approval.
+		ok := h.native.Decide(payload.ID, services.PermissionDecision{
 			Behavior:     payload.Behavior,
 			UpdatedInput: payload.UpdatedInput,
 			Message:      payload.Message,
+		})
+		result := "already_resolved"
+		if ok {
+			result = "accepted"
+			h.BroadcastAll(EventApprovalResolved, ApprovalResolvedPayload{
+				RequestID: payload.ID,
+				AgentID:   payload.AgentID,
+				Result:    "accepted",
+			})
+			h.NoteAgentChange(payload.AgentID)
+		}
+		c.sendEvent(EventNativeDecideResult, NativeDecideResultPayload{
+			RequestID: payload.ID,
+			AgentID:   payload.AgentID,
+			Result:    result,
 		})
 
 	case EventNativeInterrupt:

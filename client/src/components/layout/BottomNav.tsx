@@ -1,9 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
-import { IconHome, IconLog, IconSettings } from '../icons';
+import { IconHome, IconLog, IconSettings, IconDevices } from '../icons';
 import { NotificationBadge } from '../notification/NotificationBadge';
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'Home', Icon: IconHome },
+  { href: '/control', label: 'Control', Icon: IconDevices },
   { href: '/logs', label: 'Logs', Icon: IconLog },
   { href: '/settings', label: 'Settings', Icon: IconSettings },
 ];

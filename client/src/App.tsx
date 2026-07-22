@@ -8,6 +8,7 @@ import { LoginPage } from './pages/LoginPage';
 import { ProjectSelectPage } from './pages/ProjectSelectPage';
 import { AgentLauncherPage } from './pages/AgentLauncherPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { ControlRoomPage } from './pages/ControlRoomPage';
 import { TerminalPage } from './pages/TerminalPage';
 import { LogsPage } from './pages/LogsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -136,6 +137,7 @@ export default function App() {
           <Route element={<AuthGuard />}>
             <Route path="/" element={<ProjectSelectPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/control" element={<ControlRoomPage />} />
             <Route path="/launch/:encodedPath" element={<AgentLauncherPage />} />
             <Route path="/agents/:id" element={<TerminalPage />} />
             <Route path="/logs" element={<LogsPage />} />

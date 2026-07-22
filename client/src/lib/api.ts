@@ -262,6 +262,11 @@ export const api = {
   addAgentLog: (id: string, level: string, message: string) =>
     apiFetch(`/agents/${id}/meta/log`, { method: 'POST', body: JSON.stringify({ level, message }) }),
 
+  // Control Room (v0.3.0) — initial snapshots. Live deltas arrive over the WS
+  // (agent:summaries, native:approval, approval:resolved).
+  controlSummaries: () => apiFetch<any[]>('/control/summaries'),
+  listApprovals: () => apiFetch<any[]>('/approvals'),
+
   getToken,
   clearTokens,
 };

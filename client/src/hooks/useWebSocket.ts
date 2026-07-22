@@ -65,6 +65,30 @@ export function useWebSocket() {
       agentDeckWS.on('agent:notification:clear', (payload: any) => {
         useAppStore.getState().clearNotifications(payload.agentId);
       }),
+
+      // Control Room (v0.3.0) deltas — kept in the store globally (cheap) so /control
+      // has live state whenever it mounts. Initial snapshots are fetched via REST by
+      // the page itself.
+      agentDeckWS.on('agent:summaries', (payload: any) => {
+        useAppStore.getState().applySummaries(payload?.summaries || []);
+      }),
+      agentDeckWS.on('native:approval', (payload: any) => {
+        // Same event the native chat uses; here it feeds the global approval queue.
+        useAppStore.getState().addApproval({
+          requestId: payload.id,
+          agentId: payload.agentId,
+          toolName: payload.toolName,
+          input: payload.input,
+          askedAt: payload.askedAt,
+        });
+      }),
+      agentDeckWS.on('approval:resolved', (payload: any) => {
+        useAppStore.getState().removeApproval(payload.requestId);
+      }),
+      // A destroyed agent leaves no tile behind.
+      agentDeckWS.on('agent:destroyed', ({ agentId }: any) => {
+        useAppStore.getState().removeSummary(agentId);
+      }),
     ];
 
     return () => {

@@ -105,6 +105,23 @@ func main() {
 	nativeSvc.SetConfigPersistence(agentSvc.SetNativeConfig, agentSvc.NativeConfig)
 	hub.SetNativeService(nativeSvc)
 
+	// Control Room (v0.3.0): the multi-session overview aggregator. It projects
+	// existing state (agents + activity + pending approvals + notifications) into
+	// per-session summaries and pushes changed ones as coalesced agent:summaries
+	// batches. Deliberately additive — the existing dashboard/REST list is untouched.
+	controlRoom := services.NewControlRoomService(agentSvc, nativeSvc.Broker(), notifSvc, services.AttentionThresholds{
+		IdleMs:         int64(cfg.ControlRoomIdleMinutes) * 60 * 1000,
+		StartupGraceMs: int64(cfg.ControlRoomStartupGraceSeconds) * 1000,
+	})
+	controlRoom.SetEmitter(func(sums []services.AgentSummary) {
+		hub.BroadcastAll(ws.EventAgentSummaries, ws.AgentSummariesPayload{Summaries: sums})
+	})
+	hub.SetControlRoom(controlRoom)
+	go controlRoom.Run(
+		time.Duration(cfg.ControlRoomSummaryBatchMs)*time.Millisecond,
+		time.Duration(cfg.ControlRoomSnapshotCorrectionSec)*time.Second,
+	)
+
 	// Session output → broadcast to every viewer of that session.
 	sessionEngine.SetOutputHandler(func(sessionID string, data []byte) {
 		hub.BroadcastToAgent(sessionID, ws.EventTerminalOutput, ws.TerminalOutputPayload{
@@ -113,9 +130,12 @@ func main() {
 		})
 	})
 
-	// Structured agent/sub-agent activity snapshots → broadcast to that session's viewers.
+	// Structured agent/sub-agent activity snapshots → broadcast to that session's
+	// viewers, and tee into the Control Room so a tile's last tool/target and the
+	// stalled test stay current without the overview watching each session.
 	activitySvc.SetEmitter(func(agentID string, snap services.AgentActivitySnapshot) {
 		hub.BroadcastToAgent(agentID, ws.EventAgentActivity, snap)
+		controlRoom.OnActivity(agentID, snap)
 	})
 
 	// Router
@@ -208,6 +228,11 @@ func main() {
 	api.HandleFunc("/notifications", handlers.ListNotifications(notifSvc)).Methods("GET")
 	api.HandleFunc("/notifications/clear", handlers.ClearNotifications(notifSvc)).Methods("POST")
 
+	// Control Room (v0.3.0) — initial snapshot of the overview + global approval queue.
+	// Live deltas arrive over the WebSocket (agent:summaries, approval:resolved).
+	api.HandleFunc("/control/summaries", handlers.ControlSummaries(controlRoom)).Methods("GET")
+	api.HandleFunc("/approvals", handlers.ListApprovals(nativeSvc)).Methods("GET")
+
 	// Web Push — VAPID public key + subscription lifecycle.
 	api.HandleFunc("/push/vapid", handlers.PushVAPIDKey(pushSvc)).Methods("GET")
 	api.HandleFunc("/push/subscribe", handlers.PushSubscribe(pushSvc)).Methods("POST")
@@ -251,7 +276,7 @@ func main() {
 		log.Printf("No embedded static files found, serving API only")
 	} else {
 		// SPA frontend routes — serve index.html for client-side routing
-		spaRoutes := []string{"/agents", "/dashboard", "/login", "/settings", "/logs", "/launch"}
+		spaRoutes := []string{"/agents", "/dashboard", "/control", "/login", "/settings", "/logs", "/launch"}
 		for _, route := range spaRoutes {
 			route := route
 			r.PathPrefix(route).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

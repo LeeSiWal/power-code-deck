@@ -71,6 +71,46 @@ export interface AgentMeta {
   progress?: { value: number; label?: string };
 }
 
+// --- Control Room (v0.3.0) ---
+// Server-computed per-session projection. The client never assembles these; it
+// applies snapshots (REST) and deltas (agent:summaries), guarding on revision so a
+// late/out-of-order batch can't overwrite newer state.
+export interface AttentionReason {
+  kind: 'approval' | 'error' | 'stalled';
+  since: number;
+  count?: number;
+}
+
+export interface AgentAttention {
+  primary: '' | 'approval' | 'error' | 'stalled';
+  reasons: AttentionReason[];
+}
+
+export interface AgentSummary {
+  agentId: string;
+  revision: number;
+  status: string;
+  preset: string;
+  name: string;
+  colorHue: number;
+  projectKey: string;
+  projectLabel: string;
+  attention: AgentAttention;
+  lastTool?: string;
+  lastTarget?: string;
+  toolCount: number;
+  lastActivityAt: number;
+  unread: { total: number; completed: number; errors: number };
+}
+
+export interface PendingApproval {
+  requestId: string;
+  agentId: string;
+  toolName: string;
+  input?: any;
+  askedAt: string;
+}
+
 export interface AuthConfig {
   appName: string;
   version: string;
@@ -129,6 +169,16 @@ interface AppState {
   setAgentMeta: (agentId: string, meta: AgentMeta) => void;
   updateAgentMetaStatus: (agentId: string, status: { key: string; text: string; color?: string }) => void;
   updateAgentMetaProgress: (agentId: string, progress: { value: number; label?: string }) => void;
+
+  // Control Room (v0.3.0)
+  summaries: Record<string, AgentSummary>;
+  setSummaries: (list: AgentSummary[]) => void;      // REST snapshot (replace)
+  applySummaries: (list: AgentSummary[]) => void;    // WS delta (revision-guarded)
+  removeSummary: (agentId: string) => void;
+  approvals: PendingApproval[];
+  setApprovals: (list: PendingApproval[]) => void;   // REST snapshot (replace)
+  addApproval: (a: PendingApproval) => void;
+  removeApproval: (requestId: string) => void;
 
   // Panel zoom
   zoomedPanel: 'terminal' | 'files' | 'subagent' | 'browser' | null;
@@ -260,6 +310,39 @@ export const useAppStore = create<AppState>((set) => ({
       m.set(agentId, { ...existing, progress });
       return { agentMeta: m };
     }),
+
+  summaries: {},
+  setSummaries: (list) =>
+    set(() => {
+      const next: Record<string, AgentSummary> = {};
+      for (const sum of list) next[sum.agentId] = sum;
+      return { summaries: next };
+    }),
+  applySummaries: (list) =>
+    set((s) => {
+      const next = { ...s.summaries };
+      for (const sum of list) {
+        const prev = next[sum.agentId];
+        // Revision guard: ignore a delta that isn't newer than what we already have,
+        // so an out-of-order / duplicate batch can't roll a tile backwards.
+        if (!prev || sum.revision >= prev.revision) next[sum.agentId] = sum;
+      }
+      return { summaries: next };
+    }),
+  removeSummary: (agentId) =>
+    set((s) => {
+      if (!(agentId in s.summaries)) return {} as any;
+      const next = { ...s.summaries };
+      delete next[agentId];
+      return { summaries: next };
+    }),
+
+  approvals: [],
+  setApprovals: (list) => set({ approvals: list }),
+  addApproval: (a) =>
+    set((s) => (s.approvals.some((x) => x.requestId === a.requestId) ? ({} as any) : { approvals: [...s.approvals, a] })),
+  removeApproval: (requestId) =>
+    set((s) => ({ approvals: s.approvals.filter((a) => a.requestId !== requestId) })),
 
   zoomedPanel: null,
   setZoomedPanel: (panel) => set({ zoomedPanel: panel }),

@@ -51,6 +51,7 @@ func CreateAgent(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc 
 
 		// Broadcast agent created
 		hub.BroadcastAll(ws.EventAgentCreated, agent)
+		hub.NoteAgentChange(agent.ID)
 
 		w.WriteHeader(http.StatusCreated)
 		jsonResponse(w, agent)
@@ -78,6 +79,7 @@ func DeleteAgent(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc 
 		}
 
 		hub.BroadcastAll(ws.EventAgentDestroyed, map[string]string{"agentId": id})
+		hub.NoteAgentChange(id)
 
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -391,6 +393,7 @@ func RestartAgent(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc
 			AgentID: id,
 			Status:  "running",
 		})
+		hub.NoteAgentChange(id)
 
 		jsonResponse(w, agent)
 	}

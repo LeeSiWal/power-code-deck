@@ -72,6 +72,40 @@ func (s *NotificationService) ListUnread(agentID string) ([]Notification, error)
 	return notifications, nil
 }
 
+// UnreadCounts aggregates a session's unread notifications by kind, for the Control
+// Room tile badges. Completed = task_complete, Errors = error; Total is all unread.
+// This is the source the "완료 N / 에러 N" badges are derived from (read=false,
+// grouped by reason) — the counts are a projection, never a new stored column.
+func (s *NotificationService) UnreadCounts(agentID string) (UnreadCounts, error) {
+	var uc UnreadCounts
+	if agentID == "" {
+		return uc, nil
+	}
+	rows, err := s.db.Query(
+		"SELECT reason, COUNT(*) FROM notifications WHERE read = FALSE AND agent_id = ? GROUP BY reason",
+		agentID,
+	)
+	if err != nil {
+		return uc, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var reason string
+		var n int
+		if err := rows.Scan(&reason, &n); err != nil {
+			continue
+		}
+		uc.Total += n
+		switch reason {
+		case "task_complete":
+			uc.Completed += n
+		case "error":
+			uc.Errors += n
+		}
+	}
+	return uc, nil
+}
+
 func (s *NotificationService) MarkRead(agentID string) error {
 	_, err := s.db.Exec("UPDATE notifications SET read = TRUE WHERE agent_id = ? AND read = FALSE", agentID)
 	return err

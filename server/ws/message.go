@@ -1,6 +1,10 @@
 package ws
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"powercodedeck/services"
+)
 
 type WSMessage struct {
 	Event   string          `json:"event"`
@@ -30,6 +34,21 @@ const (
 	EventNativeInterrupt = "native:interrupt" // stop the turn, keep the session
 	EventNativeSetModel  = "native:setModel"  // switch model, resume same conversation
 	EventNativeSetMode   = "native:setMode"   // switch permission mode (Shift+Tab)
+)
+
+// Control Room (v0.3.0) — the multi-session overview. These go to EVERY client so a
+// /control screen that isn't watching any single session still sees the whole deck.
+const (
+	// EventAgentSummaries carries a coalesced batch of changed per-session summaries.
+	EventAgentSummaries = "agent:summaries"
+	// EventApprovalResolved tells all clients an approval was answered (here or on
+	// another device) so its card can be removed everywhere, not just where it was
+	// decided.
+	EventApprovalResolved = "approval:resolved"
+	// EventNativeDecideResult replies to the client that submitted a decision:
+	// "accepted" if this client's tap resolved it, "already_resolved" if another
+	// device beat it (one-shot CAS, so the loser is told, not silently ignored).
+	EventNativeDecideResult = "native:decideResult"
 )
 
 // Server -> Client events
@@ -118,6 +137,27 @@ type FileWatchPayload struct {
 type AgentStatusPayload struct {
 	AgentID string `json:"agentId"`
 	Status  string `json:"status"`
+}
+
+// AgentSummariesPayload is one Control Room delta batch.
+type AgentSummariesPayload struct {
+	Summaries []services.AgentSummary `json:"summaries"`
+}
+
+// ApprovalResolvedPayload is broadcast to all clients when an approval is answered.
+type ApprovalResolvedPayload struct {
+	RequestID  string `json:"requestId"`
+	AgentID    string `json:"agentId"`
+	Result     string `json:"result"`               // "accepted"
+	ResolvedBy string `json:"resolvedBy,omitempty"` // reserved for device labels
+}
+
+// NativeDecideResultPayload is the private reply to the deciding client.
+type NativeDecideResultPayload struct {
+	RequestID  string `json:"requestId"`
+	AgentID    string `json:"agentId"`
+	Result     string `json:"result"` // "accepted" | "already_resolved"
+	ResolvedBy string `json:"resolvedBy,omitempty"`
 }
 
 type AgentNotificationPayload struct {
