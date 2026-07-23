@@ -322,6 +322,22 @@ func (s *AgentService) Delete(id string) error {
 	return err
 }
 
+// Stop halts an agent's session WITHOUT deleting it: the PTY process is killed and
+// the activity watcher torn down, but the row stays so the session can be restarted
+// or reopened later. This is the reversible "정지" — distinct from Delete, which
+// removes the record entirely. (The native session, if any, is stopped by the caller
+// since AgentService owns rows, not the native process manager.)
+func (s *AgentService) Stop(id string) error {
+	if _, err := s.Get(id); err != nil {
+		return err
+	}
+	s.engine.Kill(id)
+	s.stopActivity(id)
+	_, err := s.db.Exec("UPDATE agents SET status = 'stopped', updated_at = datetime('now') WHERE id = ?", id)
+	insertAgentLog(s.db, id, "정지됨")
+	return err
+}
+
 // ClaudeSessionID returns the Claude conversation id we last saw for this agent,
 // or "" if it never ran natively. This is what --resume takes.
 func (s *AgentService) ClaudeSessionID(id string) string {

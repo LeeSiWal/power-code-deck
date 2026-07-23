@@ -70,9 +70,15 @@ func GetAgent(agentSvc *services.AgentService) http.HandlerFunc {
 	}
 }
 
-func DeleteAgent(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc {
+func DeleteAgent(agentSvc *services.AgentService, native *services.NativeService, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
+		// Stop the native session first — Delete only kills the PTY, so a running
+		// native chat would otherwise be orphaned (its process lingering after the
+		// agent row is gone).
+		if native != nil {
+			native.Stop(id)
+		}
 		if err := agentSvc.Delete(id); err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -82,6 +88,27 @@ func DeleteAgent(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc 
 		hub.NoteAgentChange(id)
 
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// StopAgent halts a session but KEEPS the agent record (the reversible "정지"),
+// unlike DeleteAgent which removes it. Stops both the native session and the PTY,
+// marks the row stopped, and pushes the status change so every surface updates.
+func StopAgent(agentSvc *services.AgentService, native *services.NativeService, hub *ws.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := mux.Vars(r)["id"]
+		if native != nil {
+			native.Stop(id)
+		}
+		if err := agentSvc.Stop(id); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		hub.BroadcastAll(ws.EventAgentStatus, ws.AgentStatusPayload{AgentID: id, Status: "stopped"})
+		hub.NoteAgentChange(id)
+
+		jsonResponse(w, map[string]string{"status": "stopped"})
 	}
 }
 

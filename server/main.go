@@ -201,8 +201,9 @@ func main() {
 	api.HandleFunc("/agents", handlers.ListAgents(agentSvc)).Methods("GET")
 	api.HandleFunc("/agents", handlers.CreateAgent(agentSvc, hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}", handlers.GetAgent(agentSvc)).Methods("GET")
-	api.HandleFunc("/agents/{id}", handlers.DeleteAgent(agentSvc, hub)).Methods("DELETE")
+	api.HandleFunc("/agents/{id}", handlers.DeleteAgent(agentSvc, nativeSvc, hub)).Methods("DELETE")
 	api.HandleFunc("/agents/{id}/restart", handlers.RestartAgent(agentSvc, hub)).Methods("POST")
+	api.HandleFunc("/agents/{id}/stop", handlers.StopAgent(agentSvc, nativeSvc, hub)).Methods("POST")
 
 	// Past-session history (Claude Code transcripts for the agent's project).
 	api.HandleFunc("/agents/{id}/sessions/new", handlers.NewSession(agentSvc, hub)).Methods("POST")

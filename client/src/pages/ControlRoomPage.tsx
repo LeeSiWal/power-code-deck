@@ -69,7 +69,6 @@ export function ControlRoomPage() {
 
   const [connected, setConnected] = useState(agentDeckWS.connected);
   const [toast, setToast] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<AgentSummary | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   // Snapshot fetch — on mount and again on every (re)connect, so a dropped socket
@@ -156,27 +155,23 @@ export function ControlRoomPage() {
     }
   }
 
-  async function doDelete(s: AgentSummary) {
-    setConfirmDelete(null);
+  async function stop(s: AgentSummary) {
     try {
-      await api.deleteAgent(s.agentId);
+      await api.stopAgent(s.agentId);
+      showToast(`${s.name} 정지됨`);
     } catch (e: any) {
-      showToast('삭제 실패: ' + (e?.message || ''));
+      showToast('정지 실패: ' + (e?.message || ''));
     }
   }
 
-  const QuickActions = ({ s, more }: { s: AgentSummary; more?: boolean }) => (
+  // 정지 is the reversible stop (keeps the session, can be restarted) — NOT a delete.
+  // Disabled when the agent isn't running. Full delete lives on the dashboard.
+  const QuickActions = ({ s }: { s: AgentSummary }) => (
     <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-deck-border-soft">
       <ActBtn onClick={() => navigate(`/agents/${s.agentId}`)}>열기</ActBtn>
       <ActBtn onClick={() => restart(s.agentId)}>재시작</ActBtn>
+      <ActBtn disabled={s.status !== 'running'} onClick={() => stop(s)}>정지</ActBtn>
       <ActBtn onClick={() => navigate('/logs')}>로그</ActBtn>
-      {more && (
-        // Delete is intentionally demoted behind "더보기" — in an overview it's too
-        // easy to nuke the wrong session, so it needs a confirm with the name.
-        <ActBtn danger onClick={() => setConfirmDelete(s)}>
-          삭제
-        </ActBtn>
-      )}
     </div>
   );
 
@@ -215,7 +210,7 @@ export function ControlRoomPage() {
           <Badge>✓ 완료 {s.unread?.completed ?? 0}</Badge>
           <Badge>⚠ 에러 {s.unread?.errors ?? 0}</Badge>
         </div>
-        <QuickActions s={s} more />
+        <QuickActions s={s} />
       </div>
     );
   };
@@ -384,37 +379,6 @@ export function ControlRoomPage() {
         </div>
       )}
 
-      {/* Delete confirm */}
-      {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setConfirmDelete(null)}>
-          <div className="absolute inset-0 bg-black/50" />
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="relative rounded-xl border border-deck-border bg-deck-raised p-5 max-w-sm w-full"
-          >
-            <h4 className="font-semibold text-sm mb-1">세션 삭제</h4>
-            <p className="text-xs text-deck-text-dim mb-4">
-              <span className="font-mono text-deck-text">{confirmDelete.name}</span> 세션을 삭제합니다. 이 작업은
-              되돌릴 수 없습니다.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="px-3 py-1.5 rounded text-xs border border-deck-border text-deck-text-dim"
-              >
-                취소
-              </button>
-              <button
-                onClick={() => doDelete(confirmDelete)}
-                className="px-3 py-1.5 rounded text-xs bg-deck-danger text-white font-medium"
-              >
-                삭제
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Transient resolved / already-resolved toast */}
       {toast && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-3 py-1.5 rounded-md border border-deck-accent bg-deck-raised font-mono text-[10px] text-deck-accent-light animate-fade-in">
@@ -425,12 +389,27 @@ export function ControlRoomPage() {
   );
 }
 
-function ActBtn({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
+function ActBtn({
+  children,
+  onClick,
+  danger,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+}) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={`px-2.5 py-1 rounded text-[10px] font-mono border active:opacity-80 ${
-        danger ? 'border-deck-danger text-deck-danger' : 'border-deck-border text-deck-text'
+        disabled
+          ? 'border-deck-border-soft text-deck-text-faint opacity-50 cursor-not-allowed'
+          : danger
+            ? 'border-deck-danger text-deck-danger'
+            : 'border-deck-border text-deck-text'
       }`}
     >
       {children}

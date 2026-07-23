@@ -132,6 +132,9 @@ export const api = {
   getAgent: (id: string) => apiFetch(`/agents/${id}`),
   deleteAgent: (id: string) => apiFetch(`/agents/${id}`, { method: 'DELETE' }),
   restartAgent: (id: string) => apiFetch(`/agents/${id}/restart`, { method: 'POST' }),
+  // Stop a session but KEEP the agent (reversible "정지"), unlike deleteAgent which
+  // removes the record. Stops both the native session and the PTY.
+  stopAgent: (id: string) => apiFetch(`/agents/${id}/stop`, { method: 'POST' }),
 
   // Past-session history (Claude Code transcripts for the agent's project).
   listSessions: (id: string) =>
