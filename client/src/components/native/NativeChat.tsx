@@ -4,9 +4,10 @@ import { agentDeckWS } from '../../lib/ws';
 import { api } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 import {
-  IconBolt, IconCheck, IconClose, IconCodeSlash, IconHand, IconPaperclip,
+  IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconHand, IconPaperclip,
   IconPlanMap, IconPlus, IconSpinner, IconUpload, IconWarning, type IconProps,
 } from '../icons';
+import { writeClipboard } from '../../lib/clipboard';
 
 /**
  * NativeChat — a Claude session rendered from its event stream instead of a
@@ -723,11 +724,7 @@ function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) 
   }
 
   if (item.kind === 'assistant') {
-    return (
-      <div className="max-w-[95%] text-deck-text text-sm whitespace-pre-wrap break-words px-1">
-        {item.text}
-      </div>
-    );
+    return <AssistantText text={item.text} />;
   }
 
   if (item.kind === 'tool') return <ToolRow item={item} />;
@@ -966,6 +963,118 @@ function ApprovalCard({ req, onDecide }: {
           {showReason ? '거부하기' : '거부'}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Assistant text rendering ────────────────────────────────────────────────
+// The stream gives us plain text (no markdown pass), so fenced code blocks were
+// shown as literal ``` text with nothing to copy, and URLs weren't clickable. This
+// splits the text into prose + fenced code, gives each code block a one-tap copy
+// button (commands/snippets you'd otherwise retype), and turns URLs into links.
+
+type TextSeg = { type: 'text'; content: string } | { type: 'code'; content: string; lang?: string };
+
+function parseSegments(text: string): TextSeg[] {
+  const segs: TextSeg[] = [];
+  const re = /```([^\n`]*)\n?([\s\S]*?)```/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) segs.push({ type: 'text', content: text.slice(last, m.index) });
+    segs.push({ type: 'code', lang: m[1].trim() || undefined, content: m[2].replace(/\n$/, '') });
+    last = m.index + m[0].length;
+  }
+  const rest = text.slice(last);
+  // A still-streaming, not-yet-closed fence: render its body as code so it doesn't
+  // flash as raw ``` mid-stream, then re-settle once the closing fence arrives.
+  const open = rest.indexOf('```');
+  if (open !== -1) {
+    if (open > 0) segs.push({ type: 'text', content: rest.slice(0, open) });
+    const after = rest.slice(open + 3);
+    const nl = after.indexOf('\n');
+    const lang = (nl === -1 ? after : after.slice(0, nl)).trim();
+    const body = nl === -1 ? '' : after.slice(nl + 1);
+    segs.push({ type: 'code', lang: lang || undefined, content: body });
+  } else if (rest.length) {
+    segs.push({ type: 'text', content: rest });
+  }
+  return segs;
+}
+
+// Split on http(s) URLs; the trailing char class avoids swallowing a sentence's
+// closing punctuation into the link.
+const URL_SPLIT = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"\]])/g;
+
+function Linkified({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(URL_SPLIT).map((part, i) =>
+        /^https?:\/\//.test(part) ? (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-deck-accent-light underline decoration-deck-accent/40 underline-offset-2 break-all"
+          >
+            {part}
+          </a>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
+function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    if (await writeClipboard(code)) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    }
+  };
+  return (
+    <div className="my-1.5 rounded-lg border border-deck-border overflow-hidden bg-deck-bg">
+      <div className="flex items-center justify-between px-2.5 py-1 bg-deck-surface border-b border-deck-border">
+        <span className="text-[10px] font-mono text-deck-text-faint">{lang || 'code'}</span>
+        <button
+          onClick={copy}
+          className="flex items-center gap-1 text-[10px] font-mono text-deck-text-dim active:opacity-70 px-1"
+        >
+          {copied ? (
+            <>
+              <IconCheck size={11} /> 복사됨
+            </>
+          ) : (
+            <>
+              <IconCopy size={11} /> 복사
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="text-[12px] leading-relaxed font-mono text-deck-text p-2.5 overflow-x-auto selectable">
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+function AssistantText({ text }: { text: string }) {
+  const segs = useMemo(() => parseSegments(text), [text]);
+  return (
+    <div className="max-w-[95%] text-deck-text text-sm break-words px-1">
+      {segs.map((seg, i) =>
+        seg.type === 'code' ? (
+          <CodeBlock key={i} code={seg.content} lang={seg.lang} />
+        ) : (
+          <span key={i} className="whitespace-pre-wrap">
+            <Linkified text={seg.content} />
+          </span>
+        ),
+      )}
     </div>
   );
 }
