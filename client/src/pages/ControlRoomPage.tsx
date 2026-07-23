@@ -60,6 +60,53 @@ function dot(hue: number, hollow = false) {
   );
 }
 
+// Three live states, the thing the overview must make obvious at a glance:
+//   working — running AND produced activity in the last ~30s (a tool is moving)
+//   idle    — running but quiet (alive, on standby)
+//   stopped — not running
+type LiveState = 'working' | 'idle' | 'stopped';
+
+const WORKING_WINDOW_MS = 30_000;
+
+function liveState(s: AgentSummary): LiveState {
+  if (s.status !== 'running') return 'stopped';
+  if (s.lastActivityAt > 0 && Date.now() - s.lastActivityAt < WORKING_WINDOW_MS) return 'working';
+  return 'idle';
+}
+
+const STATE_CHIP: Record<LiveState, { label: string; cls: string }> = {
+  working: { label: '작업 중', cls: 'border-deck-accent/50 text-deck-accent-light bg-deck-accent/10' },
+  idle: { label: '대기', cls: 'border-deck-success/40 text-deck-success' },
+  stopped: { label: '정지', cls: 'border-deck-border text-deck-text-faint' },
+};
+
+// LiveDot: hollow for stopped, a steady dot for idle, and a pulsing (ping) dot for
+// working — so "is it doing anything right now" reads instantly, without parsing text.
+function LiveDot({ hue, state }: { hue: number; state: LiveState }) {
+  const color = `hsl(${hue}, 60%, 58%)`;
+  if (state === 'stopped') {
+    return <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0 border-[1.5px] border-deck-text-faint" />;
+  }
+  return (
+    <span className="relative inline-flex w-2.5 h-2.5 shrink-0">
+      {state === 'working' && (
+        <span className="absolute inline-flex h-full w-full rounded-full animate-ping" style={{ background: color, opacity: 0.55 }} />
+      )}
+      <span className="relative inline-flex w-2.5 h-2.5 rounded-full" style={{ background: color }} />
+    </span>
+  );
+}
+
+// WorkingBar: an indeterminate sweep shown only while an agent is actively working —
+// motion is the clearest "this one is live" signal on a wall of tiles.
+function WorkingBar() {
+  return (
+    <div className="h-0.5 rounded-full overflow-hidden bg-deck-accent/10 mt-2">
+      <div className="h-full w-1/3 bg-deck-accent/70 animate-working-bar" />
+    </div>
+  );
+}
+
 export function ControlRoomPage() {
   const navigate = useNavigate();
   const summaries = useAppStore((s) => s.summaries);
@@ -70,6 +117,13 @@ export function ControlRoomPage() {
   const [connected, setConnected] = useState(agentDeckWS.connected);
   const [toast, setToast] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  // A slow tick so "작업 중 → 대기" decay and the relative-time labels refresh even when
+  // no new summary arrives (a working agent streams updates; a quiet one wouldn't).
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => forceTick((t) => t + 1), 4000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // Snapshot fetch — on mount and again on every (re)connect, so a dropped socket
   // heals to the true state instead of drifting on the deltas it missed.
@@ -177,14 +231,27 @@ export function ControlRoomPage() {
 
   const Tile = ({ s }: { s: AgentSummary }) => {
     const attn = s.attention?.primary;
+    const st = liveState(s);
+    const chip = STATE_CHIP[st];
+    const borderCls = attn
+      ? 'border-2 ' + attnClasses(attn).split(' ')[0]
+      : st === 'working'
+        ? 'border-deck-accent/40'
+        : st === 'stopped'
+          ? 'border-deck-border-soft'
+          : 'border-deck-border';
     return (
       <div
-        className={`rounded-lg border bg-deck-surface p-3 ${attn ? 'border-2 ' + attnClasses(attn).split(' ')[0] : 'border-deck-border'}`}
+        className={`rounded-lg border bg-deck-surface p-3 transition-all ${borderCls} ${
+          st === 'working' ? 'shadow-[0_0_0_1px_rgba(99,102,241,0.15)]' : ''
+        } ${st === 'stopped' ? 'opacity-60' : ''}`}
       >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 min-w-0">
-            {dot(s.colorHue, s.status !== 'running')}
-            <span className="font-mono text-xs font-semibold truncate">{s.name}</span>
+            <LiveDot hue={s.colorHue} state={st} />
+            <span className={`font-mono text-xs font-semibold truncate ${st === 'stopped' ? 'text-deck-text-dim' : ''}`}>
+              {s.name}
+            </span>
             <span className="text-[9px] uppercase tracking-wide px-1 rounded border border-deck-border text-deck-text-faint">
               {kindGlyph(s.preset)}
             </span>
@@ -194,13 +261,24 @@ export function ControlRoomPage() {
               {attnLabel(s.attention.reasons[0] || { kind: attn })}
             </span>
           ) : (
-            <span className="text-[9px] font-mono px-1.5 rounded-full border border-deck-border text-deck-text-dim">
-              {s.status}
+            <span className={`text-[9px] font-mono px-1.5 rounded-full border whitespace-nowrap ${chip.cls}`}>
+              {chip.label}
             </span>
           )}
         </div>
-        <div className="font-mono text-[10px] text-deck-text-dim mt-2 leading-relaxed">
-          <div className="truncate">tool&nbsp;&nbsp;: {s.lastTool || '—'}</div>
+        {st === 'working' ? (
+          <WorkingBar />
+        ) : (
+          <div className="h-0.5 mt-2" /> // reserve the space so tiles don't jump when the bar toggles
+        )}
+        <div
+          className={`font-mono text-[10px] mt-2 leading-relaxed ${
+            st === 'stopped' ? 'text-deck-text-faint' : 'text-deck-text-dim'
+          }`}
+        >
+          <div className="truncate">
+            tool&nbsp;&nbsp;: <span className={st === 'working' ? 'text-deck-accent-light' : ''}>{s.lastTool || '—'}</span>
+          </div>
           <div className="truncate">target: {s.lastTarget || '—'}</div>
           <div>
             ×{s.toolCount} · {timeAgo(s.lastActivityAt)}
@@ -313,7 +391,7 @@ export function ControlRoomPage() {
                     className={`min-w-[150px] text-left rounded-md border bg-deck-surface p-2 ${attnClasses(s.attention.primary).split(' ')[0]}`}
                   >
                     <div className="flex items-center gap-1.5 mb-1">
-                      {dot(s.colorHue)}
+                      <LiveDot hue={s.colorHue} state={liveState(s)} />
                       <span className="font-mono text-[11px] font-bold truncate">{s.name}</span>
                     </div>
                     <span className={`text-[9px] font-mono px-1.5 rounded-full border ${attnClasses(s.attention.primary)}`}>
@@ -343,6 +421,15 @@ export function ControlRoomPage() {
                   <span className="font-mono text-[9px] px-1.5 rounded-full border border-deck-border text-deck-text-dim">
                     {g.agents.length}
                   </span>
+                  {(() => {
+                    const working = g.agents.filter((a) => liveState(a) === 'working').length;
+                    return working > 0 ? (
+                      <span className="font-mono text-[9px] px-1.5 rounded-full border border-deck-accent/40 bg-deck-accent/10 text-deck-accent-light flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-deck-accent-light animate-pulse-soft" />
+                        {working} 작업 중
+                      </span>
+                    ) : null;
+                  })()}
                   <span className="flex-1 border-t border-dashed border-deck-border-soft" />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
