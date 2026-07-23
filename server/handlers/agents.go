@@ -213,6 +213,16 @@ var builtinSlashCommands = []SlashCommand{
 	{Name: "/init", Type: "builtin", Scope: "builtin", Description: "저장소를 분석해 CLAUDE.md 생성"},
 	{Name: "/mcp", Type: "builtin", Scope: "builtin", Description: "MCP 서버 상태"},
 	{Name: "/doctor", Type: "builtin", Scope: "builtin", Description: "Claude Code 설치 상태 점검"},
+	// Bundled skills/commands verified to work over the headless stream protocol
+	// (probed against the real CLI: they expand and run, not "isn't available"). These
+	// ship with Claude Code, so they're offered as built-ins; a same-named user/project
+	// command still overrides them via the add() precedence.
+	{Name: "/review", Type: "builtin", Scope: "builtin", Description: "현재 변경사항 코드 리뷰"},
+	{Name: "/code-review", Type: "builtin", Scope: "builtin", Description: "변경 코드 리뷰 — 버그·정리 (정확도 조절)"},
+	{Name: "/security-review", Type: "builtin", Scope: "builtin", Description: "변경사항 보안 리뷰"},
+	{Name: "/simplify", Type: "builtin", Scope: "builtin", Description: "변경 코드 정리·단순화 후 적용"},
+	{Name: "/claude-api", Type: "builtin", Scope: "builtin", Description: "Claude API/SDK 레퍼런스"},
+	{Name: "/keybindings-help", Type: "builtin", Scope: "builtin", Description: "키보드 단축키 커스터마이즈 도움말"},
 }
 
 type claudeSettings struct {
