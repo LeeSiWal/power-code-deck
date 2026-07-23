@@ -153,6 +153,16 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 	s.onApproval = onApproval
 	s.mu.Unlock()
 	s.broker.SetAskHandler(func(req PermissionRequest) {
+		// Server-side permission policy: apply the session's mode (bypass → allow all,
+		// auto → allow safe / ask risky) BEFORE surfacing to a human. This is what
+		// makes "전체 허용" actually stop asking (the CLI keeps calling our approve tool
+		// despite --permission-mode bypassPermissions), and what implements the "auto"
+		// safety-check mode the CLI has no flag for. The answer channel is buffered, so
+		// resolving here synchronously is safe (Ask isn't blocked yet).
+		if d, ok := s.autoDecision(req); ok {
+			s.broker.Resolve(req.ID, d)
+			return
+		}
 		s.mu.RLock()
 		fn := s.onApproval
 		s.mu.RUnlock()
@@ -160,6 +170,17 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 			fn(req)
 		}
 	})
+}
+
+// autoDecision applies the auto-approval policy for the request's session.
+func (s *NativeService) autoDecision(req PermissionRequest) (PermissionDecision, bool) {
+	s.mu.RLock()
+	sess := s.sessions[req.SessionID]
+	s.mu.RUnlock()
+	if sess == nil {
+		return PermissionDecision{}, false
+	}
+	return autoDecide(sess.mode, req.ToolName, req.Input, sess.cwd)
 }
 
 // Start launches a native Claude or Codex session for an agent. Idempotent:
@@ -215,10 +236,19 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	if kind == "" {
 		kind = "claude"
 	}
+	// "auto" (안전 검사) is OUR mode, not a CLI --permission-mode: run the Claude CLI in
+	// its default mode so every gated tool routes to our approve bridge, where the
+	// policy allows safe calls and asks for risky ones. sess.mode stays "auto".
+	cliMode := mode
+	if mode == AutoMode {
+		cliMode = ""
+	}
 	var d NativeDriver
 	var token string
 	var err error
 	if kind == "codex" {
+		// Codex maps "auto" to its default (on-request) approval policy, so gated calls
+		// still reach the broker and the same policy applies.
 		d = NewCodexDriver(CodexConfig{
 			SessionID: sessionID, Cwd: cwd, Model: model, Mode: mode,
 			ResumeID: resumeID, Broker: s.broker,
@@ -229,7 +259,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			return err
 		}
 		d = NewClaudeDriver(ClaudeConfig{
-			SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: mode,
+			SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: cliMode,
 			ResumeID: resumeID, ApproveURL: s.baseURL + "/internal/native/approve",
 			ApproveToken: token, SelfPath: s.selfBin,
 		})
@@ -240,7 +270,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		// once, rather than failing every open from here on.
 		if resumeID != "" && kind == "claude" {
 			d = NewClaudeDriver(ClaudeConfig{
-				SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: mode,
+				SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: cliMode,
 				ApproveURL: s.baseURL + "/internal/native/approve", ApproveToken: token,
 				SelfPath: s.selfBin,
 			})

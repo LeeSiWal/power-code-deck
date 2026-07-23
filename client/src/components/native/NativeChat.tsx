@@ -55,12 +55,16 @@ const CODEX_MODELS: typeof MODELS = [
 // Permission modes — the TUI's Shift+Tab cycle. `id` → --permission-mode.
 // Switching restarts the session on the same conversation (server SetMode).
 // `pill` encodes risk in colour: neutral → indigo → sky (plan) → amber (careful).
-// NOTE: the VS Code extension's "Auto (safety check)" mode is extension-only — the
-// CLI has no such --permission-mode, so it is deliberately absent here. 전체 허용 is
-// bypassPermissions and approves EVERYTHING; it must never be dressed up as "Auto".
+// NOTE: "자동 (안전 검사)" (id 'auto') is NOT a CLI --permission-mode — the CLI has no
+// such flag (the VS Code extension's version is extension-only). We implement it
+// SERVER-SIDE: the CLI runs in default, every gated tool routes to our approve bridge,
+// and the broker auto-approves safe calls / asks for risky ones. 전체 허용 is
+// bypassPermissions and approves EVERYTHING (also enforced server-side, since the CLI
+// keeps asking through our approve tool despite the flag).
 const MODES: { id: string; label: string; desc: string; icon: React.ComponentType<IconProps>; pill: string }[] = [
   { id: '', label: '수동', desc: '도구를 실행할 때마다 승인을 요청합니다', icon: IconHand, pill: 'border-deck-border bg-deck-surface text-deck-text-dim' },
   { id: 'acceptEdits', label: '자동 편집', desc: '파일 편집은 자동 승인, 명령 실행은 물어봅니다', icon: IconCodeSlash, pill: 'border-deck-accent/50 bg-deck-accent/10 text-deck-accent-light' },
+  { id: 'auto', label: '자동 (안전 검사)', desc: '안전한 작업은 자동 승인, 위험한 명령만 물어봅니다', icon: IconCheck, pill: 'border-emerald-400/45 bg-emerald-400/10 text-emerald-300' },
   { id: 'plan', label: '플랜', desc: '실행 없이 코드를 탐색하고 계획을 먼저 제시합니다', icon: IconPlanMap, pill: 'border-sky-400/40 bg-sky-400/10 text-sky-300' },
   { id: 'bypassPermissions', label: '전체 허용', desc: '모든 도구를 묻지 않고 승인합니다 — 주의해서 사용', icon: IconBolt, pill: 'border-amber-400/45 bg-amber-400/10 text-amber-300' },
 ];
