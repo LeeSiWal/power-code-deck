@@ -1,62 +1,103 @@
 /**
- * Fluid UI scaling — makes the whole interface grow on large displays and shrink on
- * small ones, proportional to the viewport.
+ * Fluid UI scaling — makes the whole interface grow on large displays / shrink on
+ * small ones, plus a manual size preference from Settings.
  *
- * How it works: Tailwind's spacing, font-size and width utilities are all rem-based,
- * so the entire chrome (text, padding, panels, buttons) scales together when the root
- * `html` font-size changes. We set that font-size from the viewport size, clamped so
- * it never gets comically large on a 4K panel or unreadably small on a tiny window.
+ * We drive the CSS `zoom` property (via the `--ui-zoom` custom property consumed by
+ * `#root` in globals.css) rather than the root font-size. `zoom` scales the entire
+ * app UNIFORMLY — fixed-px sizing included — so components that use arbitrary px
+ * (e.g. the control room's `text-[10px]`) scale too, which a rem/font-size approach
+ * can't reach. Layout reflows properly, so it reads as a real page zoom, not a blur.
  *
- * Layout structure does NOT move: Tailwind's responsive breakpoints (`md:`, `lg:`)
- * are px-based, so which layout renders is unchanged — only the sizing within it
- * scales. A few things opt out by design and keep their own sizing: the terminal font
- * (its own setting), user-dragged panel widths (stored in px), and hairline borders.
+ * Final zoom = autoFactor(viewport) × userScale(setting). The app shell divides its
+ * height/width by the zoom (globals.css) so a scaled-up UI still fits one viewport.
  *
- * Opt out for debugging with `?noscale` in the URL.
+ * `?noscale` in the URL disables the automatic (viewport) part; the manual setting
+ * still applies.
  */
+import { useEffect, useState } from 'react';
 
-// Reference viewport the design is tuned at → BASE_FONT_PX. A viewport this size
-// renders at exactly the browser-default 16px; larger scales up, smaller scales down.
-const BASE_W = 1440;
-const BASE_H = 900;
-const BASE_FONT_PX = 16;
+// Reference width the design is tuned at → zoom 1.0. Wider viewports scale up,
+// narrower scale down (damped, so it's proportional but not 1:1 aggressive).
+const REF_W = 1440;
+const DAMP = 0.4;
+// Never auto-SHRINK below the tuned baseline: screens at or below the reference stay
+// at 1.0 (identical to no scaling), and only larger displays grow. Shrinking is left
+// to the manual Settings control, so nobody's UI gets unexpectedly smaller.
+const AUTO_MIN = 1.0;
+const AUTO_MAX = 1.35;
 
-// Multiplier bounds keep the extremes sane: ~0.85× on small windows, ~1.4× on big
-// displays. Widen these to make scaling more aggressive.
-const MIN_SCALE = 0.85;
-const MAX_SCALE = 1.4;
-
-// Phones are left at 1.0×: the mobile layout is already responsive and its touch
-// targets are sized for the default 16px, so scaling them down hurts tap accuracy
-// more than it helps. Lower this (e.g. to 0) to let phones scale too.
+// Phones keep autoFactor 1.0: the mobile layout is already responsive and its touch
+// targets are tuned for the default size. The manual setting still applies.
 const MOBILE_MIN_W = 640;
 
-function computeFontPx(): number {
-  const w = window.innerWidth || BASE_W;
-  const h = window.innerHeight || BASE_H;
-  if (w < MOBILE_MIN_W) return BASE_FONT_PX;
-  // Drive off whichever axis is more constrained, so a wide-but-short window scales
-  // by its height and never overflows vertically (and vice-versa).
-  const raw = Math.min(w / BASE_W, h / BASE_H);
-  const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, raw));
-  return BASE_FONT_PX * scale;
+// Manual setting bounds (Settings slider). Exported for the slider's min/max.
+export const USER_SCALE_MIN = 0.7;
+export const USER_SCALE_MAX = 1.6;
+
+// Absolute clamp on the combined result, so auto × manual can't reach an unusable
+// extreme.
+const HARD_MIN = 0.7;
+const HARD_MAX = 1.9;
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+let autoDisabled = false;
+let userScale = clamp(parseFloat(localStorage.getItem('uiScale') || '1') || 1, USER_SCALE_MIN, USER_SCALE_MAX);
+
+function autoFactor(): number {
+  if (autoDisabled) return 1;
+  const w = window.innerWidth || REF_W;
+  if (w < MOBILE_MIN_W) return 1;
+  return clamp(1 + (w / REF_W - 1) * DAMP, AUTO_MIN, AUTO_MAX);
+}
+
+/** The zoom currently applied to the app (auto × manual, clamped). */
+export function currentZoom(): number {
+  return clamp(autoFactor() * userScale, HARD_MIN, HARD_MAX);
 }
 
 let raf = 0;
 function apply() {
   raf = 0;
-  document.documentElement.style.fontSize = `${computeFontPx().toFixed(2)}px`;
+  document.documentElement.style.setProperty('--ui-zoom', currentZoom().toFixed(4));
+  window.dispatchEvent(new Event('ui-zoom'));
 }
-
 function schedule() {
-  if (raf) return;
-  raf = requestAnimationFrame(apply);
+  if (!raf) raf = requestAnimationFrame(apply);
 }
 
-/** Start fluid scaling. Idempotent-safe to call once at startup. */
+export function getUserScale(): number {
+  return userScale;
+}
+export function setUserScale(v: number): void {
+  userScale = clamp(v, USER_SCALE_MIN, USER_SCALE_MAX);
+  localStorage.setItem('uiScale', String(userScale));
+  apply();
+}
+
+/** Start fluid scaling. Called once at startup before first paint. */
 export function initUiScale(): void {
-  if (new URLSearchParams(location.search).has('noscale')) return;
+  autoDisabled = new URLSearchParams(location.search).has('noscale');
   apply();
   window.addEventListener('resize', schedule);
   window.visualViewport?.addEventListener('resize', schedule);
+}
+
+/** React hook: the current zoom, re-read on viewport or setting change. */
+export function useUiZoom(): number {
+  const [z, setZ] = useState(() => currentZoom());
+  useEffect(() => {
+    const on = () => setZ(currentZoom());
+    window.addEventListener('ui-zoom', on);
+    window.addEventListener('resize', on);
+    window.visualViewport?.addEventListener('resize', on);
+    return () => {
+      window.removeEventListener('ui-zoom', on);
+      window.removeEventListener('resize', on);
+      window.visualViewport?.removeEventListener('resize', on);
+    };
+  }, []);
+  return z;
 }

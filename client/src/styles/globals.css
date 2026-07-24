@@ -36,8 +36,16 @@
   }
 
   #root {
-    height: 100vh;
-    height: 100dvh;
+    /* Fluid UI scaling — uiScale.ts sets --ui-zoom from the viewport size and the
+       user's Settings preference. `zoom` scales the whole app uniformly (fixed-px
+       sizing included, unlike a root font-size), reflowing layout like a real page
+       zoom. Height/width are divided by the zoom so a scaled-up UI still fills
+       exactly one viewport rather than overflowing it. Default (--ui-zoom:1) is a
+       no-op: calc(100dvh / 1) = 100dvh. */
+    zoom: var(--ui-zoom, 1);
+    height: calc(100vh / var(--ui-zoom, 1));
+    height: calc(100dvh / var(--ui-zoom, 1));
+    width: calc(100vw / var(--ui-zoom, 1));
     display: flex;
     flex-direction: column;
     overflow: hidden;

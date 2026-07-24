@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { getUserScale, setUserScale } from '../lib/uiScale';
 
 export interface Agent {
   id: string;
@@ -152,6 +153,8 @@ interface AppState {
   // Settings
   soundEnabled: boolean;
   setSoundEnabled: (v: boolean) => void;
+  uiScale: number;
+  setUiScale: (v: number) => void;
   characterTheme: string;
   setCharacterTheme: (v: string) => void;
 
@@ -263,6 +266,13 @@ export const useAppStore = create<AppState>((set) => ({
   setSoundEnabled: (v) => {
     localStorage.setItem('soundEnabled', String(v));
     set({ soundEnabled: v });
+  },
+  // Manual UI size preference. uiScale.ts owns persistence + applying it to the DOM
+  // (the --ui-zoom var); the store just mirrors the value so the slider is reactive.
+  uiScale: getUserScale(),
+  setUiScale: (v) => {
+    setUserScale(v);
+    set({ uiScale: getUserScale() });
   },
   characterTheme: localStorage.getItem('characterTheme') || 'default',
   setCharacterTheme: (v) => {

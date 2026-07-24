@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { SoundSettings } from '../components/settings/SoundSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
+import { UiScaleSettings } from '../components/settings/UiScaleSettings';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack } from '../components/icons';
 import { useAppStore } from '../stores/appStore';
@@ -27,6 +28,7 @@ export function SettingsPage() {
       </header>
 
       <main className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4 max-w-lg mx-auto w-full">
+        <UiScaleSettings />
         <NotificationSettings />
         <SoundSettings />
 
