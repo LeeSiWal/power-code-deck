@@ -44,8 +44,8 @@ Claude Code와 Codex를 **어디서든 실행하고, 대화하고, 승인하고,
 
 PowerCodeDeck은 완전한 IDE를 대체하려는 제품이 아닙니다. **에디터 앞에서 직접 코딩하는
 시간보다 AI 에이전트에게 작업을 맡기고 확인·승인·전환하는 시간이 늘어난 개발 흐름**에
-맞춰져 있습니다. 현재 멀티 에이전트 대시보드는 Experimental이며, 여러 세션을 본격적으로
-관제하는 **Control Room은 v0.3.0 로드맵**입니다.
+맞춰져 있습니다. 여러 세션을 본격적으로 관제하는 **Control Room(관제실)은 v0.3.0에서
+출시**되었습니다.
 
 ---
 
@@ -151,6 +151,7 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 - **멀티 에이전트** — 여러 AI 에이전트를 동시에 실행/모니터링 (Claude Code / Codex / Custom)
 - **웹 터미널** — `@xterm/headless` 파서 + **자체 DOM 렌더러**(잔상 없는 CJK 2셀 고정폭, 번들 D2Coding 폰트) 기반 단일 Interactive Terminal + 디바이스별 Prompt Bar(한글/긴 프롬프트), 방향키 툴바, 내부 PTY 세션 엔진으로 프로세스 유지 (브라우저를 닫아도 유지)
 - **대시보드** — 그리드/리스트 뷰로 전체 에이전트 상태를 한눈에, `+`로 즉시 생성
+- **관제실 (Control Room)** — 여러 에이전트 세션을 한 화면에서 관리: 동작중/대기/정지 상태 애니메이션, 프로젝트별 그룹, 승인 대기 큐, 세션별 요약·정지·재시작
 - **에이전트 메타** — Git 브랜치·변경 여부·ahead 커밋 수, 리스닝 포트 자동 감지 표시
 - **세션 히스토리** — 프로젝트별 과거 Claude Code 세션(트랜스크립트)을 열람·재개(resume)·삭제
 - **파일 탐색기** — 프로젝트 파일 탐색/편집/생성/삭제/이름변경
@@ -158,7 +159,9 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 - **알림 센터** — 에이전트의 완료/대기/승인요청 등 이벤트를 수집·표시
 - **로그 뷰어** — 에이전트별 출력 로그를 SQLite에 저장하고 검색
 - **도트 캐릭터** — 에이전트 활동을 픽셀 애니메이션으로 시각화 (Default/Cat 테마)
-- **슬래시 자동완성** — `~/.claude/commands`, `agents`, `skills` 자동 감지
+- **슬래시 자동완성** — `~/.claude/commands`, `agents`, `skills`와 활성 플러그인 명령을 자동 감지
+- **플러그인 관리** — 채팅에서 `/plugin`으로 마켓플레이스 검색·설치·활성화. CLI의 대화형 `/plugin`은 stream 모드에서 동작하지 않으므로 deck이 가로채 자체 관리 패널로 처리 (설치→캐시 배치→`enabledPlugins` 토글)
+- **UI 크기 조절** — 해상도에 비례해 UI 전체(챗·관제실·패널)가 큰 모니터에서 자동 확대, 설정에서 수동 배율(70~160%)도 실시간 조절 (CSS zoom 기반)
 - **사운드** — 레트로 게임 스타일 효과음 (도구별 고유 사운드)
 - **선택형 인증** — 최초 실행 시 none/PIN/password 중 선택 (기본값: 인증 없음)
 - **CLI** — 서버 실행 없이 터미널에서 에이전트 조작 (`pcd list/create/send` 등)
@@ -169,7 +172,7 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 
 ## 기능 상태 (Stable / Experimental / Roadmap)
 
-### Stable in v0.2
+### Stable in v0.3
 - Interactive Terminal (단일 터미널)
 - Prompt Bar (한글/긴 프롬프트 — 모바일·iPad 필수, 데스크톱 선택)
 - 방향키/제어키 툴바 (데스크톱·모바일)
@@ -177,11 +180,14 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 - Session History (과거 Claude Code 세션 열람·재개·삭제)
 - File Explorer
 - Claude / Codex 네이티브 런처
+- **Control Room (멀티 세션 관제실)** — v0.3.0에서 출시
+- **Plugin manager (마켓플레이스 검색·설치·활성화)**
+- **UI scaling (해상도 비례 자동 + 수동 배율)**
 - Optional Authentication (none / PIN / password)
 - Local / Proxy-friendly deployment
 
 ### Experimental
-아래 기능은 동작하지만 v0.2에서 크게 다듬지 않았고, 이후 버전에서 변경될 수 있습니다.
+아래 기능은 동작하지만 아직 크게 다듬지 않았고, 이후 버전에서 변경될 수 있습니다.
 - Multi-agent dashboard (멀티 에이전트 대시보드)
 - Browser preview (내장 브라우저)
 - Notification center (알림 센터)
@@ -190,7 +196,7 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 - CLI subcommands
 
 ### Roadmap
-- **v0.3.0 — Control Room**: 여러 에이전트 세션을 한눈에 관리하는 관제실. → [Roadmap 섹션](#roadmap)
+- 상세 로드맵은 [ROADMAP.md](ROADMAP.md) 참고.
 
 ---
 
@@ -473,6 +479,11 @@ PowerCodeDeck은 **서버 터미널과 파일에 접근할 수 있는 도구**�
 모드 전환과 세션 재개도 같은 화면에서 처리합니다. 기존 TUI가 필요하면 URL에
 `?terminal`을 붙여 터미널 모드로 전환할 수 있습니다.
 
+일부 슬래시 커맨드는 deck이 직접 처리합니다 — `/clear`는 컨텍스트까지 비우는 새 세션으로,
+`/plugin`은 플러그인 관리 패널로 엽니다(`/plugin install 이름@마켓플레이스`로 즉시 설치).
+CLI의 대화형 전용 커맨드는 stream 모드에서 동작하지 않으므로, deck이 동작을 검증한
+빌트인·스킬만 슬래시 피커에 노출됩니다.
+
 **Shell과 Custom 프리셋은 Interactive Terminal을 사용**합니다. 구조화 프로토콜이 없는
 임의 CLI는 PTY 화면을 그대로 렌더링하며, 한글·긴 프롬프트는 Prompt Bar에서 작성해
 현재 터미널로 전송합니다. 별도의 Chat/Raw 모드는 없습니다.
@@ -592,6 +603,13 @@ POWERCODEDECK_LAN_URL=http://192.168.0.25:33033
 ---
 
 ## 설정
+
+### 인앱 설정 (Settings 화면)
+
+내비게이션의 **Settings**에서 조절합니다 (브라우저 localStorage에 저장):
+- **UI 크기** — 화면 전체 배율을 70~160%로 실시간 조절. 해상도 비례 자동 스케일 위에 개인 배율로 적용됩니다. 1440px 이하 화면은 자동 축소되지 않고, 큰 모니터에서만 자동 확대됩니다. (URL에 `?noscale`을 붙이면 자동 스케일만 비활성화)
+- **알림 / 사운드** — 웹 푸시 알림·효과음 on/off
+- **캐릭터 테마** — 도트 캐릭터 스킨 (Default / Cat)
 
 ### 환경변수 (`.env`)
 
@@ -862,6 +880,10 @@ GET    /api/agents/{id}/meta    git/포트 메타
 POST   /api/agents/{id}/handoff Session Handoff 토큰 발급
 GET    /api/agents/slash-commands  슬래시 커맨드 목록
 
+GET    /api/plugins             플러그인 목록 (설치/활성 상태 포함)
+POST   /api/plugins/install     마켓플레이스 플러그인 설치 + 활성화
+POST   /api/plugins/toggle      플러그인 활성/비활성 토글
+
 GET    /api/agents/{id}/sessions           세션 히스토리 목록
 POST   /api/agents/{id}/sessions/new       새 세션 시작
 GET    /api/agents/{id}/sessions/{sid}     세션 트랜스크립트 조회
@@ -938,21 +960,21 @@ server/*.go + server/static/ ──(go build + embed.FS)──▶ ./pcd
 
 ## Roadmap
 
-### v0.3.0 — Control Room
+### v0.3.0 — Control Room ✅ 출시됨
 
-PowerCodeDeck의 다음 주요 기능은 **멀티 에이전트 관제실(Control Room)**입니다.
-(현재 v0.2.x에서는 구현하지 않고 로드맵으로만 정의합니다.)
-
-목표:
+**멀티 에이전트 관제실(Control Room)**이 v0.3.0에서 출시되었습니다:
 - 여러 에이전트 세션을 한 화면에서 관리
 - 프로젝트별 세션 그룹핑
-- 실행 중 / 종료됨 / 주의 필요 상태 표시
+- 동작중 / 대기 / 정지 상태 애니메이션 표시
 - Claude / Codex / Shell 세션 빠른 진입
 - 세션별 최근 출력 요약
-- 세션 종료 / 재시작 / 로그 보기
-- 승인 대기나 장시간 무응답 같은 주의 상태 표시
+- 세션 정지(레코드 유지) / 재시작 / 로그 보기
+- 승인 대기 큐 — 여러 세션의 승인 요청을 한곳에서 처리
 
-현재 버전에서는 기존 멀티 에이전트 대시보드를 크게 수정하지 않고(Experimental로 분류), Control Room은 다음 버전 작업으로 남깁니다. 상세 로드맵은 [ROADMAP.md](ROADMAP.md) 참고.
+같은 릴리스에서 **플러그인 관리**(`/plugin` 마켓플레이스 검색·설치·활성화)와
+**UI 크기 조절**(해상도 비례 자동 스케일 + 설정의 수동 배율)도 추가되었습니다.
+
+이후 계획은 [ROADMAP.md](ROADMAP.md) 참고.
 
 ---
 
