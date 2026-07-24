@@ -8,6 +8,7 @@ import {
   IconPlanMap, IconPlus, IconSpinner, IconUpload, IconWarning, type IconProps,
 } from '../icons';
 import { writeClipboard } from '../../lib/clipboard';
+import { PluginsPanel } from './PluginsPanel';
 
 /**
  * NativeChat — a Claude session rendered from its event stream instead of a
@@ -88,6 +89,9 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const [modelId, setModelId] = useState(() => localStorage.getItem(`pcd:model:${agentId}`) || '');
   const [modeId, setModeId] = useState(() => localStorage.getItem(`pcd:mode:${agentId}`) || '');
   const [menu, setMenu] = useState<null | 'add' | 'model' | 'mode'>(null);
+  // `/plugin` is intercepted here (the CLI refuses it over the stream), opening this
+  // panel. A prefilled query lets "/plugin foo" jump straight to a search.
+  const [plugins, setPlugins] = useState<null | { query: string }>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -337,6 +341,28 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         navigate(`/agents/${a.id}`);
       } catch (err) {
         setError('새 세션을 시작하지 못했습니다: ' + String(err));
+      }
+      return;
+    }
+    // /plugin — the CLI answers "isn't available" over the stream, so the deck owns
+    // it. `/plugin install name@marketplace` runs the install directly; anything else
+    // (`/plugin`, `/plugins`, `/plugin foo`) opens the management panel, prefilling a
+    // search with whatever followed the command.
+    if (/^\/plugins?(\s|$)/.test(text) && !attachments.length) {
+      setDraft('');
+      setHistIdx(null);
+      const rest = text.replace(/^\/plugins?\s*/, '').trim();
+      const m = rest.match(/^(install|add|enable)\s+(\S+@\S+)/i);
+      if (m) {
+        setError('');
+        try {
+          await api.installPlugin(m[2]);
+          setPlugins({ query: '' }); // open the panel so the restart banner is visible
+        } catch (err) {
+          setError(`${m[2]} 설치 실패: ` + String(err));
+        }
+      } else {
+        setPlugins({ query: rest });
       }
       return;
     }
@@ -697,6 +723,14 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
           </div>
         </div>
       </div>
+
+      {plugins && (
+        <PluginsPanel
+          agentId={agentId}
+          initialQuery={plugins.query}
+          onClose={() => setPlugins(null)}
+        />
+      )}
     </div>
   );
 }

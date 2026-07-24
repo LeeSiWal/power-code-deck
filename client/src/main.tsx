@@ -1,10 +1,15 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { initUiScale } from './lib/uiScale';
 import './styles/scroll.css';
 import './styles/globals.css';
 import './styles/animations.css';
 import './styles/notifications.css';
+
+// Scale the whole UI to the viewport (bigger display → bigger UI) before first paint,
+// so the app renders at the right size immediately instead of flashing at 16px.
+initUiScale();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

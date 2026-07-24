@@ -147,6 +147,36 @@ export const api = {
   resumeSession: (id: string, sid: string) => apiFetch(`/agents/${id}/sessions/${sid}/resume`, { method: 'POST' }),
   newSession: (id: string) => apiFetch<{ id: string }>(`/agents/${id}/sessions/new`, { method: 'POST' }),
 
+  // Plugins — the deck's own install/enable path. The CLI's `/plugin` is
+  // interactive-only and answers "isn't available" over the stream protocol, so
+  // these hit our server, which mirrors what the CLI installer does (fetch into the
+  // plugin cache + flip enabledPlugins in settings.json).
+  listPlugins: () =>
+    apiFetch<
+      {
+        ref: string;
+        name: string;
+        marketplace: string;
+        description: string;
+        category?: string;
+        installed: boolean;
+        enabled: boolean;
+        supported: boolean;
+        skills?: number;
+        commands?: number;
+      }[]
+    >('/plugins'),
+  installPlugin: (ref: string) =>
+    apiFetch<{ ref: string; installed: boolean; enabled: boolean }>('/plugins/install', {
+      method: 'POST',
+      body: JSON.stringify({ ref }),
+    }),
+  togglePlugin: (ref: string, enabled: boolean) =>
+    apiFetch<{ ref: string; enabled: boolean }>('/plugins/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ ref, enabled }),
+    }),
+
   // Upload a file into the agent's project (.pcd-attachments/) so a chat message
   // can reference it and Claude can Read it. Multipart, so it bypasses apiFetch's
   // JSON content-type (the browser must set the multipart boundary itself).

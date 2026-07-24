@@ -205,6 +205,12 @@ func main() {
 	api.HandleFunc("/agents/{id}/restart", handlers.RestartAgent(agentSvc, hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}/stop", handlers.StopAgent(agentSvc, nativeSvc, hub)).Methods("POST")
 
+	// Plugins — the deck's own install/enable path, since the CLI's `/plugin` is
+	// interactive-only and dies over the stream protocol we drive.
+	api.HandleFunc("/plugins", handlers.ListPlugins()).Methods("GET")
+	api.HandleFunc("/plugins/install", handlers.InstallPlugin()).Methods("POST")
+	api.HandleFunc("/plugins/toggle", handlers.TogglePlugin()).Methods("POST")
+
 	// Past-session history (Claude Code transcripts for the agent's project).
 	api.HandleFunc("/agents/{id}/sessions/new", handlers.NewSession(agentSvc, hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}/sessions", handlers.ListSessions(agentSvc)).Methods("GET")
