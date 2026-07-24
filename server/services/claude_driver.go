@@ -90,8 +90,18 @@ func (d *ClaudeDriver) buildArgs() []string {
 		// user's half survives a reconnect AND lands in the right order. The CLI's
 		// echo could arrive after the reply started, flipping the on-screen order,
 		// and would double-print alongside our own record.
-		"--mcp-config", d.mcpConfigJSON(),
-		"--permission-prompt-tool", "mcp__pcd__approve",
+	}
+	// The approve bridge is required in every mode EXCEPT bypassPermissions. In
+	// bypass ("전체 허용") the CLI allows every tool natively (verified: bypass alone
+	// runs Bash with no denials). Registering our approve tool ON TOP makes this CLI
+	// version (2.1.x) route to the prompt tool and then DENY the call — the flag and a
+	// prompt-tool are contradictory. So for bypass we omit the bridge entirely; for
+	// default/auto/acceptEdits/plan it MUST stay (without it a gated tool is denied).
+	if d.cfg.PermissionMode != "bypassPermissions" {
+		args = append(args,
+			"--mcp-config", d.mcpConfigJSON(),
+			"--permission-prompt-tool", "mcp__pcd__approve",
+		)
 	}
 	if d.cfg.Model != "" {
 		args = append(args, "--model", d.cfg.Model)
