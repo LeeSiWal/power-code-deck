@@ -1028,8 +1028,31 @@ function ApprovalCard({ req, onDecide }: {
   const [showReason, setShowReason] = useState(false);
   const summary = toolSummary(req.toolName, req.input);
 
+  // Desktop keyboard control: focus 허용/거부 when the prompt appears so ←/→ move
+  // between them and Enter decides — the same as the question buttons. A Bash-approval
+  // that pops up needs a decision, and typing it out with the mouse was the gap.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const isTouch = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  useEffect(() => {
+    if (isTouch) return;
+    const a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return; // don't grab focus mid-type
+    cardRef.current?.querySelector<HTMLElement>('[data-approve-focusable]:not([disabled])')?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const onKeyNav = (e: React.KeyboardEvent) => {
+    if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    const els = Array.from(cardRef.current?.querySelectorAll<HTMLElement>('[data-approve-focusable]:not([disabled])') ?? []);
+    if (!els.length) return;
+    e.preventDefault();
+    const cur = els.indexOf(document.activeElement as HTMLElement);
+    const delta = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1;
+    els[cur < 0 ? 0 : (cur + delta + els.length) % els.length].focus();
+  };
+
   return (
-    <div className="border-t border-amber-400/40 bg-amber-400/10 px-3 py-3 space-y-2">
+    <div ref={cardRef} onKeyDown={onKeyNav} className="border-t border-amber-400/40 bg-amber-400/10 px-3 py-3 space-y-2">
       <div className="text-xs text-deck-text">
         <span className="font-semibold">{req.toolName}</span> 실행을 요청했습니다
       </div>
@@ -1052,12 +1075,14 @@ function ApprovalCard({ req, onDecide }: {
       )}
       <div className="flex gap-2">
         <button
+          data-approve-focusable
           onClick={() => onDecide(req.id, 'allow')}
           className="flex-1 py-2.5 rounded-lg bg-green-500/20 text-green-400 text-sm font-medium"
         >
           허용
         </button>
         <button
+          data-approve-focusable
           onClick={() => {
             // A reason is worth asking for: Claude reads it and adapts, so "not
             // that path, use ./tmp" is a far more useful answer than a bare no.
