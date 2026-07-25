@@ -856,7 +856,9 @@ function AskRow({ item, onAnswer }: {
     // and focusable). We grab it even from the composer — a question is a decision the
     // user has to make, and the draft text stays in state regardless of focus.
     const id = requestAnimationFrame(() => {
-      boxRef.current?.querySelector<HTMLElement>('[data-ask-focusable]:not([disabled])')?.focus();
+      boxRef.current
+        ?.querySelector<HTMLElement>('[data-ask-focusable]:not([disabled])')
+        ?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(id);
     // Mount-only: focus the first option when the question appears.
@@ -872,7 +874,7 @@ function AskRow({ item, onAnswer }: {
     e.preventDefault();
     const cur = els.indexOf(document.activeElement as HTMLElement);
     const delta = e.key === 'ArrowDown' ? 1 : -1;
-    els[cur < 0 ? 0 : (cur + delta + els.length) % els.length].focus();
+    els[cur < 0 ? 0 : (cur + delta + els.length) % els.length].focus({ preventScroll: true });
   };
 
   const toggle = (qi: number, q: AskQuestion, label: string) => {
@@ -1042,7 +1044,9 @@ function ApprovalCard({ req, onDecide }: {
     // the draft text is kept in state regardless). rAF waits for paint so the button
     // is actually focusable when we call focus().
     const id = requestAnimationFrame(() => {
-      cardRef.current?.querySelector<HTMLElement>('[data-approve-focusable]:not([disabled])')?.focus();
+      cardRef.current
+        ?.querySelector<HTMLElement>('[data-approve-focusable]:not([disabled])')
+        ?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1055,7 +1059,7 @@ function ApprovalCard({ req, onDecide }: {
     e.preventDefault();
     const cur = els.indexOf(document.activeElement as HTMLElement);
     const delta = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1;
-    els[cur < 0 ? 0 : (cur + delta + els.length) % els.length].focus();
+    els[cur < 0 ? 0 : (cur + delta + els.length) % els.length].focus({ preventScroll: true });
   };
 
   return (
