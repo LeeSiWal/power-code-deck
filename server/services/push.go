@@ -23,6 +23,11 @@ type PushSubscription struct {
 		P256dh string `json:"p256dh"`
 		Auth   string `json:"auth"`
 	} `json:"keys"`
+	// DeviceID ties this subscription to the browser/device that registered it, so a
+	// notification can be sent to only the session's active device. Empty for legacy
+	// subscriptions registered before this existed — those will simply never match an
+	// active-device filter (no fallback, by design), so re-subscribing refreshes it.
+	DeviceID string `json:"deviceId"`
 }
 
 // PushMessage is the notification payload the service worker renders. Kept tiny on
@@ -68,9 +73,9 @@ func (s *PushService) Subscribe(sub PushSubscription) bool {
 		return false
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO push_subscriptions(endpoint, p256dh, auth) VALUES(?, ?, ?)
-		 ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth`,
-		sub.Endpoint, sub.Keys.P256dh, sub.Keys.Auth,
+		`INSERT INTO push_subscriptions(endpoint, p256dh, auth, device_id) VALUES(?, ?, ?, ?)
+		 ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth, device_id=excluded.device_id`,
+		sub.Endpoint, sub.Keys.P256dh, sub.Keys.Auth, sub.DeviceID,
 	)
 	if err != nil {
 		log.Printf("push: subscribe failed: %v", err)
@@ -85,10 +90,49 @@ func (s *PushService) Unsubscribe(endpoint string) {
 	_, _ = s.db.Exec("DELETE FROM push_subscriptions WHERE endpoint = ?", endpoint)
 }
 
+// SetActiveDevice records deviceID as the owner of agentID's session — the last
+// device to open or reclaim it. A blank deviceID is ignored (legacy client), leaving
+// any prior owner in place rather than clearing it.
+func (s *PushService) SetActiveDevice(agentID, deviceID string) {
+	if agentID == "" || deviceID == "" {
+		return
+	}
+	_, _ = s.db.Exec(
+		`INSERT INTO agent_active_device(agent_id, device_id, updated_at) VALUES(?, ?, datetime('now'))
+		 ON CONFLICT(agent_id) DO UPDATE SET device_id=excluded.device_id, updated_at=excluded.updated_at`,
+		agentID, deviceID,
+	)
+}
+
+// ActiveDevice returns the device that currently owns agentID's session, or "" if
+// none has been recorded.
+func (s *PushService) ActiveDevice(agentID string) string {
+	var dev string
+	_ = s.db.QueryRow("SELECT device_id FROM agent_active_device WHERE agent_id = ?", agentID).Scan(&dev)
+	return dev
+}
+
+// NotifyAgent sends msg to ONLY the device that currently owns agentID's session, so
+// notifications land on the one device you're actually using instead of every device
+// at once. If the agent has no recorded active device, or that device has no push
+// subscription, nothing is sent — by design there is no broadcast fallback.
+func (s *PushService) NotifyAgent(agentID string, msg PushMessage) {
+	dev := s.ActiveDevice(agentID)
+	if dev == "" {
+		log.Printf("push: skip %q tag=%s → no active device for agent %s", msg.Title, msg.Tag, agentID)
+		return
+	}
+	s.notify(msg, dev)
+}
+
 // Notify sends msg to every subscription, concurrently, and prunes any the push
 // service reports as gone (404/410). Fire-and-forget: callers are event handlers on
 // the hot path, so delivery must never block them.
-func (s *PushService) Notify(msg PushMessage) {
+func (s *PushService) Notify(msg PushMessage) { s.notify(msg, "") }
+
+// notify is the shared fan-out. When deviceID is non-empty, only subscriptions
+// registered by that device are targeted; empty means every subscription.
+func (s *PushService) notify(msg PushMessage, deviceID string) {
 	if !s.Enabled() {
 		return
 	}
@@ -97,7 +141,13 @@ func (s *PushService) Notify(msg PushMessage) {
 		return
 	}
 	type sub struct{ endpoint, p256dh, auth string }
-	rows, err := s.db.Query("SELECT endpoint, p256dh, auth FROM push_subscriptions")
+	query := "SELECT endpoint, p256dh, auth FROM push_subscriptions"
+	var args []any
+	if deviceID != "" {
+		query += " WHERE device_id = ?"
+		args = append(args, deviceID)
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return
 	}

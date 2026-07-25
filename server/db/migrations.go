@@ -113,6 +113,14 @@ CREATE TABLE IF NOT EXISTS app_config (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+-- The device that currently "owns" each agent's session: the last one to open or
+-- reclaim it. Drives both exclusive viewing (others go to standby) and push
+-- targeting (only this device's subscription is notified). One row per agent.
+CREATE TABLE IF NOT EXISTS agent_active_device (
+    agent_id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `
 
 func Migrate(db *sql.DB) error {
@@ -146,8 +154,11 @@ func Migrate(db *sql.DB) error {
 	// Handoff tokens table
 	db.Exec(handoffMigration)
 
-	// Web Push subscriptions + app_config KV
+	// Web Push subscriptions + app_config KV + active-device table
 	db.Exec(pushMigration)
+	// Tie each push subscription to the device that registered it, so a notification
+	// can be aimed at only the session's active device. Non-fatal if it already exists.
+	db.Exec("ALTER TABLE push_subscriptions ADD COLUMN device_id TEXT DEFAULT ''")
 
 	return nil
 }

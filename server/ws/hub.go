@@ -189,6 +189,9 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn:     conn,
 		send:     make(chan []byte, 256),
 		viewerID: newViewerID(),
+		// Persistent browser id — lets the server tie a WS connection AND a push
+		// subscription to the same device, so "active device" survives reconnects.
+		deviceID: r.URL.Query().Get("device"),
 	}
 	h.clients.Store(client, true)
 
@@ -337,7 +340,10 @@ func (h *Hub) pushNotify(agentID, reason, title, body string) {
 	if h.pushSvc == nil || !h.pushSvc.Enabled() {
 		return
 	}
-	h.pushSvc.Notify(services.PushMessage{
+	// Aim the push at ONLY the session's active device — the one you're using — so the
+	// same alert no longer lights up every device at once. No active device on record
+	// means no push (deliberately no broadcast fallback).
+	h.pushSvc.NotifyAgent(agentID, services.PushMessage{
 		Title: title,
 		Body:  body,
 		Tag:   reason + "-" + agentID,
@@ -440,6 +446,24 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		// Opening is what makes this client a watcher, so it must come before the
 		// history replay — otherwise events racing the reply would be lost.
 		c.watchingAgent = payload.AgentID
+		// This device now owns the session: it becomes the exclusive viewer and the
+		// sole push target. Evict other DEVICES watching this agent (a different tab on
+		// the same device may keep following) so the previous device drops to standby.
+		if c.deviceID != "" {
+			h.clients.Range(func(key, _ interface{}) bool {
+				other, ok := key.(*Client)
+				if !ok || other == c {
+					return true
+				}
+				if other.watchingAgent == payload.AgentID && other.deviceID != "" && other.deviceID != c.deviceID {
+					other.sendEvent(EventNativeEvicted, NativeEvictedPayload{AgentID: payload.AgentID})
+				}
+				return true
+			})
+		}
+		if h.pushSvc != nil {
+			h.pushSvc.SetActiveDevice(payload.AgentID, c.deviceID)
+		}
 		if !h.native.Running(payload.AgentID) {
 			if err := h.native.Start(payload.AgentID, payload.Driver, payload.Cwd, payload.Model, payload.Resume, payload.Mode); err != nil {
 				log.Printf("native: start %s failed: %v", payload.AgentID, err)
@@ -616,6 +640,12 @@ func (h *Hub) handleTerminalAttach(c *Client, payload TerminalAttachPayload) {
 		c.attachCount = make(map[string]int)
 	}
 	c.attachCount[payload.AgentID]++
+	// A full terminal view (claim=true) also makes this the device's active session, so
+	// push follows the device you're actually working on. Dashboard snapshot thumbnails
+	// attach WITHOUT claim, so previewing many agents never hijacks push ownership.
+	if payload.Claim && h.pushSvc != nil {
+		h.pushSvc.SetActiveDevice(payload.AgentID, c.deviceID)
+	}
 
 	res, err := h.engine.Attach(payload.AgentID, c.viewerID)
 	if err != nil {

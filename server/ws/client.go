@@ -21,6 +21,7 @@ type Client struct {
 	send          chan []byte
 	watchingAgent string
 	viewerID      string // stable id for this connection (SessionEngine viewer)
+	deviceID      string // persistent per-browser id (from the ?device= query param)
 
 	// attachCount counts, per agent, how many independent UI surfaces on THIS
 	// connection asked to watch it.

@@ -114,8 +114,27 @@ func (d *ClaudeDriver) buildArgs() []string {
 	if d.cfg.ResumeID != "" {
 		args = append(args, "--resume", d.cfg.ResumeID)
 	}
+	// AskUserQuestion cannot show an interactive prompt in headless stream-json mode:
+	// the CLI fails it immediately with an error ("Answer questions?") and, left to
+	// itself, Claude treats that as "no answer" and PROCEEDS on a guess within the same
+	// turn — so the deck's answer buttons, tapped a moment later, land on a question
+	// that's already closed and the pick appears to do nothing. This guidance tells
+	// Claude the error is expected and to STOP and wait, so the user's selection (sent
+	// as the next turn) is the authoritative answer. (Verified: without it, a real
+	// session ended the turn on a guess right after the failed ask.)
+	args = append(args, "--append-system-prompt", askUserQuestionGuidance)
 	return args
 }
+
+// askUserQuestionGuidance keeps AskUserQuestion usable in the deck. The tool stays
+// enabled (its questions/options drive the deck's answer buttons); this only changes
+// how Claude reacts to the tool's unavoidable error in headless mode.
+const askUserQuestionGuidance = "IMPORTANT — AskUserQuestion in this environment: calling the AskUserQuestion tool " +
+	"returns an error such as \"Answer questions?\" because this session cannot render an interactive prompt. " +
+	"This error is EXPECTED and does NOT mean the user declined or that anything failed. When you need a " +
+	"decision from the user, call AskUserQuestion once and then STOP and end your turn immediately — do not " +
+	"retry it, do not guess a default, and do not proceed with any further work. The user is shown your " +
+	"questions as buttons and will send their choice as their next message; wait for it."
 
 // mcpConfigJSON points the CLI at this very binary as an MCP server. --mcp-config
 // takes JSON files OR inline JSON strings, so there's no temp file to create,

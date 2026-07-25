@@ -279,7 +279,7 @@ export const api = {
 
   // Web Push — VAPID key + subscription lifecycle.
   pushVapidKey: () => apiFetch<{ enabled: boolean; publicKey: string }>('/push/vapid'),
-  pushSubscribe: (sub: PushSubscriptionJSON) =>
+  pushSubscribe: (sub: PushSubscriptionJSON & { deviceId?: string }) =>
     apiFetch('/push/subscribe', { method: 'POST', body: JSON.stringify(sub) }),
   pushUnsubscribe: (endpoint: string) =>
     apiFetch('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint }) }),

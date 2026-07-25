@@ -1,3 +1,5 @@
+import { getDeviceId } from './deviceId';
+
 type EventHandler = (payload: any) => void;
 
 class AgentDeckWS {
@@ -42,7 +44,11 @@ class AgentDeckWS {
     this.cleanup();
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    this.ws = new WebSocket(`${protocol}//${location.host}/ws?token=${token}`);
+    // device= identifies this browser so the server can make a session exclusive to
+    // one device and target push at it (see deviceId.ts).
+    this.ws = new WebSocket(
+      `${protocol}//${location.host}/ws?token=${token}&device=${encodeURIComponent(getDeviceId())}`,
+    );
 
     this.ws.onopen = () => {
       console.log('[WS] Connected');

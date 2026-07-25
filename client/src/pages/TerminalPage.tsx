@@ -18,6 +18,7 @@ import { BrowserPanel } from '../components/browser/BrowserPanel';
 import { useDevice } from '../hooks/useDevice';
 import { useFileExplorer } from '../hooks/useFileExplorer';
 import { useAgentActivity } from '../hooks/useAgentActivity';
+import { useGoBack } from '../hooks/useGoBack';
 import { IconBack, IconFiles, IconClose, IconTerminal, IconHistory, IconPhone, IconGlobe, IconExpand, IconRefresh, AGENT_ICON_MAP } from '../components/icons';
 import { api } from '../lib/api';
 import { writeClipboard, readClipboard } from '../lib/clipboard';
@@ -71,6 +72,7 @@ function readPanelWidth(side: 'left' | 'right', fallback: number): number {
 export function TerminalPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const goBack = useGoBack();
   const [searchParams, setSearchParams] = useSearchParams();
   const { isMobile, isTablet, isTouchDevice } = useDevice();
   const handoffEnabled = useAppStore((s) => s.authConfig?.handoffEnabled ?? true);
@@ -302,7 +304,7 @@ export function TerminalPage() {
       <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
         {/* Header */}
         <header className="flex items-center gap-2 px-3 py-2 bg-deck-surface border-b border-deck-border shrink-0">
-          <button onClick={() => navigate('/dashboard')} className="p-1.5 -ml-1 rounded active:bg-deck-border/30">
+          <button onClick={goBack} className="p-1.5 -ml-1 rounded active:bg-deck-border/30">
             <IconBack size={16} />
           </button>
           {AgentIcon && <AgentIcon size={18} />}
@@ -524,7 +526,7 @@ export function TerminalPage() {
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       {/* Header */}
       <header className="flex items-center gap-2 px-3 py-1.5 bg-deck-surface border-b border-deck-border shrink-0">
-        <button onClick={() => navigate('/dashboard')} className="p-1 rounded hover:bg-deck-border/30">
+        <button onClick={goBack} className="p-1 rounded hover:bg-deck-border/30">
           <IconBack size={14} />
         </button>
         {AgentIcon && <AgentIcon size={16} />}

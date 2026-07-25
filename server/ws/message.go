@@ -74,6 +74,10 @@ const (
 	EventNativeHistory  = "native:history"  // events so far, on open
 	EventNativeState    = "native:state"    // running/stopped + pending approvals
 	EventNativeError    = "native:error"    // something failed — say so, never swallow it
+	// Sent to a device whose native session was taken over by another device opening
+	// it. The evicted device drops to a standby screen with a "reclaim" button, so
+	// only one device is the active session at a time (and only it gets push).
+	EventNativeEvicted = "native:evicted"
 )
 
 // Server -> Client events (meta + notifications)
@@ -90,6 +94,11 @@ type TerminalAttachPayload struct {
 	AgentID string `json:"agentId"`
 	Cols    uint16 `json:"cols"`
 	Rows    uint16 `json:"rows"`
+	// Claim marks a real, full-screen terminal view (as opposed to a dashboard
+	// snapshot thumbnail, which also attaches). Only a claim takes over the session
+	// as this device's active one for push targeting — otherwise every thumbnail
+	// would hijack push ownership for the agents it previews.
+	Claim bool `json:"claim"`
 }
 
 type TerminalInputPayload struct {
@@ -126,6 +135,10 @@ type TerminalOutputPayload struct {
 }
 
 type TerminalEvictedPayload struct {
+	AgentID string `json:"agentId"`
+}
+
+type NativeEvictedPayload struct {
 	AgentID string `json:"agentId"`
 }
 

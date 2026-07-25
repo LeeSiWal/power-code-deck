@@ -63,3 +63,69 @@ func TestPushServicePersistence(t *testing.T) {
 		t.Fatalf("unsubscribe left %d rows", n)
 	}
 }
+
+// TestActiveDeviceAndSubscriptionDeviceID covers the device-targeted push wiring:
+// a subscription stores its device id, and the active-device record round-trips so
+// NotifyAgent can later select only that device's subscription.
+func TestActiveDeviceAndSubscriptionDeviceID(t *testing.T) {
+	dir := t.TempDir()
+	database, err := sql.Open("sqlite", dir+"/test.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+	if err := db.Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	ps := NewPushService(database, "mailto:test@localhost")
+
+	// A subscription remembers which device registered it.
+	var sub PushSubscription
+	sub.Endpoint = "https://push.example.com/desktop"
+	sub.Keys.P256dh = "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4"
+	sub.Keys.Auth = "BTBZMqHH6r4Tts7J_aSIgg"
+	sub.DeviceID = "device-desktop"
+	if !ps.Subscribe(sub) {
+		t.Fatal("subscribe rejected a valid subscription")
+	}
+	var stored string
+	if err := database.QueryRow("SELECT device_id FROM push_subscriptions WHERE endpoint = ?", sub.Endpoint).Scan(&stored); err != nil {
+		t.Fatalf("read device_id: %v", err)
+	}
+	if stored != "device-desktop" {
+		t.Fatalf("device_id not stored: got %q", stored)
+	}
+
+	// No active device yet → ActiveDevice is empty (NotifyAgent would send nothing).
+	if got := ps.ActiveDevice("agent-1"); got != "" {
+		t.Fatalf("expected no active device, got %q", got)
+	}
+
+	// Claiming, then re-claiming from another device, moves ownership (last wins).
+	ps.SetActiveDevice("agent-1", "device-desktop")
+	if got := ps.ActiveDevice("agent-1"); got != "device-desktop" {
+		t.Fatalf("active device = %q, want device-desktop", got)
+	}
+	ps.SetActiveDevice("agent-1", "device-phone")
+	if got := ps.ActiveDevice("agent-1"); got != "device-phone" {
+		t.Fatalf("active device after handoff = %q, want device-phone", got)
+	}
+
+	// A blank device id is ignored — it must not wipe the current owner.
+	ps.SetActiveDevice("agent-1", "")
+	if got := ps.ActiveDevice("agent-1"); got != "device-phone" {
+		t.Fatalf("blank SetActiveDevice clobbered owner: got %q", got)
+	}
+
+	// The device-filtered query underlying NotifyAgent selects only matching subs.
+	var n int
+	_ = database.QueryRow("SELECT COUNT(*) FROM push_subscriptions WHERE device_id = ?", "device-desktop").Scan(&n)
+	if n != 1 {
+		t.Fatalf("filter by device-desktop = %d rows, want 1", n)
+	}
+	_ = database.QueryRow("SELECT COUNT(*) FROM push_subscriptions WHERE device_id = ?", "device-phone").Scan(&n)
+	if n != 0 {
+		t.Fatalf("filter by device-phone = %d rows, want 0 (no sub registered)", n)
+	}
+}

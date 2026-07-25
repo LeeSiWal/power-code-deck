@@ -263,7 +263,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     wtRef.current?.setRenderPaused(false);
     wtRef.current?.reset();
     dataSinceAttachRef.current = false;
-    agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current });
+    agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current, claim: true });
     attachedRef.current = true;
     // Once the replay has landed and been parsed, force a clean full repaint to
     // sweep any stale attributes ghostty accumulated from the replayed history.
@@ -303,7 +303,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       t?.setRenderPaused(false);
       t?.reset();
       dataSinceAttachRef.current = false;
-      agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current });
+      agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current, claim: true });
       requestFullRepaint();
     }, 1200);
     startHealWatchdog();

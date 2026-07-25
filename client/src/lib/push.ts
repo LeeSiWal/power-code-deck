@@ -9,6 +9,7 @@
  */
 
 import { api } from './api';
+import { getDeviceId } from './deviceId';
 
 export type PushState = 'unsupported' | 'needs-install' | 'denied' | 'on' | 'off';
 
@@ -79,7 +80,9 @@ export async function enablePush(): Promise<void> {
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(publicKey),
     }));
-  await api.pushSubscribe(sub.toJSON() as PushSubscriptionJSON);
+  // Include the device id so the server can target push at only this device when it
+  // owns the session (see deviceId.ts).
+  await api.pushSubscribe({ ...(sub.toJSON() as PushSubscriptionJSON), deviceId: getDeviceId() });
 }
 
 export async function disablePush(): Promise<void> {

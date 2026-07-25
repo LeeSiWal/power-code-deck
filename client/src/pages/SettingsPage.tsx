@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { SoundSettings } from '../components/settings/SoundSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
@@ -6,24 +5,27 @@ import { UiScaleSettings } from '../components/settings/UiScaleSettings';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack } from '../components/icons';
 import { useAppStore } from '../stores/appStore';
+import { useGoBack } from '../hooks/useGoBack';
 import { APP_VERSION } from '../version';
 
 export function SettingsPage() {
   const { logout } = useAuth();
   const { authConfig } = useAppStore();
+  const goBack = useGoBack();
 
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       <header className="flex items-center gap-2 px-4 py-2 bg-deck-surface border-b border-deck-border">
-        {/* Back to the dashboard — desktop/iPad have no BottomNav, so without this
-            they'd be stranded here (PWA has no browser back). */}
-        <Link
-          to="/dashboard"
+        {/* Back to the previous page — desktop/iPad have no BottomNav, so without this
+            they'd be stranded here (PWA has no browser back). Falls back to the
+            dashboard when there's no history to pop. */}
+        <button
+          onClick={goBack}
           className="hidden md:inline-flex p-1 -ml-1 rounded hover:bg-deck-border/30 text-deck-text-dim"
-          title="대시보드로"
+          title="뒤로"
         >
           <IconBack size={15} />
-        </Link>
+        </button>
         <span className="text-sm font-medium">Settings</span>
       </header>
 

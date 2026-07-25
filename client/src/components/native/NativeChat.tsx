@@ -4,7 +4,7 @@ import { agentDeckWS } from '../../lib/ws';
 import { api } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 import {
-  IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconHand, IconPaperclip,
+  IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconDevices, IconHand, IconPaperclip,
   IconPlanMap, IconPlus, IconSpinner, IconUpload, IconWarning, type IconProps,
 } from '../icons';
 import { writeClipboard } from '../../lib/clipboard';
@@ -85,6 +85,13 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   // flips the instant you hit send, so the composer shows motion immediately instead
   // of a dead pause. Cleared when the real turn takes over or ends (see effect).
   const [justSent, setJustSent] = useState(false);
+  // Evicted = another device took over this session. We drop to a standby screen and
+  // stop auto-reopening (even across reconnects) until the user taps 연결하기, so the
+  // two devices don't fight over who owns the session. The ref mirrors the state so
+  // the reconnect handler can read it synchronously.
+  const [evicted, setEvicted] = useState(false);
+  const evictedRef = useRef(false);
+  useEffect(() => { evictedRef.current = evicted; }, [evicted]);
   const sentTimer = useRef<number | null>(null);
   const [modelId, setModelId] = useState(() => localStorage.getItem(`pcd:model:${agentId}`) || '');
   const [modeId, setModeId] = useState(() => localStorage.getItem(`pcd:mode:${agentId}`) || '');
@@ -290,13 +297,30 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       if (p.agentId !== agentId) return;
       setError(p.message ?? '알 수 없는 오류');
     });
+    // Another device opened this session — go to standby. We keep receiving events in
+    // the background but the overlay hides them; a reclaim reloads authoritative
+    // history anyway.
+    const offEvicted = agentDeckWS.on('native:evicted', (p: any) => {
+      if (p.agentId !== agentId) return;
+      setEvicted(true);
+    });
 
     const open = () => agentDeckWS.send('native:open', { agentId, driver, cwd, model: modelIdRef.current, mode: modeIdRef.current });
     open();
-    const offOpen = agentDeckWS.on('open', open); // re-open after a reconnect
+    // Re-open after a reconnect — but NOT while evicted, or a background socket blip
+    // would silently steal the session back from the device you moved to.
+    const offOpen = agentDeckWS.on('open', () => { if (!evictedRef.current) open(); });
 
-    return () => { offEvent(); offHistory(); offApproval(); offState(); offError(); offOpen(); };
+    return () => { offEvent(); offHistory(); offApproval(); offState(); offError(); offEvicted(); offOpen(); };
   }, [agentId, cwd, model, driver]);
+
+  // Reclaim the session on this device: re-open (which evicts whoever took it) and
+  // leave standby.
+  const reclaim = useCallback(() => {
+    setEvicted(false);
+    evictedRef.current = false;
+    agentDeckWS.send('native:open', { agentId, driver, cwd, model: modelIdRef.current, mode: modeIdRef.current });
+  }, [agentId, cwd, driver]);
 
   // Stick to the bottom unless the user scrolled up to read something.
   useEffect(() => {
@@ -387,7 +411,21 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   }, [agentId]);
 
   return (
-    <div className="flex flex-col h-full bg-deck-bg">
+    <div className="relative flex flex-col h-full bg-deck-bg">
+      {evicted && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 px-6 text-center bg-deck-bg/95">
+          <IconDevices size={30} className="text-deck-text-dim" />
+          <div className="text-sm text-deck-text-dim max-w-xs">
+            다른 기기에서 이 세션을 열었습니다.<br />한 번에 한 기기에서만 사용할 수 있어요.
+          </div>
+          <button
+            onClick={reclaim}
+            className="px-4 py-2 rounded-lg text-sm font-semibold shadow-lg touch-manipulation active:opacity-70 bg-deck-accent text-white"
+          >
+            이 기기에서 연결하기
+          </button>
+        </div>
+      )}
       <div ref={scrollRef} onScroll={onScroll} className="selectable flex-1 overflow-y-auto px-3 py-3 space-y-2">
         {items.map((item) => (
           <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} />
@@ -806,6 +844,34 @@ function AskRow({ item, onAnswer }: {
   const [custom, setCustom] = useState<Record<number, string>>({});
   const [sent, setSent] = useState('');
 
+  // Desktop keyboard control: ↑/↓ move focus between options (and the send button),
+  // Enter activates the focused one — so a whole question can be answered without the
+  // mouse. Skipped on touch, where auto-focusing would pop the on-screen keyboard.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const isTouch = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+
+  useEffect(() => {
+    if (isTouch || sent) return;
+    // Don't yank focus away if the user is mid-type in the composer or a field.
+    const a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+    boxRef.current?.querySelector<HTMLElement>('[data-ask-focusable]:not([disabled])')?.focus();
+    // Mount-only: focus the first option when the question appears.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onKeyNav = (e: React.KeyboardEvent) => {
+    // Inside the free-text field, arrows move the caret — leave them alone.
+    if (e.target instanceof HTMLInputElement) return;
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const els = Array.from(boxRef.current?.querySelectorAll<HTMLElement>('[data-ask-focusable]:not([disabled])') ?? []);
+    if (!els.length) return;
+    e.preventDefault();
+    const cur = els.indexOf(document.activeElement as HTMLElement);
+    const delta = e.key === 'ArrowDown' ? 1 : -1;
+    els[cur < 0 ? 0 : (cur + delta + els.length) % els.length].focus();
+  };
+
   const toggle = (qi: number, q: AskQuestion, label: string) => {
     setPicked((p) => {
       const cur = p[qi] ?? [];
@@ -851,7 +917,7 @@ function AskRow({ item, onAnswer }: {
   };
 
   return (
-    <div className="space-y-2">
+    <div ref={boxRef} onKeyDown={onKeyNav} className="space-y-2">
       {item.questions.map((q, qi) => (
         <div key={qi} className="border border-deck-accent/40 bg-deck-accent/5 rounded-lg p-3 space-y-2">
           {q.header && <div className="text-[10px] uppercase tracking-wide text-deck-accent">{q.header}</div>}
@@ -862,6 +928,7 @@ function AskRow({ item, onAnswer }: {
               return (
                 <button
                   key={o.label}
+                  data-ask-focusable
                   onClick={() => { if (!sent) toggle(qi, q, o.label); }}
                   disabled={!!sent}
                   className={`w-full text-left px-3 py-2 rounded-lg border text-xs disabled:opacity-60 ${
@@ -905,6 +972,7 @@ function AskRow({ item, onAnswer }: {
         <div className="text-[11px] text-deck-muted px-1">보냄: {sent}</div>
       ) : (
         <button
+          data-ask-focusable
           onClick={submit}
           disabled={!complete}
           className="w-full py-2 rounded-lg bg-deck-accent text-white text-xs font-medium disabled:opacity-40"
