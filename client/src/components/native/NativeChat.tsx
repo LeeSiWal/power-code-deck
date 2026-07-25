@@ -852,10 +852,13 @@ function AskRow({ item, onAnswer }: {
 
   useEffect(() => {
     if (isTouch || sent) return;
-    // Don't yank focus away if the user is mid-type in the composer or a field.
-    const a = document.activeElement;
-    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
-    boxRef.current?.querySelector<HTMLElement>('[data-ask-focusable]:not([disabled])')?.focus();
+    // Take focus to the first option when the question appears (rAF so it's painted
+    // and focusable). We grab it even from the composer — a question is a decision the
+    // user has to make, and the draft text stays in state regardless of focus.
+    const id = requestAnimationFrame(() => {
+      boxRef.current?.querySelector<HTMLElement>('[data-ask-focusable]:not([disabled])')?.focus();
+    });
+    return () => cancelAnimationFrame(id);
     // Mount-only: focus the first option when the question appears.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -931,7 +934,7 @@ function AskRow({ item, onAnswer }: {
                   data-ask-focusable
                   onClick={() => { if (!sent) toggle(qi, q, o.label); }}
                   disabled={!!sent}
-                  className={`w-full text-left px-3 py-2 rounded-lg border text-xs disabled:opacity-60 ${
+                  className={`w-full text-left px-3 py-2 rounded-lg border text-xs disabled:opacity-60 outline-none focus:ring-2 focus:ring-deck-accent-light ${
                     on ? 'border-deck-accent bg-deck-accent/20 text-deck-text' : 'border-deck-border text-deck-text'
                   }`}
                 >
@@ -975,7 +978,7 @@ function AskRow({ item, onAnswer }: {
           data-ask-focusable
           onClick={submit}
           disabled={!complete}
-          className="w-full py-2 rounded-lg bg-deck-accent text-white text-xs font-medium disabled:opacity-40"
+          className="w-full py-2 rounded-lg bg-deck-accent text-white text-xs font-medium disabled:opacity-40 outline-none focus:ring-2 focus:ring-white/70"
         >
           {complete ? '선택 보내기' : '항목을 선택하세요'}
         </button>
@@ -1035,9 +1038,13 @@ function ApprovalCard({ req, onDecide }: {
   const isTouch = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   useEffect(() => {
     if (isTouch) return;
-    const a = document.activeElement;
-    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return; // don't grab focus mid-type
-    cardRef.current?.querySelector<HTMLElement>('[data-approve-focusable]:not([disabled])')?.focus();
+    // A blocked agent needs a decision, so we DO take focus (even from the composer —
+    // the draft text is kept in state regardless). rAF waits for paint so the button
+    // is actually focusable when we call focus().
+    const id = requestAnimationFrame(() => {
+      cardRef.current?.querySelector<HTMLElement>('[data-approve-focusable]:not([disabled])')?.focus();
+    });
+    return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const onKeyNav = (e: React.KeyboardEvent) => {
@@ -1077,7 +1084,7 @@ function ApprovalCard({ req, onDecide }: {
         <button
           data-approve-focusable
           onClick={() => onDecide(req.id, 'allow')}
-          className="flex-1 py-2.5 rounded-lg bg-green-500/20 text-green-400 text-sm font-medium"
+          className="flex-1 py-2.5 rounded-lg bg-green-500/20 text-green-400 text-sm font-medium outline-none focus:ring-2 focus:ring-green-300 focus:bg-green-500/35"
         >
           허용
         </button>
@@ -1089,7 +1096,7 @@ function ApprovalCard({ req, onDecide }: {
             if (!showReason) { setShowReason(true); return; }
             onDecide(req.id, 'deny', reason.trim() || undefined);
           }}
-          className="flex-1 py-2.5 rounded-lg bg-red-500/20 text-red-400 text-sm font-medium"
+          className="flex-1 py-2.5 rounded-lg bg-red-500/20 text-red-400 text-sm font-medium outline-none focus:ring-2 focus:ring-red-300 focus:bg-red-500/35"
         >
           {showReason ? '거부하기' : '거부'}
         </button>
