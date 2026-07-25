@@ -482,6 +482,11 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
 			return
 		}
+		// The device sending a message IS the one in use right now — make it the active
+		// device so push follows real-time usage, not just whoever opened last.
+		if h.pushSvc != nil {
+			h.pushSvc.SetActiveDevice(payload.AgentID, c.deviceID)
+		}
 		if err := h.native.Send(payload.AgentID, payload.Text); err != nil {
 			// Never swallow this: the user typed something and it went nowhere.
 			// Silence here is exactly the failure that makes an agent UI untrustworthy.

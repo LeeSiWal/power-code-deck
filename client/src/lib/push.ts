@@ -85,6 +85,23 @@ export async function enablePush(): Promise<void> {
   await api.pushSubscribe({ ...(sub.toJSON() as PushSubscriptionJSON), deviceId: getDeviceId() });
 }
 
+// Re-register an already-granted subscription so the server has its device id. Runs
+// silently on every app load: subscriptions created before device-targeted push
+// existed carry no device id, so no notification could be aimed at them — this heals
+// them without the user re-toggling. Idempotent and best-effort; a no-op when push
+// isn't set up or permitted.
+export async function healPush(): Promise<void> {
+  try {
+    if (!pushSupported() || Notification.permission !== 'granted') return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if (!sub) return;
+    await api.pushSubscribe({ ...(sub.toJSON() as PushSubscriptionJSON), deviceId: getDeviceId() });
+  } catch {
+    /* best-effort — worst case the user re-toggles notifications to fix it */
+  }
+}
+
 export async function disablePush(): Promise<void> {
   const reg = await navigator.serviceWorker.getRegistration();
   const sub = reg ? await reg.pushManager.getSubscription() : null;
