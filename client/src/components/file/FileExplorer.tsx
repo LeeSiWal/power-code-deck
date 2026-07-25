@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import {
   IconFile, IconFolder, IconFolderOpen, IconRefresh, IconNewFolder,
   IconPlay, IconTrash, IconChevronRight, IconChevronDown, IconSearch,
@@ -50,6 +50,21 @@ function getFileIcon(name: string, size = 23) {
   return <IconFile size={size} />;
 }
 
+// Expand/collapse persistence — a JSON array of expanded folder paths per project.
+function loadExpanded(key: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) return new Set<string>(JSON.parse(raw));
+  } catch { /* corrupt entry → start empty */ }
+  return new Set<string>();
+}
+
+function saveExpanded(key: string, set: Set<string>): void {
+  try {
+    localStorage.setItem(key, JSON.stringify([...set]));
+  } catch { /* storage full / disabled → keep in-memory only */ }
+}
+
 interface FileExplorerProps {
   tree: FileNode | null;
   changedFiles: Set<string>;
@@ -71,6 +86,51 @@ export function FileExplorer({ tree, changedFiles, onSelect, onRefresh, onMkdir,
     () => tree ? buildMatchSet(tree, searchLower) : new Set<string>(),
     [tree, searchLower],
   );
+
+  // Persisted folder expand/collapse state, per project. Folders whose path is in the
+  // set are expanded; the toggle is remembered across reloads and navigation, so the
+  // tree opens back up exactly where you left it. Keyed by workingDir so each project
+  // keeps its own layout.
+  const storageKey = `pcd:filetree:${workingDir || 'default'}`;
+  const [expandedSet, setExpandedSet] = useState<Set<string>>(() => loadExpanded(storageKey));
+  const seededRef = useRef(false);
+
+  // Reload when the project changes (storageKey change); the useState initializer
+  // only runs on first mount.
+  useEffect(() => {
+    setExpandedSet(loadExpanded(storageKey));
+    seededRef.current = localStorage.getItem(storageKey) != null;
+  }, [storageKey]);
+
+  // First-time seed: with nothing saved yet, expand the top-level folders (matching
+  // the prior default) once the tree arrives, then persist so later toggles stick.
+  useEffect(() => {
+    if (seededRef.current || !tree?.children) return;
+    const seed = new Set<string>();
+    for (const c of tree.children) if (c.isDir) seed.add(c.path);
+    seededRef.current = true;
+    setExpandedSet(seed);
+    saveExpanded(storageKey, seed);
+  }, [tree, storageKey]);
+
+  const toggleExpanded = useCallback((path: string) => {
+    setExpandedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      saveExpanded(storageKey, next);
+      return next;
+    });
+  }, [storageKey]);
+
+  const expandPath = useCallback((path: string) => {
+    setExpandedSet((prev) => {
+      if (prev.has(path)) return prev;
+      const next = new Set(prev).add(path);
+      saveExpanded(storageKey, next);
+      return next;
+    });
+  }, [storageKey]);
 
   const handleCreateFolder = () => {
     if (newFolderParent && newFolderName.trim() && onMkdir) {
@@ -146,6 +206,9 @@ export function FileExplorer({ tree, changedFiles, onSelect, onRefresh, onMkdir,
               onNewFolderNameChange={setNewFolderName}
               onNewFolderSubmit={handleCreateFolder}
               onNewFolderCancel={() => setNewFolderParent(null)}
+              expandedSet={expandedSet}
+              onToggleExpand={toggleExpanded}
+              onExpand={expandPath}
             />
           ))
         ) : (
@@ -159,6 +222,7 @@ export function FileExplorer({ tree, changedFiles, onSelect, onRefresh, onMkdir,
 function TreeNode({
   node, depth, search, searchMatchSet, changedFiles, onSelect, onDelete, onNewFile, onRename, onNewFolder,
   newFolderParent, newFolderName, onNewFolderNameChange, onNewFolderSubmit, onNewFolderCancel,
+  expandedSet, onToggleExpand, onExpand,
 }: {
   node: FileNode; depth: number; search: string; searchMatchSet: Set<string>;
   changedFiles: Set<string>; onSelect: (path: string) => void;
@@ -169,8 +233,13 @@ function TreeNode({
   newFolderParent: string | null; newFolderName: string;
   onNewFolderNameChange: (v: string) => void;
   onNewFolderSubmit: () => void; onNewFolderCancel: () => void;
+  expandedSet: Set<string>;
+  onToggleExpand: (path: string) => void;
+  onExpand: (path: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(depth < 1);
+  // While searching, force-open matching folders so results are visible regardless of
+  // the persisted collapsed state.
+  const expanded = expandedSet.has(node.path) || (!!search && searchMatchSet.has(node.path));
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -184,7 +253,7 @@ function TreeNode({
       <button
         onClick={() => {
           setContextMenu(null);
-          if (isDir) setExpanded(!expanded);
+          if (isDir) onToggleExpand(node.path);
           else onSelect(node.path);
         }}
         onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); }}
@@ -218,7 +287,7 @@ function TreeNode({
             {isDir && onNewFile && (
               <button
                 onClick={() => {
-                  setContextMenu(null); setExpanded(true);
+                  setContextMenu(null); onExpand(node.path);
                   const name = window.prompt('새 파일 이름 (New file name)');
                   if (name && name.trim()) onNewFile(`${node.path}/${name.trim()}`);
                 }}
@@ -229,7 +298,7 @@ function TreeNode({
             )}
             {isDir && onNewFolder && (
               <button
-                onClick={() => { setContextMenu(null); setExpanded(true); onNewFolder(node.path); }}
+                onClick={() => { setContextMenu(null); onExpand(node.path); onNewFolder(node.path); }}
                 className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-deck-border/30 text-deck-text"
               >
                 <IconNewFolder size={12} /> New Folder
@@ -290,6 +359,7 @@ function TreeNode({
               newFolderParent={newFolderParent} newFolderName={newFolderName}
               onNewFolderNameChange={onNewFolderNameChange} onNewFolderSubmit={onNewFolderSubmit}
               onNewFolderCancel={onNewFolderCancel}
+              expandedSet={expandedSet} onToggleExpand={onToggleExpand} onExpand={onExpand}
             />
           ))}
         </div>
