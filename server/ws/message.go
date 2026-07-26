@@ -13,6 +13,11 @@ type WSMessage struct {
 
 // Client -> Server events
 const (
+	// EventClientVisibility lets a browser tell us whether it is FOREGROUNDED. The
+	// socket staying alive is not the same thing — a locked phone keeps it open for a
+	// while — so this must be reported explicitly or push suppression would kill the
+	// notification exactly when it is needed.
+	EventClientVisibility    = "client:visibility"
 	EventTerminalAttach      = "terminal:attach"
 	EventTerminalDetach      = "terminal:detach"
 	EventTerminalInput       = "terminal:input"
@@ -97,6 +102,10 @@ const (
 	EventAgentMetaProgress      = "agent:meta:progress"
 	EventAgentMetaLog           = "agent:meta:log"
 )
+
+type ClientVisibilityPayload struct {
+	Visible bool `json:"visible"`
+}
 
 type TerminalAttachPayload struct {
 	AgentID string `json:"agentId"`
