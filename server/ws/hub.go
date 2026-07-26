@@ -68,6 +68,9 @@ type Hub struct {
 
 	statusMu   sync.Mutex
 	lastStatus map[string]string // last agent:status we broadcast, for change detection
+
+	metaMu       sync.Mutex
+	lastMetaPoll time.Time
 }
 
 func NewHub(engine services.SessionEngine, watcherSvc *services.WatcherService, agentSvc *services.AgentService, gitSvc *services.GitService, portScanner *services.PortScanner, notifSvc *services.NotificationService, allowedOrigins []string) *Hub {
@@ -156,6 +159,10 @@ func (h *Hub) pollStatus() {
 }
 
 func (h *Hub) pollMeta() {
+	h.metaMu.Lock()
+	h.lastMetaPoll = time.Now()
+	h.metaMu.Unlock()
+
 	agents, err := h.agentSvc.List()
 	if err != nil {
 		return
@@ -177,6 +184,24 @@ func (h *Hub) pollMeta() {
 	}
 }
 
+// pollMetaSoon은 새 클라이언트가 붙었을 때 메타를 즉시 한 번 밀어준다.
+//
+// agent:meta의 유일한 발신 경로가 10초 티커라, 이게 없으면 새로 연 화면은 git 브랜치와
+// 포트가 최대 10초간 빈 채로 렌더된다. 대시보드에서는 다른 정보가 먼저 채워져 가려져
+// 있었지만, 통합 관제실은 타일에 메타를 직접 얹기 때문에 공백이 그대로 보인다.
+//
+// 여러 기기가 동시에 붙을 때 git·포트 스캔이 반복되지 않도록 3초 디바운스를 건다.
+// 건너뛰어도 정규 티커가 곧 처리하므로 공백은 최대 3초로 제한된다.
+func (h *Hub) pollMetaSoon() {
+	h.metaMu.Lock()
+	recent := time.Since(h.lastMetaPoll) < 3*time.Second
+	h.metaMu.Unlock()
+	if recent {
+		return
+	}
+	h.pollMeta()
+}
+
 func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -194,6 +219,9 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		deviceID: r.URL.Query().Get("device"),
 	}
 	h.clients.Store(client, true)
+
+	// 새 화면이 붙었다 — 10초 티커를 기다리지 말고 메타를 지금 밀어준다.
+	go h.pollMetaSoon()
 
 	go client.writePump()
 	go client.readPump()
