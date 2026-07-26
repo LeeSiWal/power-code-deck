@@ -8,6 +8,7 @@ import {
   IconPlanMap, IconPlus, IconSpinner, IconUpload, IconWarning, type IconProps,
 } from '../icons';
 import { writeClipboard } from '../../lib/clipboard';
+import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
 
 /**
@@ -825,6 +826,15 @@ function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) 
     return <AssistantText text={item.text} />;
   }
 
+  // TodoWrite arrives as an ordinary tool call, but a raw JSON dump of a 16-item
+  // checklist is unreadable in a conversation. Render it as a checklist instead —
+  // falling back to the generic row if the input isn't the shape we expect, so a
+  // CLI schema change degrades to "plain tool card" rather than a blank.
+  if (item.kind === 'tool' && item.name === 'TodoWrite') {
+    const todos = todosFromInput(item.input);
+    if (todos) return <TodoToolRow todos={todos} />;
+  }
+
   if (item.kind === 'tool') return <ToolRow item={item} />;
 
   if (item.kind === 'ask') return <AskRow item={item} onAnswer={onAnswer} />;
@@ -1006,6 +1016,62 @@ function AskRow({ item, onAnswer }: {
         >
           {complete ? '선택 보내기' : '항목을 선택하세요'}
         </button>
+      )}
+    </div>
+  );
+}
+
+// todosFromInput narrows a TodoWrite tool input to the checklist, or null when it
+// isn't that shape. Every TodoWrite call carries the WHOLE list (verified against
+// real transcripts: a 7-item list came back as 16 with earlier entries rewritten),
+// so there is nothing to merge — the call's input IS the state at that moment.
+function todosFromInput(input: Record<string, unknown>): ActivityTodo[] | null {
+  const raw = (input as { todos?: unknown }).todos;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const todos = raw.filter(
+    (t): t is ActivityTodo =>
+      !!t && typeof t === 'object' && typeof (t as ActivityTodo).content === 'string',
+  );
+  return todos.length ? todos : null;
+}
+
+// The chat card is the HISTORY of the plan ("here is where it was rewritten"); the
+// TodoStrip above the composer is the CURRENT state. Collapsed by default because a
+// re-plan happens often and expanding every one would bury the conversation.
+// Glyphs match TodoStrip so the same list reads the same in both places.
+function TodoToolRow({ todos }: { todos: ActivityTodo[] }) {
+  const [open, setOpen] = useState(false);
+  const completed = todos.filter((t) => t.status === 'completed').length;
+  const active = todos.find((t) => t.status === 'in_progress');
+
+  return (
+    <div className="border border-deck-border rounded-lg overflow-hidden">
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-left">
+        <span className="text-xs font-medium text-deck-accent shrink-0">☑ {completed}/{todos.length}</span>
+        <span className="text-xs text-deck-muted truncate flex-1">
+          {active ? `▸ ${active.activeForm || active.content}` : '할일 갱신'}
+        </span>
+        <span className="text-[10px] text-deck-text-faint shrink-0">{open ? '∨' : '∧'}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-2 space-y-1">
+          {todos.map((todo, i) => (
+            <div key={`${i}-${todo.content}`} className="flex gap-2 text-xs">
+              <span className={
+                todo.status === 'completed'
+                  ? 'text-emerald-400'
+                  : todo.status === 'in_progress'
+                    ? 'text-deck-accent'
+                    : 'text-deck-text-faint'
+              }>
+                {todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '▸' : '○'}
+              </span>
+              <span className={todo.status === 'completed' ? 'text-deck-text-faint line-through' : 'text-deck-text-dim'}>
+                {todo.status === 'in_progress' ? todo.activeForm || todo.content : todo.content}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
