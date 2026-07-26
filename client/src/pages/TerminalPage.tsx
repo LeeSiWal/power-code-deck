@@ -18,8 +18,8 @@ import { BrowserPanel } from '../components/browser/BrowserPanel';
 import { useDevice } from '../hooks/useDevice';
 import { useFileExplorer } from '../hooks/useFileExplorer';
 import { useAgentActivity } from '../hooks/useAgentActivity';
-import { useGoBack } from '../hooks/useGoBack';
-import { IconBack, IconFiles, IconClose, IconTerminal, IconHistory, IconPhone, IconGlobe, IconExpand, IconRefresh, IconDevices, AGENT_ICON_MAP } from '../components/icons';
+import { useGoUp } from '../hooks/useGoUp';
+import { IconBack, IconFiles, IconClose, IconTerminal, IconHistory, IconPhone, IconGlobe, IconExpand, IconRefresh, AGENT_ICON_MAP } from '../components/icons';
 import { api } from '../lib/api';
 import { writeClipboard, readClipboard } from '../lib/clipboard';
 import { generatePalette } from '../lib/paletteGenerator';
@@ -72,7 +72,7 @@ function readPanelWidth(side: 'left' | 'right', fallback: number): number {
 export function TerminalPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const goBack = useGoBack();
+  const goUp = useGoUp('/control');
   const [searchParams, setSearchParams] = useSearchParams();
   const { isMobile, isTablet, isTouchDevice } = useDevice();
   const handoffEnabled = useAppStore((s) => s.authConfig?.handoffEnabled ?? true);
@@ -195,7 +195,7 @@ export function TerminalPage() {
           // / refresh (see ProjectSelectPage).
           try { localStorage.setItem('pcd:lastAgentId', agentId); } catch { /* ignore */ }
         })
-        .catch(() => navigate('/dashboard'));
+        .catch(() => navigate('/control'));
     }
   }, [agentId, navigate]);
 
@@ -304,20 +304,12 @@ export function TerminalPage() {
       <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
         {/* Header */}
         <header className="flex items-center gap-2 px-3 py-2 bg-deck-surface border-b border-deck-border shrink-0">
-          <button onClick={goBack} className="p-1.5 -ml-1 rounded active:bg-deck-border/30">
+          <button onClick={goUp} className="p-1.5 -ml-1 rounded active:bg-deck-border/30">
             <IconBack size={16} />
           </button>
           {AgentIcon && <AgentIcon size={18} />}
           <span className="font-medium text-sm truncate flex-1">{agent.name}</span>
           <StatusBadge status={agent.status} />
-          <button
-            onClick={() => navigate('/control')}
-            className="p-1.5 rounded active:bg-deck-border/30 text-deck-text-dim"
-            title="컨트롤룸으로 이동"
-            aria-label="컨트롤룸으로 이동"
-          >
-            <IconDevices size={16} />
-          </button>
           {/* Full reload — iOS standalone PWA has no browser refresh, so a wedged
               session would otherwise be unrecoverable without deleting the app. */}
           <button
@@ -534,21 +526,13 @@ export function TerminalPage() {
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       {/* Header */}
       <header className="flex items-center gap-2 px-3 py-1.5 bg-deck-surface border-b border-deck-border shrink-0">
-        <button onClick={goBack} className="p-1 rounded hover:bg-deck-border/30">
+        <button onClick={goUp} className="p-1 rounded hover:bg-deck-border/30">
           <IconBack size={14} />
         </button>
         {AgentIcon && <AgentIcon size={16} />}
         <span className="font-medium text-sm truncate">{agent.name}</span>
         <StatusBadge status={agent.status} />
         <span className="text-xs ml-auto truncate text-deck-text-dim">{agent.workingDir}</span>
-
-        <button
-          onClick={() => navigate('/control')}
-          className="text-xs px-2 py-0.5 rounded transition-colors bg-deck-bg text-deck-text-dim hover:bg-deck-accent/20 hover:text-deck-accent"
-          title="컨트롤룸으로 이동"
-        >
-          <span className="inline-flex items-center gap-1"><IconDevices size={13} /> 관제실</span>
-        </button>
 
         <button
           onClick={() => { if (rightPanelOpen && rightTab === 'sessions') { setRightPanelOpen(false); } else { setRightPanelOpen(true); setRightTab('sessions'); } }}

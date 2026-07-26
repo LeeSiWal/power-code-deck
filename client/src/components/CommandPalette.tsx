@@ -52,7 +52,7 @@ export function CommandPalette() {
     });
 
     cmds.push(
-      { id: 'nav-dashboard', label: '대시보드', shortcut: '\u2318D', category: '이동', action: () => navigate('/dashboard') },
+      { id: 'nav-control', label: '관제실', shortcut: '\u2318D', category: '이동', action: () => navigate('/control') },
       { id: 'nav-projects', label: '프로젝트 선택', shortcut: '\u2318O', category: '이동', action: () => navigate('/') },
       { id: 'nav-logs', label: '로그', shortcut: '\u2318L', category: '이동', action: () => navigate('/logs') },
       { id: 'nav-settings', label: '설정', category: '이동', action: () => navigate('/settings') },

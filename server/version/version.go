@@ -25,6 +25,7 @@ import (
 //	v0.2.5 = fix: Host guard honors CORS_ORIGINS (reverse-proxy access)
 //	v0.2.6 = native Codex app-server chat driver
 //	v0.3.0 = Control Room (multi-session overview)
+//	v0.4.0 = Unified Control Room (dashboard absorbed, hierarchical back-nav)
 //
 //go:embed VERSION
 var versionFile string

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconSearch, IconBack } from '../components/icons';
-import { useGoBack } from '../hooks/useGoBack';
+import { useGoUp } from '../hooks/useGoUp';
 
 interface LogEntry {
   id: number;
@@ -15,7 +15,7 @@ export function LogsPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const goBack = useGoBack();
+  const goUp = useGoUp('/control');
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -36,11 +36,11 @@ export function LogsPage() {
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       <header className="flex items-center gap-2 px-4 py-2 bg-deck-surface border-b border-deck-border shrink-0">
-        {/* Back to the previous page — desktop/iPad have no BottomNav, so without this
-            they'd be stranded here (PWA has no browser back). Falls back to the
-            dashboard when there's no history to pop. */}
+        {/* Navigate to Control Room — desktop/iPad have no BottomNav, so without this
+            they'd be stranded here (PWA has no browser back). Always goes to /control
+            regardless of navigation history. */}
         <button
-          onClick={goBack}
+          onClick={goUp}
           className="hidden md:inline-flex p-1 -ml-1 rounded hover:bg-deck-border/30 text-deck-text-dim"
           title="뒤로"
         >

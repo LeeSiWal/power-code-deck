@@ -1,9 +1,25 @@
+// 의도적으로 미사용 상태 — 지우다 만 파일이 아니다.
+//
+// 통합 관제실(2026-07)에서 타일 밀도를 위해 스냅샷을 화면에서 뺐다. 파일을 남긴
+// 이유는 여기에 재유도하기 번거로운 로직이 있기 때문이다: headless wterm 인스턴스
+// 관리, 300ms 스로틀 페인트, `open` 이벤트 시 재attach. import처가 없으므로 vite가
+// 트리셰이킹해 번들 비용은 0이고, tsc는 계속 타입 검사를 한다.
+//
+// 되살리려면:
+//   1. AgentTile에서 마운트하되 동시 인스턴스를 1개로 제한할 것
+//      (expandedId: string | null — 에이전트마다 headless wterm이 하나씩 생긴다)
+//   2. 스냅샷은 80칼럼이라 1/3 폭 타일에서는 읽히지 않는다. 펼친 타일을
+//      col-span-full 행으로 전개해야 제 비율이 나온다(모바일 1컬럼에서는 무동작).
+//   3. 먼저 확인할 것: tsc는 타입만 보므로 프로토콜 드리프트를 잡지 못한다.
+//      `terminal:output` 이벤트 이름과 페이로드 모양이 그대로인지 확인할 것.
+//      어긋나면 타입은 통과하는데 화면만 빈 채로 남는다.
+
 import { useEffect, useRef, useState } from 'react';
 import { WasmBridge, type TerminalCore } from '@wterm/core';
 import { agentDeckWS } from '../../lib/ws';
 
 /**
- * Lightweight, read-only terminal preview for dashboard agent cards. Instead of a
+ * Lightweight, read-only terminal preview for Control Room tiles. Instead of a
  * full wterm instance (DOM renderer + input + RAF render loop) per card, it feeds
  * the agent's output stream into a HEADLESS wterm core and paints the visible grid
  * as plain text on a throttle — enough for a glanceable snapshot at a fraction of

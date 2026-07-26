@@ -7,7 +7,6 @@ import { api } from './lib/api';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectSelectPage } from './pages/ProjectSelectPage';
 import { AgentLauncherPage } from './pages/AgentLauncherPage';
-import { DashboardPage } from './pages/DashboardPage';
 import { ControlRoomPage } from './pages/ControlRoomPage';
 import { TerminalPage } from './pages/TerminalPage';
 import { LogsPage } from './pages/LogsPage';
@@ -159,7 +158,9 @@ export default function App() {
 
           <Route element={<AuthGuard />}>
             <Route path="/" element={<ProjectSelectPage />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
+            {/* 통합 관제실이 대시보드를 흡수했다. 북마크·핸드오프로 들어온
+                기존 링크가 죽지 않도록 리다이렉트로 남긴다. */}
+            <Route path="/dashboard" element={<Navigate to="/control" replace />} />
             <Route path="/control" element={<ControlRoomPage />} />
             <Route path="/launch/:encodedPath" element={<AgentLauncherPage />} />
             <Route path="/agents/:id" element={<TerminalPage />} />
@@ -167,7 +168,7 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
 
-          <Route path="*" element={<Navigate to="/" />} />
+          <Route path="*" element={<Navigate to="/control" replace />} />
         </Routes>
       </WebSocketProvider>
     </BrowserRouter>
