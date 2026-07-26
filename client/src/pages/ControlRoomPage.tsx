@@ -9,7 +9,7 @@ import { dot } from '../components/control/LiveDot';
 import { AttentionRail } from '../components/control/AttentionRail';
 import { ProjectGroup } from '../components/control/ProjectGroup';
 import { ApprovalFeed } from '../components/control/ApprovalFeed';
-import { IconPlus } from '../components/icons';
+import { IconPlus, IconLog, IconSettings } from '../components/icons';
 
 // Control Room (v0.3.0): the multi-session overview. It renders purely from
 // server-computed summaries + the global approval queue — it never watches any one
@@ -155,6 +155,24 @@ export function ControlRoomPage() {
         >
           <IconPlus size={13} />
           <span>프로젝트 추가</span>
+        </Link>
+        {/* 데스크톱·태블릿에는 BottomNav가 없다(md:hidden). 관제실이 대시보드를 흡수하면서
+            대시보드 헤더에 있던 이 두 진입점이 같이 사라져, md+ 화면에서는 로그·설정으로
+            갈 수 있는 보이는 경로가 없어졌다(커맨드 팔레트는 숨은 경로다). md+에서만
+            보여 모바일 BottomNav와 중복되지 않는다. */}
+        <Link
+          to="/logs"
+          className="hidden md:inline-flex items-center p-2 rounded-lg text-deck-text-dim hover:bg-deck-border/30"
+          title="로그"
+        >
+          <IconLog size={16} />
+        </Link>
+        <Link
+          to="/settings"
+          className="hidden md:inline-flex items-center p-2 rounded-lg text-deck-text-dim hover:bg-deck-border/30"
+          title="설정"
+        >
+          <IconSettings size={16} />
         </Link>
         <span className="font-mono text-[10px] text-deck-text-dim flex items-center gap-1.5">
           {dot(connected ? 145 : 0, !connected)} {connected ? 'WS connected' : '연결 끊김'}
