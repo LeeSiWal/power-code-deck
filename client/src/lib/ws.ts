@@ -25,11 +25,24 @@ class AgentDeckWS {
       const wake = () => this.wake();
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') wake();
+        // Tell the server too. While this device is looking at the app the in-app
+        // toast already delivers the alert, so the server skips the Web Push and you
+        // stop getting buzzed twice for one event. The socket staying open is NOT a
+        // usable substitute — a locked phone keeps it alive for a while — so this has
+        // to be reported explicitly, and reported when we go AWAY as well as back.
+        this.reportVisibility();
       });
       window.addEventListener('pageshow', wake);
       window.addEventListener('focus', wake);
       window.addEventListener('online', wake);
     }
+  }
+
+  /** Report foreground state; ignored while the socket is down (the server treats a
+   *  device with no live connection as background, which is the safe default). */
+  private reportVisibility() {
+    if (typeof document === 'undefined') return;
+    this.send('client:visibility', { visible: document.visibilityState === 'visible' });
   }
 
   connect(token: string) {
@@ -58,6 +71,10 @@ class AgentDeckWS {
       const queued = this.sendQueue;
       this.sendQueue = [];
       for (const m of queued) this.ws?.send(m);
+      // A fresh connection starts as "background" server-side (the safe default), so
+      // state it explicitly — otherwise a device that reconnects while you are looking
+      // at it would keep pushing on top of the toast until you next switch away.
+      this.reportVisibility();
       // Then emit 'open' so components can re-attach.
       this.listeners.get('open')?.forEach((fn) => fn({}));
     };

@@ -396,6 +396,15 @@ func (h *Hub) pushNotify(agentID, reason, title, body, refType, refID string) {
 	if h.pushSvc == nil || !h.pushSvc.Enabled() {
 		return
 	}
+	// Skip the push when the target device is looking at the app RIGHT NOW: it already
+	// received the in-app toast from the broadcast above, and pushing as well is the
+	// double buzz. Keyed on the DEVICE rather than the agent on purpose — the toaster
+	// is mounted app-wide and shows every agent's notification, so being foregrounded
+	// anywhere in the deck is enough for the alert to land.
+	if dev := h.pushSvc.ActiveDevice(agentID); dev != "" && h.deviceForeground(dev) {
+		log.Printf("push: skip %q tag=%s-%s → device is foregrounded (in-app toast covers it)", title, reason, agentID)
+		return
+	}
 	// Aim the push at ONLY the session's active device — the one you're using — so the
 	// same alert no longer lights up every device at once. No active device on record
 	// means no push (deliberately no broadcast fallback).
@@ -405,6 +414,28 @@ func (h *Hub) pushNotify(agentID, reason, title, body, refType, refID string) {
 		Tag:   reason + "-" + agentID,
 		URL:   "/agents/" + agentID,
 	})
+}
+
+// deviceForeground reports whether any live connection from this device says the
+// browser is visible. Any one is enough: a device may hold several tabs, and if even
+// one is on screen the toast is seen.
+//
+// A device with no live connection is NOT foregrounded — so a dropped socket
+// re-enables push immediately rather than silencing it.
+func (h *Hub) deviceForeground(deviceID string) bool {
+	if deviceID == "" {
+		return false
+	}
+	found := false
+	h.clients.Range(func(key, _ interface{}) bool {
+		c := key.(*Client)
+		if c.deviceID == deviceID && c.isForeground() {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 // NotifyStalled fires a "stalled" notification when the Control Room detects a
@@ -425,6 +456,15 @@ func (h *Hub) agentName(agentID string) string {
 
 func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 	switch msg.Event {
+	case EventClientVisibility:
+		// The browser reporting its own visibilitychange. Used only to suppress a
+		// redundant push while the in-app toast is visible (see pushNotify).
+		var payload ClientVisibilityPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		c.setForeground(payload.Visible)
+
 	case EventTerminalAttach:
 		var payload TerminalAttachPayload
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {

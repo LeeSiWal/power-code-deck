@@ -40,6 +40,17 @@ type Client struct {
 	// scratch shell must remain attached at the same time.
 	shellAttached map[string]bool
 	shellMu       sync.RWMutex
+
+	// foreground is the browser's own visibilitychange, reported explicitly. A device
+	// that is looking at the app already gets the in-app toast, so pushing as well is
+	// the double-buzz. Read from whatever goroutine raised the notification (not
+	// readPump), hence its own mutex.
+	//
+	// Defaults to FALSE, and that default matters: an unknown state must mean "push
+	// it". Suppressing on a guess loses the alert entirely, and a missed 승인 필요
+	// leaves the agent blocked with nobody watching.
+	foreground bool
+	fgMu       sync.RWMutex
 }
 
 func (c *Client) addShell(sessionID string) {
@@ -153,4 +164,16 @@ func (c *Client) sendEvent(event string, payload interface{}) {
 	default:
 		// Buffer full, skip
 	}
+}
+
+func (c *Client) setForeground(v bool) {
+	c.fgMu.Lock()
+	c.foreground = v
+	c.fgMu.Unlock()
+}
+
+func (c *Client) isForeground() bool {
+	c.fgMu.RLock()
+	defer c.fgMu.RUnlock()
+	return c.foreground
 }
