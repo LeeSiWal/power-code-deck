@@ -10,7 +10,9 @@ import (
 // --permission-mode (the VS Code extension's "Auto (safety check)" is extension-only),
 // so we implement it here: every gated tool routes through our approve bridge and this
 // policy decides. bypassPermissions is the CLI's, but we ALSO enforce it here because
-// registering an approve tool makes the CLI keep asking despite the flag.
+// a session started in bypass has no bridge at all (claude_driver.go omits it there),
+// so this branch is a backstop for the window where the driver still carries the bridge
+// while the policy already says bypass — mid restart(), most of all.
 const (
 	AutoMode   = "auto"
 	BypassMode = "bypassPermissions"

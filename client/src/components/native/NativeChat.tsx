@@ -65,8 +65,10 @@ const CODEX_MODELS: typeof MODELS = [
 // such flag (the VS Code extension's version is extension-only). We implement it
 // SERVER-SIDE: the CLI runs in default, every gated tool routes to our approve bridge,
 // and the broker auto-approves safe calls / asks for risky ones. 전체 허용 is
-// bypassPermissions and approves EVERYTHING (also enforced server-side, since the CLI
-// keeps asking through our approve tool despite the flag).
+// bypassPermissions and approves EVERYTHING — and there the driver omits the approve
+// bridge entirely (claude_driver.go), because this CLI denies when the flag and a
+// prompt tool are both present. So in 전체 허용 nothing reaches our broker at all;
+// the CLI allows natively. Do not "fix" a missing bridge in that mode — it is correct.
 const MODES: { id: string; label: string; desc: string; icon: React.ComponentType<IconProps>; pill: string }[] = [
   { id: '', label: '수동', desc: '도구를 실행할 때마다 승인을 요청합니다', icon: IconHand, pill: 'border-deck-border bg-deck-surface text-deck-text-dim' },
   { id: 'acceptEdits', label: '자동 편집', desc: '파일 편집은 자동 승인, 명령 실행은 물어봅니다', icon: IconCodeSlash, pill: 'border-deck-accent/50 bg-deck-accent/10 text-deck-accent-light' },
@@ -451,7 +453,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       )}
       <div ref={scrollRef} onScroll={onScroll} className="selectable flex-1 overflow-y-auto px-3 py-3 space-y-2">
         {items.map((item) => (
-          <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} />
+          <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} mode={modeId} />
         ))}
         {!items.length && (
           <div className="text-deck-muted text-sm py-8 text-center">
@@ -796,14 +798,21 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   );
 }
 
-function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) => void }) {
+function ChatRow({ item, onAnswer, mode }: { item: ChatItem; onAnswer: (text: string) => void; mode: string }) {
   if (item.kind === 'session') {
     // Model / version / cwd are chrome, not conversation — the toolbar already shows
     // the model, so rendering them here just pushes the chat down on every session.
     // The bridge warning is the opposite: without our bridge the CLI denies every
     // gated tool AND still calls the turn a success. That silence is exactly what we
     // must not reproduce, so it stays — and is now the only reason this row renders.
-    if (item.bridgeOk) return null;
+    //
+    // 전체 허용 is the one mode where a missing bridge is CORRECT, not a fault:
+    // claude_driver.go deliberately omits --mcp-config/--permission-prompt-tool there,
+    // because this CLI routes to the prompt tool and then DENIES when both the flag and
+    // a prompt tool are present. So the bridge is absent by design and the CLI allows
+    // everything natively — nothing is being denied, and warning about it is a false
+    // alarm that reads as "your session is broken".
+    if (item.bridgeOk || mode === 'bypassPermissions') return null;
     return (
       <div className="text-[11px] text-red-400 border border-red-400/40 bg-red-400/5 rounded-lg px-3 py-2 flex items-center gap-1.5">
         <IconWarning size={13} className="shrink-0" />

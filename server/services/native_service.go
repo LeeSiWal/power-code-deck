@@ -179,10 +179,17 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 	s.broker.SetAskHandler(func(req PermissionRequest) {
 		// Server-side permission policy: apply the session's mode (bypass → allow all,
 		// auto → allow safe / ask risky) BEFORE surfacing to a human. This is what
-		// makes "전체 허용" actually stop asking (the CLI keeps calling our approve tool
-		// despite --permission-mode bypassPermissions), and what implements the "auto"
-		// safety-check mode the CLI has no flag for. The answer channel is buffered, so
-		// resolving here synchronously is safe (Ask isn't blocked yet).
+		// implements the "auto" safety-check mode, which the CLI has no flag for. The
+		// answer channel is buffered, so resolving here synchronously is safe (Ask
+		// isn't blocked yet).
+		//
+		// The bypass branch is a BACKSTOP, not the main path. A session started in
+		// 전체 허용 has no approve bridge at all (claude_driver.go omits --mcp-config
+		// and --permission-prompt-tool there, because this CLI denies when the flag and
+		// a prompt tool are both present), so nothing reaches this handler. It still
+		// matters for the window where a session's driver carries the bridge while its
+		// policy already says bypass — e.g. mid restart(), which is exactly the hole
+		// TestBypassPolicySurvivesRestartWindow pins.
 		if d, ok := s.autoDecision(req); ok {
 			s.broker.Resolve(req.ID, d)
 			return
