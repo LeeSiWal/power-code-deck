@@ -582,6 +582,17 @@ export function TerminalPage() {
           </button>
         )}
 
+        {/* 세션 화면에는 BottomNav가 없다(집중 화면이라 의도된 것). 그래서 세션에
+            들어와 있는 동안에는 알림으로 갈 경로가 없어 관제실까지 나갔다 와야 했다. */}
+        <Link
+          to="/notifications"
+          className="relative text-xs px-2 py-0.5 rounded transition-colors bg-deck-bg text-deck-text-dim hover:bg-deck-accent/20 hover:text-deck-accent"
+          title="알림"
+        >
+          <span className="inline-flex items-center gap-1"><IconBell size={13} /> 알림</span>
+          <NotificationBadge className="absolute -top-1 -right-1" />
+        </Link>
+
         {!forcePromptBar && (
           <button
             onClick={() => { if (promptOpen) { setPromptOpen(false); focusTerminal(); } else { openPrompt(); } }}
