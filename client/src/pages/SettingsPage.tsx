@@ -16,9 +16,9 @@ export function SettingsPage() {
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       <header className="flex items-center gap-2 px-4 py-2 bg-deck-surface border-b border-deck-border">
-        {/* Back to the previous page — desktop/iPad have no BottomNav, so without this
-            they'd be stranded here (PWA has no browser back). Falls back to the
-            dashboard when there's no history to pop. */}
+        {/* Navigate to Control Room — desktop/iPad have no BottomNav, so without this
+            they'd be stranded here (PWA has no browser back). Always goes to /control
+            regardless of navigation history. */}
         <button
           onClick={goUp}
           className="hidden md:inline-flex p-1 -ml-1 rounded hover:bg-deck-border/30 text-deck-text-dim"
