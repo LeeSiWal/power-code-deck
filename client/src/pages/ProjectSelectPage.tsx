@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ProjectSelector } from '../components/project/ProjectSelector';
-import { IconLogout, IconSettings } from '../components/icons';
+import { IconBack, IconLogout, IconSettings } from '../components/icons';
 import { useAuth } from '../hooks/useAuth';
+import { useGoUp } from '../hooks/useGoUp';
 import { api } from '../lib/api';
 
 export function ProjectSelectPage() {
@@ -10,6 +11,7 @@ export function ProjectSelectPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [ready, setReady] = useState(false);
+  const goUp = useGoUp('/control');
 
   const forceNew = searchParams.get('new') === '1';
 
@@ -51,8 +53,17 @@ export function ProjectSelectPage() {
 
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
-      <header className="flex items-center justify-between px-4 py-2 bg-deck-surface border-b border-deck-border shrink-0">
-        <span className="text-sm font-medium">PowerCodeDeck</span>
+      <header className="flex items-center gap-2 px-4 py-2 bg-deck-surface border-b border-deck-border shrink-0">
+        {/* BottomNav이 없는 유일한 최상위 화면이라 모든 브레이크포인트에서 표시.
+            forceNew=1로 진입했을 때(관제실 "프로젝트 추가" 버튼)의 유일한 복귀 경로. */}
+        <button
+          onClick={goUp}
+          className="p-1 -ml-1 rounded hover:bg-deck-border/30 text-deck-text-dim"
+          title="관제실로"
+        >
+          <IconBack size={15} />
+        </button>
+        <span className="text-sm font-medium flex-1">PowerCodeDeck</span>
         <div className="flex items-center gap-1">
           {/* Settings entry point — the only nav on this screen, and BottomNav is
               mobile-only, so without this desktop/iPad (and even mobile here) had no

@@ -2,7 +2,6 @@ import type { AgentSummary } from '../../stores/appStore';
 import { liveState, STATE_CHIP, attnClasses, attnLabel, kindGlyph, timeAgo } from './liveState';
 import { LiveDot, WorkingBar, Badge, ActBtn } from './LiveDot';
 import { AgentMeta } from '../sidebar/AgentMeta';
-import { SubAgentBar } from '../animation/SubAgentBar';
 
 export function AgentTile({
   s,
@@ -73,9 +72,11 @@ export function AgentTile({
         </div>
       </div>
         <AgentMeta agentId={s.agentId} />
-        {/* 타일에 이미 `tool: …` 줄이 있어 메인 에이전트만 돌 때는 같은 정보가
-            두 번 나온다. SubAgentBar의 고유 가치는 여러 노드가 동시에 돌 때뿐. */}
-        <SubAgentBar agentId={s.agentId} onlyWhenMultiple />
+        {/* SubAgentBar 없음: activity 스냅샷은 agent:activity WS 이벤트로만 채워지고,
+            서버는 BroadcastToAgent(watchingAgent 필터)로만 송출한다. 관제실은 어떤
+            세션도 watch하지 않으므로 스냅샷이 항상 undefined — 렌더해도 null.
+            타일 수준의 서브에이전트 표시는 세션 단위가 아닌 요약 레벨 데이터를
+            서버가 제공할 때 재도입 가능하다. */}
       <div className="flex gap-1.5 mt-2">
         <Badge>✓ 완료 {s.unread?.completed ?? 0}</Badge>
         <Badge>⚠ 에러 {s.unread?.errors ?? 0}</Badge>

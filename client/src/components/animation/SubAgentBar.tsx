@@ -7,7 +7,6 @@ import { STATUS_COLOR, nodeSpriteType } from './activityVisual';
 
 interface SubAgentBarProps {
   agentId: string;
-  onlyWhenMultiple?: boolean;
 }
 
 /**
@@ -15,7 +14,7 @@ interface SubAgentBarProps {
  * running sub-agents, each with a live status dot and its current tool. Driven by the
  * transcript-based activity snapshot.
  */
-export function SubAgentBar({ agentId, onlyWhenMultiple = false }: SubAgentBarProps) {
+export function SubAgentBar({ agentId }: SubAgentBarProps) {
   const { activity, agents, characterTheme } = useAppStore();
   const snap = activity.get(agentId);
   const agent = agents.find((a) => a.id === agentId);
@@ -33,7 +32,6 @@ export function SubAgentBar({ agentId, onlyWhenMultiple = false }: SubAgentBarPr
   }, [live.length]);
 
   if (live.length === 0) return null;
-  if (onlyWhenMultiple && live.length < 2) return null;
 
   const subActive = live.filter((n) => n.kind === 'subagent').length;
 
