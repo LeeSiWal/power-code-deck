@@ -93,6 +93,7 @@ func main() {
 
 	// WebSocket hub. The allow-list rejects cross-origin handshakes (drive-by RCE).
 	hub := ws.NewHub(sessionEngine, watcherSvc, agentSvc, gitSvc, portScanner, notifSvc, cfg.AllowedOrigins())
+	hub.SetActivityManager(activitySvc)
 	hub.SetPushService(pushSvc) // wired before SetNativeService so triggers can push
 	go hub.Run()
 

@@ -150,6 +150,8 @@ func Migrate(db *sql.DB) error {
 
 	// Notifications table
 	db.Exec(notificationMigration)
+	db.Exec("ALTER TABLE notifications ADD COLUMN ref_type TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE notifications ADD COLUMN ref_id TEXT DEFAULT ''")
 
 	// Handoff tokens table
 	db.Exec(handoffMigration)

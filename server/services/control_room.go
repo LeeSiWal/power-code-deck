@@ -41,10 +41,10 @@ type ControlRoomService struct {
 
 func NewControlRoomService(agents *AgentService, broker *PermissionBroker, notifs *NotificationService, th AttentionThresholds) *ControlRoomService {
 	return &ControlRoomService{
-		agents:      agents,
-		broker:      broker,
-		notifs:      notifs,
-		th:          th,
+		agents:          agents,
+		broker:          broker,
+		notifs:          notifs,
+		th:              th,
 		activity:        make(map[string]AgentActivitySnapshot),
 		revision:        make(map[string]int),
 		lastEmitted:     make(map[string]AgentSummary),
@@ -227,6 +227,18 @@ func (s *ControlRoomService) compute(a Agent, now int64) AgentSummary {
 		r := snap.Recent[0] // recent is newest-first
 		sum.LastTool = r.Tool
 		sum.LastTarget = r.Target
+	}
+	for _, todo := range snap.Todos {
+		sum.TodoTotal++
+		if todo.Status == "completed" {
+			sum.TodoCompleted++
+		}
+		if todo.Status == "in_progress" && sum.TodoActive == "" {
+			sum.TodoActive = todo.ActiveForm
+			if sum.TodoActive == "" {
+				sum.TodoActive = todo.Content
+			}
+		}
 	}
 
 	if pending, oldest := s.pendingApprovals(a.ID); pending > 0 {

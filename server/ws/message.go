@@ -192,6 +192,8 @@ type AgentNotificationPayload struct {
 	Reason    string `json:"reason"`
 	Message   string `json:"message"`
 	Timestamp string `json:"timestamp"`
+	RefType   string `json:"refType,omitempty"`
+	RefID     string `json:"refId,omitempty"`
 }
 
 type AgentNotificationClearPayload struct {

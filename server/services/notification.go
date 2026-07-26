@@ -12,6 +12,8 @@ type Notification struct {
 	Message   string `json:"message"`
 	Read      bool   `json:"read"`
 	CreatedAt string `json:"createdAt"`
+	RefType   string `json:"refType,omitempty"`
+	RefID     string `json:"refId,omitempty"`
 }
 
 type NotificationService struct {
@@ -23,10 +25,14 @@ func NewNotificationService(db *sql.DB) *NotificationService {
 }
 
 func (s *NotificationService) Create(agentID, reason, message string) (*Notification, error) {
+	return s.CreateWithRef(agentID, reason, message, "", "")
+}
+
+func (s *NotificationService) CreateWithRef(agentID, reason, message, refType, refID string) (*Notification, error) {
 	now := time.Now().Format("2006-01-02T15:04:05Z")
 	result, err := s.db.Exec(
-		"INSERT INTO notifications (agent_id, reason, message, created_at) VALUES (?, ?, ?, ?)",
-		agentID, reason, message, now,
+		"INSERT INTO notifications (agent_id, reason, message, ref_type, ref_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		agentID, reason, message, refType, refID, now,
 	)
 	if err != nil {
 		return nil, err
@@ -40,11 +46,24 @@ func (s *NotificationService) Create(agentID, reason, message string) (*Notifica
 		Message:   message,
 		Read:      false,
 		CreatedAt: now,
+		RefType:   refType,
+		RefID:     refID,
 	}, nil
 }
 
+func (s *NotificationService) List(agentID string) ([]Notification, error) {
+	query := "SELECT id, agent_id, reason, message, read, created_at, COALESCE(ref_type, ''), COALESCE(ref_id, '') FROM notifications"
+	args := []interface{}{}
+	if agentID != "" {
+		query += " WHERE agent_id = ?"
+		args = append(args, agentID)
+	}
+	query += " ORDER BY created_at DESC LIMIT 200"
+	return s.list(query, args...)
+}
+
 func (s *NotificationService) ListUnread(agentID string) ([]Notification, error) {
-	query := "SELECT id, agent_id, reason, message, read, created_at FROM notifications WHERE read = FALSE"
+	query := "SELECT id, agent_id, reason, message, read, created_at, COALESCE(ref_type, ''), COALESCE(ref_id, '') FROM notifications WHERE read = FALSE"
 	args := []interface{}{}
 	if agentID != "" {
 		query += " AND agent_id = ?"
@@ -52,6 +71,10 @@ func (s *NotificationService) ListUnread(agentID string) ([]Notification, error)
 	}
 	query += " ORDER BY created_at DESC LIMIT 100"
 
+	return s.list(query, args...)
+}
+
+func (s *NotificationService) list(query string, args ...interface{}) ([]Notification, error) {
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -61,7 +84,7 @@ func (s *NotificationService) ListUnread(agentID string) ([]Notification, error)
 	var notifications []Notification
 	for rows.Next() {
 		var n Notification
-		if err := rows.Scan(&n.ID, &n.AgentID, &n.Reason, &n.Message, &n.Read, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.AgentID, &n.Reason, &n.Message, &n.Read, &n.CreatedAt, &n.RefType, &n.RefID); err != nil {
 			continue
 		}
 		notifications = append(notifications, n)

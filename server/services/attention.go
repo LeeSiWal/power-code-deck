@@ -44,6 +44,9 @@ type AgentSummary struct {
 	LastTarget     string         `json:"lastTarget,omitempty"`
 	ToolCount      int            `json:"toolCount"`
 	LastActivityAt int64          `json:"lastActivityAt"`
+	TodoCompleted  int            `json:"todoCompleted,omitempty"`
+	TodoTotal      int            `json:"todoTotal,omitempty"`
+	TodoActive     string         `json:"todoActive,omitempty"`
 	Unread         UnreadCounts   `json:"unread"`
 }
 

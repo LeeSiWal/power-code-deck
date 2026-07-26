@@ -53,6 +53,13 @@ export interface AgentActivity {
   agentId: string;
   nodes: ActivityNode[];
   recent: ActivityEvent[];
+  todos?: ActivityTodo[];
+}
+
+export interface ActivityTodo {
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  activeForm?: string;
 }
 
 export interface AgentNotification {
@@ -101,6 +108,9 @@ export interface AgentSummary {
   lastTarget?: string;
   toolCount: number;
   lastActivityAt: number;
+  todoCompleted?: number;
+  todoTotal?: number;
+  todoActive?: string;
   unread: { total: number; completed: number; errors: number };
 }
 

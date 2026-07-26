@@ -8,6 +8,7 @@ import { PromptBar } from '../components/terminal/PromptBar';
 import { HandoffModal } from '../components/terminal/HandoffModal';
 import { SessionHistory } from '../components/terminal/SessionHistory';
 import { CompanionShell } from '../components/terminal/CompanionShell';
+import { TodoStrip } from '../components/terminal/TodoStrip';
 import { FileExplorer } from '../components/file/FileExplorer';
 import { FilePreview } from '../components/file/FilePreview';
 import { FileEditor } from '../components/file/FileEditor';
@@ -415,6 +416,7 @@ export function TerminalPage() {
             )}
           </div>
         )}
+        {activeTab === 'terminal' && <TodoStrip todos={activity?.todos} />}
         {selectedFile && fileContent !== null && activeTab === 'editor' && (
           <div className="flex-1 min-h-0 overflow-hidden">
             {editing ? (
@@ -712,6 +714,7 @@ export function TerminalPage() {
               )}
             </div>
           )}
+          {activeTab === 'terminal' && <TodoStrip todos={activity?.todos} />}
           {selectedFile && fileContent !== null && activeTab === 'editor' && (
             <div className="flex-1 min-h-0 overflow-hidden">
               {editing ? (

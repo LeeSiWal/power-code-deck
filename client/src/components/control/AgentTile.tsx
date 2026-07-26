@@ -70,6 +70,11 @@ export function AgentTile({
         <div>
           ×{s.toolCount} · {timeAgo(s.lastActivityAt)}
         </div>
+        {!!s.todoTotal && (
+          <div className="truncate text-deck-accent-light">
+            ☑ {s.todoCompleted ?? 0}/{s.todoTotal}{s.todoActive ? ` · ${s.todoActive}` : ''}
+          </div>
+        )}
       </div>
         <AgentMeta agentId={s.agentId} />
         {/* SubAgentBar 없음: activity 스냅샷은 agent:activity WS 이벤트로만 채워지고,

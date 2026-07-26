@@ -64,6 +64,7 @@ type Hub struct {
 	notifSvc       *services.NotificationService
 	pushSvc        *services.PushService
 	native         *services.NativeService
+	activity       *services.ActivityManager
 	controlRoom    *services.ControlRoomService
 	allowedOrigins map[string]bool
 	upgrader       websocket.Upgrader
@@ -325,7 +326,7 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 			// user who stepped away. Push it (the service worker suppresses it when the
 			// app is focused, so it only interrupts when you're actually elsewhere).
 			if ev.Type == services.StreamTypeResult {
-				h.pushNotify(agentID, "task_complete", "작업 완료", h.agentName(agentID))
+				h.pushNotify(agentID, "task_complete", "작업 완료", h.agentName(agentID), "chat", "latest")
 			}
 		},
 		func(req services.PermissionRequest) {
@@ -343,9 +344,13 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 			// A blocked agent goes nowhere until a human answers — the single most
 			// worth-interrupting notification, so it's the reason push exists here.
 			h.pushNotify(req.SessionID, "permission_request",
-				"승인 필요", h.agentName(req.SessionID)+" · "+req.ToolName+" 실행 대기 중")
+				"승인 필요", h.agentName(req.SessionID)+" · "+req.ToolName+" 실행 대기 중", "approval", req.ID)
 		},
 	)
+}
+
+func (h *Hub) SetActivityManager(activity *services.ActivityManager) {
+	h.activity = activity
 }
 
 // SetPushService wires the Web Push fan-out. Must be called before SetNativeService
@@ -370,9 +375,9 @@ func (h *Hub) NoteAgentChange(agentID string) {
 // Push to every subscribed device. reason is the stable notification kind (also the
 // notifications-table reason), used as the collapse tag so repeats replace rather
 // than stack. Best-effort and non-blocking — this runs on the event hot path.
-func (h *Hub) pushNotify(agentID, reason, title, body string) {
+func (h *Hub) pushNotify(agentID, reason, title, body, refType, refID string) {
 	if h.notifSvc != nil {
-		_, _ = h.notifSvc.Create(agentID, reason, body)
+		_, _ = h.notifSvc.CreateWithRef(agentID, reason, body, refType, refID)
 	}
 	// Broadcast the in-app signal too. This event was defined but never emitted, so
 	// the notification bell/badge and any foreground toast had nothing to react to —
@@ -383,6 +388,8 @@ func (h *Hub) pushNotify(agentID, reason, title, body string) {
 		Reason:    reason,
 		Message:   body,
 		Timestamp: time.Now().Format(time.RFC3339),
+		RefType:   refType,
+		RefID:     refID,
 	})
 	// A new notification changes the tile's unread badges — refresh its summary.
 	h.NoteAgentChange(agentID)
@@ -405,7 +412,7 @@ func (h *Hub) pushNotify(agentID, reason, title, body string) {
 // per stalled episode, not every batch) is owned by ControlRoomService; this is just
 // the delivery path, reusing pushNotify so it records + pushes like the others.
 func (h *Hub) NotifyStalled(agentID string) {
-	h.pushNotify(agentID, "stalled", "무응답 세션", h.agentName(agentID)+" · 오랫동안 반응이 없습니다")
+	h.pushNotify(agentID, "stalled", "무응답 세션", h.agentName(agentID)+" · 오랫동안 반응이 없습니다", "chat", "latest")
 }
 
 // agentName is the display name for a notification, falling back to a generic label.
@@ -587,6 +594,7 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 			}
 		}
 		h.sendNativeHistory(c, payload.AgentID)
+		h.sendActivitySnapshot(c, payload.AgentID)
 
 	case EventNativeInput:
 		var payload NativeInputPayload
@@ -780,6 +788,16 @@ func (h *Hub) handleShellAttach(c *Client, payload TerminalAttachPayload) {
 	c.sendEvent(EventShellState, ShellStatePayload{AgentID: payload.AgentID, Running: true, Message: message})
 	if res != nil && len(res.Replay) > 0 {
 		c.sendEvent(EventShellOutput, TerminalOutputPayload{AgentID: payload.AgentID, Data: string(res.Replay)})
+	}
+	h.sendActivitySnapshot(c, payload.AgentID)
+}
+
+func (h *Hub) sendActivitySnapshot(c *Client, agentID string) {
+	if h.activity == nil {
+		return
+	}
+	if snap, ok := h.activity.Latest(agentID); ok {
+		c.sendEvent(EventAgentActivity, snap)
 	}
 }
 

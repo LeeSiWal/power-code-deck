@@ -21,11 +21,15 @@ import (
 type ActivityManager struct {
 	mu       sync.Mutex
 	watchers map[string]*transcriptWatcher
+	latest   map[string]AgentActivitySnapshot
 	emit     func(agentID string, snap AgentActivitySnapshot)
 }
 
 func NewActivityManager() *ActivityManager {
-	return &ActivityManager{watchers: make(map[string]*transcriptWatcher)}
+	return &ActivityManager{
+		watchers: make(map[string]*transcriptWatcher),
+		latest:   make(map[string]AgentActivitySnapshot),
+	}
 }
 
 // SetEmitter wires how snapshots leave the manager. Called once from main.go after
@@ -55,6 +59,9 @@ func (m *ActivityManager) Start(agentID, preset, command, cwd string) {
 		tools:   make(map[string]*toolRun),
 		subByID: make(map[string]string),
 		emit: func(snap AgentActivitySnapshot) {
+			m.mu.Lock()
+			m.latest[agentID] = snap
+			m.mu.Unlock()
 			if emit != nil {
 				emit(agentID, snap)
 			}
@@ -75,6 +82,18 @@ func (m *ActivityManager) Stop(agentID string) {
 	if w != nil {
 		close(w.stop)
 	}
+	m.mu.Lock()
+	delete(m.latest, agentID)
+	m.mu.Unlock()
+}
+
+// Latest returns the last emitted snapshot for immediate replay to a client that
+// opens an already-running session.
+func (m *ActivityManager) Latest(agentID string) (AgentActivitySnapshot, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	snap, ok := m.latest[agentID]
+	return snap, ok
 }
 
 // ---- snapshot wire types (JSON-serialized to the client) ----
@@ -105,6 +124,13 @@ type AgentActivitySnapshot struct {
 	AgentID string          `json:"agentId"`
 	Nodes   []ActivityNode  `json:"nodes"`
 	Recent  []ActivityEvent `json:"recent"`
+	Todos   []ActivityTodo  `json:"todos,omitempty"`
+}
+
+type ActivityTodo struct {
+	Content    string `json:"content"`
+	Status     string `json:"status"`
+	ActiveForm string `json:"activeForm,omitempty"`
 }
 
 // ---- internal watcher ----
@@ -159,6 +185,7 @@ type transcriptWatcher struct {
 	subByID  map[string]string // Agent/Task tool_use id -> subagent node id
 	openSubs []string          // still-running subagent node ids (attribution stack)
 	recent   []*toolRun
+	todos    []ActivityTodo
 	orderSeq int
 
 	wasNonEmpty bool
@@ -196,6 +223,7 @@ func (w *transcriptWatcher) poll() {
 		w.subByID = make(map[string]string)
 		w.openSubs = nil
 		w.recent = nil
+		w.todos = nil
 	}
 
 	f, err := os.Open(path)
@@ -304,6 +332,11 @@ func (w *transcriptWatcher) processLine(raw string) {
 }
 
 func (w *transcriptWatcher) onToolUse(b contentBlock, sidechain bool, ts int64) {
+	if b.Name == "TodoWrite" && !sidechain {
+		if todos, ok := parseTodos(b.Input); ok {
+			w.todos = todos
+		}
+	}
 	if isSubagentTool(b.Name) {
 		// A sub-agent spawn. Create a child node and mark the main agent busy
 		// running the Agent/Task tool until its result returns.
@@ -429,6 +462,7 @@ func (w *transcriptWatcher) emitSnapshot() {
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].order < nodes[j].order })
 
 	snap := AgentActivitySnapshot{AgentID: w.agentID}
+	snap.Todos = append(snap.Todos, w.todos...)
 	for _, n := range nodes {
 		an := ActivityNode{
 			ID: n.id, Kind: n.kind, Label: n.label,
@@ -465,12 +499,32 @@ func (w *transcriptWatcher) emitSnapshot() {
 		})
 	}
 
-	nonEmpty := len(snap.Nodes) > 0
+	nonEmpty := len(snap.Nodes) > 0 || len(snap.Todos) > 0
 	if !nonEmpty && !w.wasNonEmpty {
 		return // nothing to show and nothing to clear
 	}
 	w.wasNonEmpty = nonEmpty
 	w.emit(snap)
+}
+
+func parseTodos(input json.RawMessage) ([]ActivityTodo, bool) {
+	var payload struct {
+		Todos []ActivityTodo `json:"todos"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil || payload.Todos == nil {
+		return nil, false
+	}
+	for _, todo := range payload.Todos {
+		if todo.Content == "" {
+			return nil, false
+		}
+		switch todo.Status {
+		case "pending", "in_progress", "completed":
+		default:
+			return nil, false
+		}
+	}
+	return payload.Todos, true
 }
 
 func (w *transcriptWatcher) nodeVisible(n *activityNode, now int64) bool {

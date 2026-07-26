@@ -134,3 +134,40 @@ func TestStatusIdleTransition(t *testing.T) {
 		t.Fatalf("Read target = %+v, want main.go", tr)
 	}
 }
+
+func TestTodoWriteKeepsLatestMainSnapshot(t *testing.T) {
+	w := newTestWatcher()
+	w.processLine(`{"type":"assistant","isSidechain":false,"timestamp":"2026-07-09T10:00:00Z","message":{"content":[{"type":"tool_use","id":"todo1","name":"TodoWrite","input":{"todos":[{"content":"first","status":"in_progress","activeForm":"working"},{"content":"second","status":"pending","activeForm":"next"}]}}]}}`)
+	if len(w.todos) != 2 || w.todos[0].ActiveForm != "working" {
+		t.Fatalf("first todo snapshot not parsed: %+v", w.todos)
+	}
+
+	w.processLine(`{"type":"assistant","isSidechain":false,"timestamp":"2026-07-09T10:01:00Z","message":{"content":[{"type":"tool_use","id":"todo2","name":"TodoWrite","input":{"todos":[{"content":"replacement","status":"completed","activeForm":"done"}]}}]}}`)
+	if len(w.todos) != 1 || w.todos[0].Content != "replacement" {
+		t.Fatalf("TodoWrite must replace the full snapshot: %+v", w.todos)
+	}
+}
+
+func TestTodoWriteIgnoresSidechainAndMalformedInput(t *testing.T) {
+	w := newTestWatcher()
+	w.todos = []ActivityTodo{{Content: "keep", Status: "pending"}}
+	w.processLine(`{"type":"assistant","isSidechain":true,"timestamp":"2026-07-09T10:00:00Z","message":{"content":[{"type":"tool_use","id":"side","name":"TodoWrite","input":{"todos":[{"content":"subagent","status":"completed"}]}}]}}`)
+	w.processLine(`{"type":"assistant","isSidechain":false,"timestamp":"2026-07-09T10:00:01Z","message":{"content":[{"type":"tool_use","id":"bad","name":"TodoWrite","input":{"todos":[{"content":"","status":"unknown"}]}}]}}`)
+	if len(w.todos) != 1 || w.todos[0].Content != "keep" {
+		t.Fatalf("sidechain/malformed TodoWrite overwrote main todos: %+v", w.todos)
+	}
+}
+
+func TestTodoSnapshotSurvivesStaleActivity(t *testing.T) {
+	w := newTestWatcher()
+	w.todos = []ActivityTodo{{Content: "keep", Status: "pending"}}
+	w.nodes[mainNodeID] = &activityNode{
+		id: mainNodeID, kind: "main", lastActivityAt: time.Now().Add(-2 * nodeRetention).UnixMilli(),
+	}
+	var got AgentActivitySnapshot
+	w.emit = func(snap AgentActivitySnapshot) { got = snap }
+	w.emitSnapshot()
+	if len(got.Nodes) != 0 || len(got.Todos) != 1 {
+		t.Fatalf("stale activity should clear while todos remain: %+v", got)
+	}
+}

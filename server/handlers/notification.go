@@ -11,7 +11,7 @@ import (
 func ListNotifications(notifSvc *services.NotificationService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentID := r.URL.Query().Get("agentId")
-		notifs, err := notifSvc.ListUnread(agentID)
+		notifs, err := notifSvc.List(agentID)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
