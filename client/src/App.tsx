@@ -10,6 +10,7 @@ import { AgentLauncherPage } from './pages/AgentLauncherPage';
 import { ControlRoomPage } from './pages/ControlRoomPage';
 import { TerminalPage } from './pages/TerminalPage';
 import { LogsPage } from './pages/LogsPage';
+import { NotificationsPage } from './pages/NotificationsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { CommandPalette } from './components/CommandPalette';
 import { ConnectionBanner } from './components/ConnectionBanner';
@@ -165,6 +166,7 @@ export default function App() {
             <Route path="/launch/:encodedPath" element={<AgentLauncherPage />} />
             <Route path="/agents/:id" element={<TerminalPage />} />
             <Route path="/logs" element={<LogsPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
 

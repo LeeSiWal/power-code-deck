@@ -176,6 +176,7 @@ interface AppState {
   notifications: Map<string, AgentNotification[]>;
   addNotification: (n: AgentNotification) => void;
   clearNotifications: (agentId: string) => void;
+  clearAllNotifications: () => void;
 
   // Agent meta
   agentMeta: Map<string, AgentMeta>;
@@ -307,6 +308,10 @@ export const useAppStore = create<AppState>((set) => ({
       m.delete(agentId);
       return { notifications: m };
     }),
+  // The badge counts THIS map (live WS events), not the server's unread rows. So a
+  // server-side clear must be mirrored here or the list empties while the badge keeps
+  // its count — which reads as "지우기 didn't work".
+  clearAllNotifications: () => set({ notifications: new Map() }),
 
   agentMeta: new Map(),
   setAgentMeta: (agentId, meta) =>

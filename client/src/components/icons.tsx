@@ -301,6 +301,13 @@ export function IconBranch({ size, color = 'currentColor', className }: IconProp
     <path d="M4.5 5.1v5.8M11.5 6.1c0 3-7 2.2-7 4.9" stroke={color} strokeWidth="1.1" fill="none" strokeLinecap="round" />
   </I>;
 }
+// notifications — a bell.
+export function IconBell({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M4 6.6a4 4 0 118 0c0 2.6.7 3.9 1.3 4.6H2.7C3.3 10.5 4 9.2 4 6.6z" stroke={color} strokeWidth="1.1" fill="none" strokeLinejoin="round" />
+    <path d="M6.6 13.3a1.5 1.5 0 002.8 0" stroke={color} strokeWidth="1.1" fill="none" strokeLinecap="round" />
+  </I>;
+}
 // listening ports — a power plug.
 export function IconPlug({ size, color = 'currentColor', className }: IconProps) {
   return <I size={size} className={className}>

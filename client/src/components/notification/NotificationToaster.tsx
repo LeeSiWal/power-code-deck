@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentDeckWS } from '../../lib/ws';
 import { useAppStore } from '../../stores/appStore';
+import { notificationAccent, notificationLabel } from './reasons';
 
 // Foreground in-app notification banner.
 //
@@ -14,22 +15,6 @@ import { useAppStore } from '../../stores/appStore';
 
 type Toast = { id: number; agentId: string; reason: string; message: string; name: string };
 
-const LABEL: Record<string, string> = {
-  permission_request: '승인 필요',
-  task_complete: '작업 완료',
-  error: '오류',
-  stalled: '무응답',
-  waiting_input: '입력 대기',
-};
-
-// Left accent colour per reason (thin full border + a thick coloured left edge).
-const ACCENT: Record<string, string> = {
-  permission_request: 'border-l-deck-accent',
-  task_complete: 'border-l-deck-success',
-  error: 'border-l-deck-danger',
-  stalled: 'border-l-deck-warning',
-  waiting_input: 'border-l-deck-accent',
-};
 
 let seq = 0;
 let audioCtx: AudioContext | null = null;
@@ -106,11 +91,11 @@ export function NotificationToaster() {
             navigate(`/agents/${t.agentId}`);
             setToasts((x) => x.filter((y) => y.id !== t.id));
           }}
-          className={`pointer-events-auto w-full max-w-md flex items-center gap-3 px-3 py-2.5 rounded-lg bg-deck-raised border border-deck-border border-l-4 ${ACCENT[t.reason] || 'border-l-deck-accent'} shadow-lg text-left animate-slide-down`}
+          className={`pointer-events-auto w-full max-w-md flex items-center gap-3 px-3 py-2.5 rounded-lg bg-deck-raised border border-deck-border border-l-4 ${notificationAccent(t.reason)} shadow-lg text-left animate-slide-down`}
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold">{LABEL[t.reason] || '알림'}</span>
+              <span className="text-xs font-semibold">{notificationLabel(t.reason)}</span>
               <span className="text-[11px] text-deck-text-dim font-mono truncate">{t.name}</span>
             </div>
             <div className="text-xs text-deck-text-dim truncate mt-0.5">{t.message}</div>
