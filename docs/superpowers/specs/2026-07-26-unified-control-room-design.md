@@ -20,6 +20,7 @@
 
 - 에이전트를 보는 화면을 하나로 만든다
 - 뒤로 가기가 진입 경로와 무관하게 결정론적으로 동작하게 한다
+- 승인 피드가 상시 노출되는 표면이 되므로, 거기에 뜨면 안 되는 항목을 걷어낸다
 - `ControlRoomPage.tsx`를 작업 중에 분할한다 (현재 513줄, 통합 후 더 커짐)
 
 ## 비목표 (YAGNI)
@@ -40,6 +41,7 @@
 | 생성 진입점 | 헤더 고정 버튼 |
 | `/dashboard` | `/control`로 리다이렉트 |
 | 뒤로 가기 | 히스토리 기반 → 계층 기반 |
+| AskUserQuestion 승인 | 서버에서 auto-allow (승인 UI 미노출) |
 
 ---
 
@@ -192,7 +194,61 @@ WS 클라이언트가 hub에 등록되는 시점에 `pollMeta()`를 한 번 즉�
 
 ---
 
-## 5. 파일 정리
+## 5. AskUserQuestion 승인 프롬프트 제거
+
+### 증상
+
+Claude가 `AskUserQuestion`으로 선택지를 물으면, 선택지 버튼과 **허용/거부 승인 카드가 동시에** 뜬다. 선택지에는 허용/거부가 필요 없다.
+
+### 이 스펙에 포함하는 이유
+
+통합 후 승인 피드는 데스크톱에서 상시 노출되는 1급 표면이 된다. 그런데 `ws/hub.go:282`가 `BroadcastAll`이므로 **이 유령 승인 카드가 컨트롤 룸 피드에도 뜬다.** 거기서 "허용"을 눌러도 실제 질문 버튼은 세션 안에 있어 아무 의미가 없다. 통합이 이 버그를 더 눈에 띄게 만들므로 함께 고친다.
+
+### 원인
+
+`pcd mcp-approve` 브리지(`cli/mcp_approve.go:147-168`)가 **모든** 도구 호출을 `POST /internal/native/approve`로 넘기고, `handlers/native_approve.go`에는 도구 이름 필터가 없다. 그래서 `AskUserQuestion`도 `broker.Ask()`(`native_approve.go:53`)를 타고 `native:approval` 브로드캐스트와 "승인 필요" 푸시(`ws/hub.go:282-298`)까지 발생한다.
+
+클라이언트는 같은 tool_use를 두 경로로 처리한다:
+
+- `lib/nativeEvents.ts:171-183` — `AskUserQuestion`을 `kind: 'ask'` 아이템으로 만들어 `AskRow`(`NativeChat.tsx:836`)가 선택지 버튼을 그림
+- `NativeChat.tsx:284-286` — `native:approval` 이벤트를 받아 `ApprovalCard`(`NativeChat.tsx:1029`)를 그림
+
+두 UI가 동시에 나타난다.
+
+### 해결: 서버에서 auto-allow
+
+`handlers/native_approve.go`의 `broker.Ask()` 호출(53행) **직전**에 도구 이름을 검사해 즉시 allow로 응답한다.
+
+```go
+// AskUserQuestion은 게이팅 대상이 아니다. 실제 동작이 없는 신호일 뿐이고,
+// 사용자는 승인이 아니라 답변으로 응한다 (선택지는 클라이언트가 직접 렌더).
+// 여기서 끊지 않으면 승인 카드와 선택지가 같이 뜨고, 컨트롤 룸 피드까지 오염된다.
+if req.ToolName == "AskUserQuestion" {
+    writeJSON(w, http.StatusOK, services.PermissionDecision{
+        Behavior:     "allow",
+        UpdatedInput: req.Input,
+    })
+    return
+}
+```
+
+### 클라이언트 필터링을 쓰지 않는 이유
+
+`NativeChat`에서 `toolName === 'AskUserQuestion'`을 걸러내는 방식은 **작동하지 않는다.** `broker.Ask()`가 HTTP 응답을 열어둔 채 사람의 답을 기다리므로(`native_approve.go:53-58`), 승인 카드를 그리지 않으면 아무도 답하지 않아 Claude가 무한 대기한다. 서버에서 끊어야 한다.
+
+서버에서 고치면 부수적으로 함께 해결되는 것:
+
+- 컨트롤 룸 승인 피드에 유령 항목이 들어오지 않음
+- `GET /api/approvals` 큐가 깨끗해짐
+- "승인 필요" 푸시 알림이 선택지마다 날아가지 않음
+
+### 안전성
+
+`AskUserQuestion`은 파일을 쓰거나 명령을 실행하지 않는다. headless 모드에서 CLI가 내부적으로 "The user did not answer the questions."로 답하고, 실제 선택은 다음 사용자 턴으로 전달된다(`nativeEvents.ts:171-183`의 주석, `services/claude_driver.go:129-137`의 시스템 프롬프트). 따라서 auto-allow는 no-op이며 권한 게이트를 약화시키지 않는다.
+
+---
+
+## 6. 파일 정리
 
 ### 삭제
 
@@ -220,7 +276,7 @@ WS 클라이언트가 hub에 등록되는 시점에 `pollMeta()`를 한 번 즉�
 
 ---
 
-## 6. 에러 처리
+## 7. 에러 처리
 
 - `controlSummaries()` 실패 → 기존 동작 유지
 - `agent:meta` 미도착 → `AgentMeta`가 `null` 반환, 타일은 정상 렌더 (성능 저하 없음)
@@ -229,27 +285,32 @@ WS 클라이언트가 hub에 등록되는 시점에 `pollMeta()`를 한 번 즉�
 
 ---
 
-## 7. 검증
+## 8. 검증
 
 - `cd client && ./node_modules/.bin/tsc --noEmit`
-- `cd server && CGO_ENABLED=0 go build ./... && go test ./services/ ./ws/`
+- `cd server && CGO_ENABLED=0 go build ./... && go test ./services/ ./ws/ ./handlers/`
 - 실제 렌더 확인:
   - `/control` 첫 진입 시 git·포트가 **즉시** 보이는지 (10초 대기 없이)
   - `/dashboard` 접속 시 `/control`로 리다이렉트되는지
   - 터미널 → 로그 → 뒤로 → `/control`인지 (설정이 아니라)
   - 정지된 에이전트 타일에 `[삭제]`가, 실행 중 타일에 `[정지]`가 뜨는지
   - 모바일 BottomNav 3탭 + 덱 탭 알림 배지
+  - **AskUserQuestion 호출 시 선택지 버튼만 뜨고 허용/거부 카드는 안 뜨는지**
+  - 같은 상황에서 **컨트롤 룸 승인 피드가 비어 있는지**, "승인 필요" 푸시가 안 오는지
+  - 선택지를 고르면 Claude가 정상적으로 다음 턴을 진행하는지 (auto-allow가 흐름을 막지 않는지)
+  - 일반 도구(Bash/Write 등) 승인은 **여전히 정상 동작**하는지 — 회귀 확인
 - `dist/pcd.exe` 재빌드 (클라이언트 변경이므로 필수)
 
 ---
 
-## 8. 리스크
+## 9. 리스크
 
 | 리스크 | 대응 |
 |---|---|
 | 접속 시 즉시 폴링이 다중 접속에서 git·포트 스캔을 반복 | 직전 폴링 3초 이내면 스킵 |
 | 타일에 메타가 추가되어 벽 밀도가 떨어짐 | `AgentMeta`는 데이터 없으면 `null`이라 실제 증가분은 세션당 최대 2줄. 실사용 후 조정 |
 | `AgentGrid`/`AgentList`가 예상 외의 곳에서 사용 중 | 삭제 전 import 확인 |
+| 도구 이름 문자열 하드코딩(`"AskUserQuestion"`)이 CLI 변경 시 조용히 깨짐 | 상수로 분리하고, 회귀 검증 항목에 "선택지에 승인 카드가 안 뜨는지"를 포함 |
 
 ---
 
