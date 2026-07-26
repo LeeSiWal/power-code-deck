@@ -92,7 +92,9 @@ target: AgentMeta.tsx
 
 ### 생성 진입점
 
-헤더 우측 고정 `+ 프로젝트 추가` 버튼. 현재 `DashboardPage` 안에 인라인으로 있는 생성 시트를 `components/agent/CreateAgentSheet.tsx`로 추출해 재사용한다.
+헤더 우측 고정 `+ 프로젝트 추가` 버튼. 현재 대시보드의 동일 버튼(`DashboardPage.tsx:56-62`)을 그대로 옮긴다 — 이 버튼은 모달이 아니라 `<Link to="/?new=1">`로 `ProjectSelectPage`에 간다.
+
+`CreateAgentSheet`는 마운트하지 않는다. `DashboardPage`가 이 컴포넌트를 import하고는 있으나 `showCreate`가 `true`가 되는 경로가 없어(`DashboardPage.tsx:16`, `102`) **이미 도달 불가능한 죽은 UI**다. 통합 시 함께 삭제한다.
 
 ---
 
@@ -107,7 +109,6 @@ target: AgentMeta.tsx
 | `components/control/ProjectGroup.tsx` | 그룹 헤더 + 타일 그리드 |
 | `components/control/AgentTile.tsx` | 타일 (LiveDot/상태칩/워킹바/메트릭/메타/액션) |
 | `components/control/ApprovalFeed.tsx` | 추출 (데스크톱 사이드바 / 모바일 시트 공용) |
-| `components/agent/CreateAgentSheet.tsx` | `DashboardPage`에서 추출 |
 
 대시보드에서 그대로 재사용: `AgentMeta`(full), `SubAgentBar`.
 
@@ -258,6 +259,7 @@ if req.ToolName == "AskUserQuestion" {
 | `components/agent/AgentCard.tsx` | 죽은 페이지에 묶인 레이아웃 껍데기 |
 | `components/agent/AgentGrid.tsx` | 동일 |
 | `components/agent/AgentList.tsx` | 동일 |
+| `components/agent/CreateAgentSheet.tsx` | 이미 도달 불가능한 죽은 UI (위 "생성 진입점" 참고) |
 
 삭제 전 각 파일이 다른 곳에서 import되지 않는지 확인한다.
 
