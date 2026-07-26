@@ -8,14 +8,14 @@ export function ProjectGroup({
   onOpen,
   onRestart,
   onStop,
-  onLogs,
+  onDestroy,
 }: {
   label: string;
   agents: AgentSummary[];
   onOpen: (id: string) => void;
   onRestart: (id: string) => void;
   onStop: (s: AgentSummary) => void;
-  onLogs: () => void;
+  onDestroy: (s: AgentSummary) => void;
 }) {
   return (
     <div className="mb-6">
@@ -38,7 +38,7 @@ export function ProjectGroup({
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
         {agents.map((s) => (
-          <AgentTile key={s.agentId} s={s} onOpen={onOpen} onRestart={onRestart} onStop={onStop} onLogs={onLogs} />
+          <AgentTile key={s.agentId} s={s} onOpen={onOpen} onRestart={onRestart} onStop={onStop} onDestroy={onDestroy} />
         ))}
       </div>
     </div>

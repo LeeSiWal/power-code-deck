@@ -1,30 +1,22 @@
 import type { AgentSummary } from '../../stores/appStore';
 import { liveState, STATE_CHIP, attnClasses, attnLabel, kindGlyph, timeAgo } from './liveState';
 import { LiveDot, WorkingBar, Badge, ActBtn } from './LiveDot';
+import { AgentMeta } from '../sidebar/AgentMeta';
+import { SubAgentBar } from '../animation/SubAgentBar';
 
 export function AgentTile({
   s,
   onOpen,
   onRestart,
   onStop,
-  onLogs,
+  onDestroy,
 }: {
   s: AgentSummary;
   onOpen: (id: string) => void;
   onRestart: (id: string) => void;
   onStop: (s: AgentSummary) => void;
-  onLogs: () => void;
+  onDestroy: (s: AgentSummary) => void;
 }) {
-  // 정지 is the reversible stop (keeps the session, can be restarted) — NOT a delete.
-  // Disabled when the agent isn't running. Full delete lives on the dashboard.
-  const QuickActions = ({ s }: { s: AgentSummary }) => (
-    <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-deck-border-soft">
-      <ActBtn onClick={() => onOpen(s.agentId)}>열기</ActBtn>
-      <ActBtn onClick={() => onRestart(s.agentId)}>재시작</ActBtn>
-      <ActBtn disabled={s.status !== 'running'} onClick={() => onStop(s)}>정지</ActBtn>
-      <ActBtn onClick={() => onLogs()}>로그</ActBtn>
-    </div>
-  );
 
   const attn = s.attention?.primary;
   const st = liveState(s);
@@ -80,11 +72,26 @@ export function AgentTile({
           ×{s.toolCount} · {timeAgo(s.lastActivityAt)}
         </div>
       </div>
+        <AgentMeta agentId={s.agentId} />
+        {/* 타일에 이미 `tool: …` 줄이 있어 메인 에이전트만 돌 때는 같은 정보가
+            두 번 나온다. SubAgentBar의 고유 가치는 여러 노드가 동시에 돌 때뿐. */}
+        <SubAgentBar agentId={s.agentId} onlyWhenMultiple />
       <div className="flex gap-1.5 mt-2">
         <Badge>✓ 완료 {s.unread?.completed ?? 0}</Badge>
         <Badge>⚠ 에러 {s.unread?.errors ?? 0}</Badge>
       </div>
-      <QuickActions s={s} />
+      <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-deck-border-soft">
+        <ActBtn onClick={() => onOpen(s.agentId)}>열기</ActBtn>
+        <ActBtn onClick={() => onRestart(s.agentId)}>재시작</ActBtn>
+        {/* 되돌릴 수 있는 정지는 실행 중일 때만, 되돌릴 수 없는 삭제는 이미 멈춘
+            세션에만 노출한다 — 밀도 높은 벽에서 오클릭으로 살아있는 세션을
+            날리는 일이 없도록. */}
+        {s.status === 'running' ? (
+          <ActBtn onClick={() => onStop(s)}>정지</ActBtn>
+        ) : (
+          <ActBtn danger onClick={() => onDestroy(s)}>삭제</ActBtn>
+        )}
+      </div>
     </div>
   );
 }

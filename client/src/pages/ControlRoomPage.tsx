@@ -127,6 +127,18 @@ export function ControlRoomPage() {
     }
   }
 
+  // 되돌릴 수 없는 삭제 — 정지된 세션에서만 호출된다(AgentTile). 목록에서 사라지는
+  // 것은 서버의 agent:destroyed 이벤트가 처리한다.
+  async function destroy(s: AgentSummary) {
+    if (!window.confirm(`${s.name} 세션을 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    try {
+      await api.deleteAgent(s.agentId);
+      showToast(`${s.name} 삭제됨`);
+    } catch (e: any) {
+      showToast('삭제 실패: ' + (e?.message || ''));
+    }
+  }
+
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       {/* Top bar */}
@@ -174,7 +186,7 @@ export function ControlRoomPage() {
                 onOpen={(id) => navigate(`/agents/${id}`)}
                 onRestart={restart}
                 onStop={stop}
-                onLogs={() => navigate('/logs')}
+                onDestroy={destroy}
               />
             ))
           )}
