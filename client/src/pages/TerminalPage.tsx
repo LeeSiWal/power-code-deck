@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { TerminalView, type TerminalHandle } from '../components/terminal/TerminalView';
 import { NativeChat } from '../components/native/NativeChat';
 import { MobileToolbar } from '../components/terminal/MobileToolbar';
@@ -21,7 +21,8 @@ import { useDevice } from '../hooks/useDevice';
 import { useFileExplorer } from '../hooks/useFileExplorer';
 import { useAgentActivity } from '../hooks/useAgentActivity';
 import { useGoUp } from '../hooks/useGoUp';
-import { IconBack, IconFiles, IconClose, IconTerminal, IconHistory, IconPhone, IconGlobe, IconExpand, IconRefresh, AGENT_ICON_MAP } from '../components/icons';
+import { IconBack, IconFiles, IconClose, IconTerminal, IconHistory, IconPhone, IconGlobe, IconExpand, IconRefresh, IconBell, AGENT_ICON_MAP } from '../components/icons';
+import { NotificationBadge } from '../components/notification/NotificationBadge';
 import { api } from '../lib/api';
 import { writeClipboard, readClipboard } from '../lib/clipboard';
 import { generatePalette } from '../lib/paletteGenerator';
@@ -336,15 +337,18 @@ export function TerminalPage() {
           >
             <IconTerminal size={16} />
           </button>
-          {handoffEnabled && (
-            <button
-              onClick={() => setHandoffOpen(true)}
-              className="p-1.5 rounded active:bg-deck-border/30 text-sm"
-              title="모바일에서 이어하기"
-            >
-              <IconPhone size={16} />
-            </button>
-          )}
+          {/* 핸드오프는 모바일에 두지 않는다 — 데스크톱의 세션을 QR로 폰에 넘기는
+              기능이라 폰에서 자기 자신에게 넘길 일이 없다. 데스크톱 헤더에는 그대로 있다.
+              그 자리를 알림이 가져간다: TerminalPage에는 BottomNav가 없어서, 세션에
+              들어와 있는 동안 모바일에서 알림으로 갈 길이 아예 없었다. */}
+          <Link
+            to="/notifications"
+            className="relative p-1.5 rounded active:bg-deck-border/30 text-deck-text-dim"
+            title="알림"
+          >
+            <IconBell size={16} />
+            <NotificationBadge className="absolute top-0 right-0" />
+          </Link>
           <button
             onClick={() => setMobileAnimOpen(true)}
             className={`p-1.5 rounded active:bg-deck-border/30 ${mobileAnimOpen ? 'bg-purple-500/20' : ''}`}
