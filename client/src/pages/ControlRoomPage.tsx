@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { agentDeckWS } from '../lib/ws';
 import { api } from '../lib/api';
 import { useAppStore, type AgentSummary, type PendingApproval } from '../stores/appStore';
@@ -9,6 +9,7 @@ import { dot } from '../components/control/LiveDot';
 import { AttentionRail } from '../components/control/AttentionRail';
 import { ProjectGroup } from '../components/control/ProjectGroup';
 import { ApprovalFeed } from '../components/control/ApprovalFeed';
+import { IconPlus } from '../components/icons';
 
 // Control Room (v0.3.0): the multi-session overview. It renders purely from
 // server-computed summaries + the global approval queue — it never watches any one
@@ -145,13 +146,16 @@ export function ControlRoomPage() {
       <header className="flex items-center gap-3 px-4 py-2 bg-deck-surface border-b border-deck-border shrink-0">
         <span className="font-mono font-bold text-sm">⌘ PCD</span>
         <span className="font-mono text-[11px] border border-deck-border rounded px-2 py-0.5">/control</span>
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="font-mono text-[10px] border border-dashed border-deck-border rounded px-2 py-0.5 text-deck-text-dim"
-        >
-          classic dashboard ↗
-        </button>
         <div className="flex-1" />
+        {/* 생성은 ProjectSelectPage가 담당한다. ?new=1은 "실행 중이면 바로 세션으로"
+            자동 리다이렉트를 건너뛰기 위한 우회 파라미터. */}
+        <Link
+          to="/?new=1"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-deck-accent text-white text-[11px] font-medium active:opacity-80"
+        >
+          <IconPlus size={13} />
+          <span>프로젝트 추가</span>
+        </Link>
         <span className="font-mono text-[10px] text-deck-text-dim flex items-center gap-1.5">
           {dot(connected ? 145 : 0, !connected)} {connected ? 'WS connected' : '연결 끊김'}
         </span>
