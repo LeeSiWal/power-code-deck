@@ -79,6 +79,7 @@ func DeleteAgent(agentSvc *services.AgentService, native *services.NativeService
 		if native != nil {
 			native.Stop(id)
 		}
+		hub.KillCompanionShell(id)
 		if err := agentSvc.Delete(id); err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -20,6 +20,12 @@ const (
 	EventTerminalResize      = "terminal:resize"
 	EventTerminalPasteSubmit = "terminal:pasteSubmit"
 	EventTerminalPasteOnly   = "terminal:pasteOnly"
+	EventShellAttach         = "shell:attach"
+	EventShellDetach         = "shell:detach"
+	EventShellInput          = "shell:input"
+	EventShellAck            = "shell:ack"
+	EventShellResize         = "shell:resize"
+	EventShellKill           = "shell:kill"
 	EventFileWatch           = "file:watch"
 	EventFileUnwatch         = "file:unwatch"
 	EventPing                = "ping"
@@ -65,6 +71,8 @@ const (
 	// Sent to a viewer when another device attaches to the same session — only one
 	// device views a session at a time, so the PTY isn't resized by two viewers.
 	EventTerminalEvicted = "terminal:evicted"
+	EventShellOutput     = "shell:output"
+	EventShellState      = "shell:state"
 
 	// Native track. Unlike the terminal, these go to EVERY device watching the
 	// agent: a conversation has no exclusive viewer — two devices can follow the
@@ -136,6 +144,12 @@ type TerminalOutputPayload struct {
 
 type TerminalEvictedPayload struct {
 	AgentID string `json:"agentId"`
+}
+
+type ShellStatePayload struct {
+	AgentID string `json:"agentId"`
+	Running bool   `json:"running"`
+	Message string `json:"message,omitempty"`
 }
 
 type NativeEvictedPayload struct {

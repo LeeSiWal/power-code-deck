@@ -42,6 +42,7 @@ const CTRL_SYM: Record<string, string> = { '[': '\x1b', '\\': '\x1c', ']': '\x1d
 interface UnifiedInputProps {
   term: CustomTerm;
   agentId: string;
+  channel?: 'terminal' | 'shell';
   /** Focus the textarea on mount (desktop; skipped on touch to avoid popping the keyboard). */
   autoFocus?: boolean;
   /** Touch device: soft-keyboard Enter arrives as a beforeinput 'insertLineBreak'
@@ -50,7 +51,7 @@ interface UnifiedInputProps {
 }
 
 export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(function UnifiedInput(
-  { term, agentId, autoFocus, touch },
+  { term, agentId, channel = 'terminal', autoFocus, touch },
   ref,
 ) {
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -99,21 +100,25 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
   }, [autoFocus]);
 
   const sendInput = useCallback((data: string) => {
-    agentDeckWS.send('terminal:input', { agentId, data });
-  }, [agentId]);
+    agentDeckWS.send(`${channel}:input`, { agentId, data });
+  }, [agentId, channel]);
 
   // Enter: commit the draft as a bracketed paste (the Prompt Bar's exact path), or,
   // when there's no draft, send a raw CR so it confirms the app's current line/menu.
   const submit = useCallback(() => {
     const text = valueRef.current;
     if (text) {
-      agentDeckWS.send('terminal:pasteSubmit', { agentId, text, mode: 'bracketed-paste' });
+      if (channel === 'terminal') {
+        agentDeckWS.send('terminal:pasteSubmit', { agentId, text, mode: 'bracketed-paste' });
+      } else {
+        agentDeckWS.send('shell:input', { agentId, data: `\x1b[200~${text}\x1b[201~\r` });
+      }
       setValue('');
       setRect(term.cursorRect()); // unfreeze: resume tracking from the live cursor
     } else {
       sendInput('\r');
     }
-  }, [agentId, sendInput, term]);
+  }, [agentId, channel, sendInput, term]);
 
   // Insert text (a clipboard paste from the mobile toolbar) into the draft at the
   // caret, then restore focus + caret. Goes through the same draft the user submits.

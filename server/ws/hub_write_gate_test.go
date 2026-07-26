@@ -34,13 +34,13 @@ func (e *gateEngine) Create(services.CreateSessionRequest) (*services.SessionInf
 	return nil, nil
 }
 func (e *gateEngine) Attach(string, string) (*services.AttachResult, error) { return nil, nil }
-func (e *gateEngine) Detach(string, string) error                          { return nil }
-func (e *gateEngine) Kill(string) error                                    { return nil }
-func (e *gateEngine) Restart(string) error                                 { return nil }
-func (e *gateEngine) HasSession(string) bool                               { return true }
-func (e *gateEngine) Get(string) (*services.SessionInfo, error)            { return nil, nil }
-func (e *gateEngine) List() ([]services.SessionInfo, error)                { return nil, nil }
-func (e *gateEngine) SetOutputHandler(services.OutputHandler)              {}
+func (e *gateEngine) Detach(string, string) error                           { return nil }
+func (e *gateEngine) Kill(string) error                                     { return nil }
+func (e *gateEngine) Restart(string) error                                  { return nil }
+func (e *gateEngine) HasSession(string) bool                                { return true }
+func (e *gateEngine) Get(string) (*services.SessionInfo, error)             { return nil, nil }
+func (e *gateEngine) List() ([]services.SessionInfo, error)                 { return nil, nil }
+func (e *gateEngine) SetOutputHandler(services.OutputHandler)               {}
 
 func msg(t *testing.T, event string, payload any) WSMessage {
 	t.Helper()
@@ -98,5 +98,34 @@ func TestEvictedViewerCannotWrite(t *testing.T) {
 
 	if len(eng.writes) != 0 || len(eng.acks) != 0 {
 		t.Fatalf("evicted viewer still reached the PTY: writes=%v acks=%v", eng.writes, eng.acks)
+	}
+}
+
+func TestShellInputRequiresShellAttachment(t *testing.T) {
+	eng := &gateEngine{viewers: map[string]string{"agent-A": "viewer-1"}}
+	h := &Hub{engine: eng}
+	c := &Client{viewerID: "viewer-1", watchingAgent: "agent-A"}
+
+	h.handleMessage(c, msg(t, EventShellInput, TerminalInputPayload{AgentID: "agent-A", Data: "pwd\r"}))
+
+	if len(eng.writes) != 0 {
+		t.Fatalf("native/terminal attachment leaked authority into companion shell: %v", eng.writes)
+	}
+}
+
+func TestShellInputUsesNamespacedAttachedSession(t *testing.T) {
+	eng := &gateEngine{viewers: map[string]string{"shell:agent-A": "viewer-1"}}
+	h := &Hub{engine: eng}
+	c := &Client{viewerID: "viewer-1", shellAttached: map[string]bool{"shell:agent-A": true}}
+
+	h.handleMessage(c, msg(t, EventShellInput, TerminalInputPayload{AgentID: "agent-A", Data: "pwd\r"}))
+	h.handleMessage(c, msg(t, EventShellAck, TerminalAckPayload{AgentID: "agent-A", Bytes: 10}))
+	h.handleMessage(c, msg(t, EventShellResize, TerminalResizePayload{AgentID: "agent-A", Cols: 80, Rows: 24}))
+
+	if len(eng.writes) != 1 || eng.writes[0] != "shell:agent-A" ||
+		len(eng.acks) != 1 || eng.acks[0] != "shell:agent-A" ||
+		len(eng.resizes) != 1 || eng.resizes[0] != "shell:agent-A" {
+		t.Fatalf("shell channel did not map to isolated session: writes=%v acks=%v resizes=%v",
+			eng.writes, eng.acks, eng.resizes)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -156,6 +158,19 @@ func (h *Hub) pollStatus() {
 			delete(h.lastStatus, id)
 		}
 	}
+	// Companion shells have no DB row, so surface an exited process directly to
+	// each attached panel instead of leaving it as a silent frozen terminal.
+	h.clients.Range(func(key, _ interface{}) bool {
+		client := key.(*Client)
+		for _, sessionID := range client.shells() {
+			if !h.engine.HasSession(sessionID) {
+				agentID := strings.TrimPrefix(sessionID, "shell:")
+				client.sendEvent(EventShellState, ShellStatePayload{AgentID: agentID, Running: false})
+				client.removeShell(sessionID)
+			}
+		}
+		return true
+	})
 }
 
 func (h *Hub) pollMeta() {
@@ -238,6 +253,9 @@ func (h *Hub) unregister(c *Client) {
 		// A browser closing is a viewer Detach — the session process lives on.
 		h.engine.Detach(c.watchingAgent, c.viewerID)
 		h.watcherSvc.Unwatch(c.watchingAgent)
+	}
+	for _, sessionID := range c.shells() {
+		h.engine.Detach(sessionID, c.viewerID)
 	}
 }
 
@@ -469,6 +487,68 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		}
 		h.engine.Write(payload.AgentID, []byte(buildPasteData(payload.Text, payload.Mode, false)))
 
+	case EventShellAttach:
+		var payload TerminalAttachPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		h.handleShellAttach(c, payload)
+
+	case EventShellDetach:
+		var payload TerminalAttachPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		sessionID := shellSessionID(payload.AgentID)
+		h.engine.Detach(sessionID, c.viewerID)
+		c.removeShell(sessionID)
+
+	case EventShellInput:
+		var payload TerminalInputPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		sessionID := shellSessionID(payload.AgentID)
+		if !h.mayWrite(c, sessionID) {
+			return
+		}
+		h.engine.Write(sessionID, []byte(payload.Data))
+
+	case EventShellAck:
+		var payload TerminalAckPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		sessionID := shellSessionID(payload.AgentID)
+		if !h.mayWrite(c, sessionID) {
+			return
+		}
+		h.engine.Ack(sessionID, payload.Bytes)
+
+	case EventShellResize:
+		var payload TerminalResizePayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		sessionID := shellSessionID(payload.AgentID)
+		if !h.mayWrite(c, sessionID) {
+			return
+		}
+		h.engine.Resize(sessionID, int(payload.Cols), int(payload.Rows))
+
+	case EventShellKill:
+		var payload TerminalAttachPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		sessionID := shellSessionID(payload.AgentID)
+		if !h.mayWrite(c, sessionID) {
+			return
+		}
+		h.engine.Kill(sessionID)
+		c.removeShell(sessionID)
+		c.sendEvent(EventShellState, ShellStatePayload{AgentID: payload.AgentID, Running: false})
+
 	case EventNativeOpen:
 		var payload NativeOpenPayload
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
@@ -640,6 +720,69 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 	}
 }
 
+func shellSessionID(agentID string) string { return "shell:" + agentID }
+
+func defaultShell() string {
+	if runtime.GOOS == "windows" {
+		if shell := os.Getenv("COMSPEC"); shell != "" {
+			return shell
+		}
+		return "cmd.exe"
+	}
+	if shell := os.Getenv("SHELL"); shell != "" {
+		return shell
+	}
+	return "/bin/sh"
+}
+
+func (h *Hub) handleShellAttach(c *Client, payload TerminalAttachPayload) {
+	agent, err := h.agentSvc.Get(payload.AgentID)
+	if err != nil {
+		c.sendEvent(EventShellState, ShellStatePayload{AgentID: payload.AgentID, Message: "에이전트를 찾을 수 없습니다"})
+		return
+	}
+	sessionID := shellSessionID(payload.AgentID)
+	fallback := false
+	if !h.engine.HasSession(sessionID) {
+		cwd := agent.WorkingDir
+		if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+			cwd, _ = os.UserHomeDir()
+			fallback = true
+		}
+		if _, err := h.engine.Create(services.CreateSessionRequest{
+			ID: sessionID, Type: "shell", Command: defaultShell(), Cwd: cwd,
+			Cols: int(payload.Cols), Rows: int(payload.Rows),
+		}); err != nil {
+			c.sendEvent(EventShellState, ShellStatePayload{
+				AgentID: payload.AgentID, Message: "셸을 시작하지 못했습니다: " + err.Error(),
+			})
+			return
+		}
+	}
+	res, err := h.engine.Attach(sessionID, c.viewerID)
+	if err != nil {
+		c.sendEvent(EventShellState, ShellStatePayload{AgentID: payload.AgentID, Message: err.Error()})
+		return
+	}
+	c.addShell(sessionID)
+	cols, rows := payload.Cols, payload.Rows
+	if cols == 0 {
+		cols = 80
+	}
+	if rows == 0 {
+		rows = 24
+	}
+	h.engine.Resize(sessionID, int(cols), int(rows))
+	message := ""
+	if fallback {
+		message = "작업 디렉토리가 없어 홈 디렉토리에서 시작했습니다"
+	}
+	c.sendEvent(EventShellState, ShellStatePayload{AgentID: payload.AgentID, Running: true, Message: message})
+	if res != nil && len(res.Replay) > 0 {
+		c.sendEvent(EventShellOutput, TerminalOutputPayload{AgentID: payload.AgentID, Data: string(res.Replay)})
+	}
+}
+
 func (h *Hub) handleTerminalAttach(c *Client, payload TerminalAttachPayload) {
 	// agentSvc is nil only in tests that exercise the viewer bookkeeping itself.
 	if h.agentSvc != nil {
@@ -733,6 +876,22 @@ func (h *Hub) BroadcastToAgent(agentID string, event string, payload interface{}
 		}
 		return true
 	})
+}
+
+// BroadcastToShell sends output only to clients attached to the companion shell.
+func (h *Hub) BroadcastToShell(agentID string, payload TerminalOutputPayload) {
+	h.clients.Range(func(key, _ interface{}) bool {
+		client := key.(*Client)
+		if client.hasShell(shellSessionID(agentID)) {
+			client.sendEvent(EventShellOutput, payload)
+		}
+		return true
+	})
+}
+
+// KillCompanionShell enforces the shell's ownership by its agent.
+func (h *Hub) KillCompanionShell(agentID string) {
+	h.engine.Kill(shellSessionID(agentID))
 }
 
 func (h *Hub) BroadcastAll(event string, payload interface{}) {

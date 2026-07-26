@@ -131,6 +131,11 @@ func main() {
 
 	// Session output → broadcast to every viewer of that session.
 	sessionEngine.SetOutputHandler(func(sessionID string, data []byte) {
+		if strings.HasPrefix(sessionID, "shell:") {
+			agentID := strings.TrimPrefix(sessionID, "shell:")
+			hub.BroadcastToShell(agentID, ws.TerminalOutputPayload{AgentID: agentID, Data: string(data)})
+			return
+		}
 		hub.BroadcastToAgent(sessionID, ws.EventTerminalOutput, ws.TerminalOutputPayload{
 			AgentID: sessionID,
 			Data:    string(data),

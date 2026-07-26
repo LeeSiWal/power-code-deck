@@ -49,6 +49,11 @@ const MODELS: { id: string; label: string; desc: string }[] = [
 
 const CODEX_MODELS: typeof MODELS = [
   { id: '', label: 'Auto', desc: 'Codex 기본 모델' },
+  { id: 'gpt-5.6', label: 'GPT-5.6', desc: '최신 · 복잡한 에이전틱 작업' },
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', desc: '깊은 분석 · 높은 완성도' },
+  { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', desc: '균형 잡힌 일상 작업' },
+  { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', desc: '빠르고 명확한 반복 작업' },
+  { id: 'gpt-5.5', label: 'GPT-5.5', desc: '이전 세대 범용 모델' },
   { id: 'gpt-5.4', label: 'GPT-5.4', desc: '복잡한 코딩 작업' },
   { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', desc: 'Codex 최적화 모델' },
   { id: 'gpt-5.3-codex-spark', label: 'Codex Spark', desc: '빠른 코딩 작업' },

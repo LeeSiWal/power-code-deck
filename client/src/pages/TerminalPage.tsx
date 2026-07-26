@@ -7,6 +7,7 @@ import { TerminalKeyBar } from '../components/terminal/TerminalKeyBar';
 import { PromptBar } from '../components/terminal/PromptBar';
 import { HandoffModal } from '../components/terminal/HandoffModal';
 import { SessionHistory } from '../components/terminal/SessionHistory';
+import { CompanionShell } from '../components/terminal/CompanionShell';
 import { FileExplorer } from '../components/file/FileExplorer';
 import { FilePreview } from '../components/file/FilePreview';
 import { FileEditor } from '../components/file/FileEditor';
@@ -81,6 +82,7 @@ export function TerminalPage() {
   const [handoffOpen, setHandoffOpen] = useState(false);
   const [handoffToast, setHandoffToast] = useState(false);
   const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
+  const [mobileShellOpen, setMobileShellOpen] = useState(false);
 
   // The Prompt Bar is the primary text input on EVERY device. The terminal's own
   // (hidden textarea) IME can't reliably compose Korean — jamo split even on macOS —
@@ -157,7 +159,7 @@ export function TerminalPage() {
   // Panels
   const [leftPanelOpen, setLeftPanelOpen] = useState(!isMobile);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [rightTab, setRightTab] = useState<'subagent' | 'browser' | 'sessions'>('subagent');
+  const [rightTab, setRightTab] = useState<'subagent' | 'browser' | 'sessions' | 'shell'>('subagent');
   const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
   const [mobileAnimOpen, setMobileAnimOpen] = useState(false);
   const [mobileBrowserOpen, setMobileBrowserOpen] = useState(false);
@@ -325,6 +327,13 @@ export function TerminalPage() {
             title="지난 세션 기록"
           >
             <IconHistory size={16} />
+          </button>
+          <button
+            onClick={() => setMobileShellOpen(true)}
+            className="p-1.5 rounded active:bg-deck-border/30 text-deck-text-dim"
+            title="동반 셸"
+          >
+            <IconTerminal size={16} />
           </button>
           {handoffEnabled && (
             <button
@@ -517,6 +526,19 @@ export function TerminalPage() {
             </div>
           </>
         )}
+
+        {/* Companion shell bottom sheet */}
+        {mobileShellOpen && (
+          <>
+            <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setMobileShellOpen(false)} />
+            <div className="fixed bottom-0 left-0 right-0 z-50 rounded-t-xl safe-bottom bg-deck-surface border-t border-deck-border animate-slide-up"
+                 style={{ height: '75dvh' }}>
+              <div className="h-full overflow-hidden">
+                <CompanionShell agentId={agentId} onClose={() => setMobileShellOpen(false)} />
+              </div>
+            </div>
+          </>
+        )}
       </div>
     );
   }
@@ -573,6 +595,16 @@ export function TerminalPage() {
           }`}
         >
           Files
+        </button>
+
+        <button
+          onClick={() => { if (rightPanelOpen && rightTab === 'shell') { setRightPanelOpen(false); } else { setRightPanelOpen(true); setRightTab('shell'); } }}
+          className={`text-xs px-2 py-0.5 rounded transition-colors ${
+            rightPanelOpen && rightTab === 'shell' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-deck-bg text-deck-text-dim'
+          }`}
+          title="현재 프로젝트의 동반 셸"
+        >
+          <span className="inline-flex items-center gap-1"><IconTerminal size={13} /> Shell</span>
         </button>
 
         <button
@@ -740,6 +772,8 @@ export function TerminalPage() {
                 <BrowserPanel agentId={agentId} onClose={() => setRightPanelOpen(false)} />
               ) : rightTab === 'sessions' ? (
                 <SessionHistory agentId={agentId} onClose={() => setRightPanelOpen(false)} />
+              ) : rightTab === 'shell' ? (
+                <CompanionShell agentId={agentId} onClose={() => setRightPanelOpen(false)} />
               ) : (
                 <SubAgentPanel activity={activity} palette={generatePalette(agent?.colorHue ?? 220)} onClose={() => setRightPanelOpen(false)} />
               )}

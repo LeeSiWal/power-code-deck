@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -35,6 +36,41 @@ type Client struct {
 	// So the engine viewer lives until the LAST surface detaches. Only readPump's
 	// goroutine touches this, same as watchingAgent.
 	attachCount map[string]int
+	// Companion shells are independent of watchingAgent: a native chat and its
+	// scratch shell must remain attached at the same time.
+	shellAttached map[string]bool
+	shellMu       sync.RWMutex
+}
+
+func (c *Client) addShell(sessionID string) {
+	c.shellMu.Lock()
+	defer c.shellMu.Unlock()
+	if c.shellAttached == nil {
+		c.shellAttached = make(map[string]bool)
+	}
+	c.shellAttached[sessionID] = true
+}
+
+func (c *Client) removeShell(sessionID string) {
+	c.shellMu.Lock()
+	defer c.shellMu.Unlock()
+	delete(c.shellAttached, sessionID)
+}
+
+func (c *Client) hasShell(sessionID string) bool {
+	c.shellMu.RLock()
+	defer c.shellMu.RUnlock()
+	return c.shellAttached[sessionID]
+}
+
+func (c *Client) shells() []string {
+	c.shellMu.RLock()
+	defer c.shellMu.RUnlock()
+	ids := make([]string, 0, len(c.shellAttached))
+	for id := range c.shellAttached {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func (c *Client) readPump() {

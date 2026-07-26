@@ -55,6 +55,8 @@ const MAX_FROZEN_CHARS = 1_000_000;
 
 interface TerminalViewProps {
   agentId: string;
+  /** Companion shell uses the same emulator over an independent WS channel. */
+  channel?: 'terminal' | 'shell';
   fontSize?: number;
   /** Fired when the user focuses the terminal directly (desktop click). */
   onFocusTerminal?: () => void;
@@ -71,7 +73,7 @@ interface TerminalViewProps {
  * (terminal:attach/input/output/resize).
  */
 export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(function TerminalView(
-  { agentId, fontSize, onFocusTerminal, onHangulDirect },
+  { agentId, channel = 'terminal', fontSize, onFocusTerminal, onHangulDirect },
   ref,
 ) {
   const { isMobile, isTablet, isTouchDevice } = useDevice();
@@ -152,7 +154,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         return;
       }
       const app = wtRef.current?.applicationCursorKeys ?? false;
-      agentDeckWS.send('terminal:input', { agentId, data: app ? (APP_CURSOR_MAP[data] ?? data) : data });
+      agentDeckWS.send(`${channel}:input`, { agentId, data: app ? (APP_CURSOR_MAP[data] ?? data) : data });
     },
     paste: (text: string) => {
       if (!text) return;
@@ -162,10 +164,14 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       if (UNIFIED_INPUT && unifiedInputRef.current) {
         unifiedInputRef.current.insert(text);
       } else {
-        agentDeckWS.send('terminal:pasteOnly', { agentId, text, mode: 'bracketed-paste' });
+        if (channel === 'terminal') {
+          agentDeckWS.send('terminal:pasteOnly', { agentId, text, mode: 'bracketed-paste' });
+        } else {
+          agentDeckWS.send('shell:input', { agentId, data: `\x1b[200~${text}\x1b[201~` });
+        }
       }
     },
-  }), [agentId]);
+  }), [agentId, channel]);
 
   const flushPending = useCallback(() => {
     selectingRef.current = false;
@@ -263,7 +269,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     wtRef.current?.setRenderPaused(false);
     wtRef.current?.reset();
     dataSinceAttachRef.current = false;
-    agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current, claim: true });
+    agentDeckWS.send(`${channel}:attach`, { agentId, cols: colsRef.current, rows: rowsRef.current, claim: channel === 'terminal' });
     attachedRef.current = true;
     // Once the replay has landed and been parsed, force a clean full repaint to
     // sweep any stale attributes ghostty accumulated from the replayed history.
@@ -303,11 +309,11 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       t?.setRenderPaused(false);
       t?.reset();
       dataSinceAttachRef.current = false;
-      agentDeckWS.send('terminal:attach', { agentId, cols: colsRef.current, rows: rowsRef.current, claim: true });
+      agentDeckWS.send(`${channel}:attach`, { agentId, cols: colsRef.current, rows: rowsRef.current, claim: channel === 'terminal' });
       requestFullRepaint();
     }, 1200);
     startHealWatchdog();
-  }, [agentId, requestFullRepaint, startHealWatchdog]);
+  }, [agentId, channel, requestFullRepaint, startHealWatchdog]);
 
   // Reclaim the session on this device (after being evicted by another device).
   const reclaim = useCallback(() => {
@@ -319,7 +325,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
   // WS wiring: output → write; open/close → status + (re)attach; detach on unmount.
   useEffect(() => {
-    const unsubOutput = agentDeckWS.on('terminal:output', (payload: any) => {
+    const unsubOutput = agentDeckWS.on(`${channel}:output`, (payload: any) => {
       if (payload.agentId !== agentId) return;
       writeToTerm(payload.data);
       if (statusRef.current !== 'connected') setStatus('connected');
@@ -342,13 +348,13 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     const unsubClose = agentDeckWS.on('close', () => setStatus('disconnected'));
     // Another device attached — release this viewer and stop attaching until the
     // user reclaims it. Tell the server to drop us (clears our server-side viewer).
-    const unsubEvicted = agentDeckWS.on('terminal:evicted', (payload: any) => {
+    const unsubEvicted = channel === 'terminal' ? agentDeckWS.on('terminal:evicted', (payload: any) => {
       if (payload.agentId !== agentId) return;
       attachedRef.current = false;
       clearInterval(healWatchdogRef.current);
       setEvicted(true);
       agentDeckWS.send('terminal:detach', { agentId });
-    });
+    }) : () => {};
 
     if (agentDeckWS.connected) {
       setStatus('connected');
@@ -361,9 +367,9 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       unsubOpen();
       unsubClose();
       unsubEvicted();
-      agentDeckWS.send('terminal:detach', { agentId });
+      agentDeckWS.send(`${channel}:detach`, { agentId });
     };
-  }, [agentId, maybeAttach, writeToTerm]);
+  }, [agentId, channel, maybeAttach, writeToTerm]);
 
   // Attach once the terminal is ready — from a passive effect, so it runs AFTER the
   // WS effect above has subscribed to terminal:output. This is what fixes "resume /
@@ -455,8 +461,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       : `\x1b[M${String.fromCharCode(32 + cb)}${String.fromCharCode(32 + x)}${String.fromCharCode(32 + y)}`;
     let data = '';
     for (let i = 0; i < steps; i++) data += seq;
-    if (data) agentDeckWS.send('terminal:input', { agentId, data });
-  }, [agentId]);
+    if (data) agentDeckWS.send(`${channel}:input`, { agentId, data });
+  }, [agentId, channel]);
 
   const scrollToBottom = useCallback(() => {
     const el = shellRef.current?.querySelector('.wterm') as HTMLElement | null;
@@ -535,7 +541,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       const { x, y } = cellAt(clientX, clientY);
       let data = '';
       for (let i = 0; i < steps; i++) data += wheelSeq(up, x, y);
-      if (data) agentDeckWS.send('terminal:input', { agentId, data });
+      if (data) agentDeckWS.send(`${channel}:input`, { agentId, data });
       scheduleRepaint(); // sweep the stale grey ESC[L leaves, once scrolling settles
       // Net wheel direction → jump-to-bottom visibility (we can't read the app's
       // own scroll position). Clamped so it returns to 0 within a screen or two.
@@ -846,8 +852,8 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     // path, so a backgrounded tab would inject stale replies into someone else's
     // live session. (The server drops these too; this saves the round trip.)
     if (evictedRef.current) return;
-    agentDeckWS.send('terminal:input', { agentId, data });
-  }, [agentId]);
+    agentDeckWS.send(`${channel}:input`, { agentId, data });
+  }, [agentId, channel]);
 
   // Flow-control ack: tell the server how many bytes we've parsed so it can
   // release a backpressured (flooding) session. Only meaningful as the active
@@ -855,9 +861,9 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   // device's backlog.
   const onAck = useCallback((bytes: number) => {
     if (agentDeckWS.connected && !evictedRef.current) {
-      agentDeckWS.send('terminal:ack', { agentId, bytes });
+      agentDeckWS.send(`${channel}:ack`, { agentId, bytes });
     }
-  }, [agentId]);
+  }, [agentId, channel]);
 
   const onResize = useCallback((cols: number, rows: number) => {
     colsRef.current = cols;
@@ -867,9 +873,9 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     // out from under the device that's actually in use. (Not gated on attachedRef so
     // wterm's initial pre-attach measurement still reaches the PTY.)
     if (agentDeckWS.connected && !evictedRef.current) {
-      agentDeckWS.send('terminal:resize', { agentId, cols, rows });
+      agentDeckWS.send(`${channel}:resize`, { agentId, cols, rows });
     }
-  }, [agentId]);
+  }, [agentId, channel]);
 
   const onReady = useCallback((wt: CustomTerm) => {
     wtRef.current = wt;
@@ -898,10 +904,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       if (term && agentDeckWS.connected) {
         colsRef.current = term.cols;
         rowsRef.current = term.rows;
-        agentDeckWS.send('terminal:resize', { agentId, cols: term.cols, rows: term.rows });
+        agentDeckWS.send(`${channel}:resize`, { agentId, cols: term.cols, rows: term.rows });
       }
     });
-  }, [isTouchDevice, agentId]);
+  }, [isTouchDevice, agentId, channel]);
 
   return (
     <div ref={shellRef} className="relative w-full h-full wterm-shell">
@@ -958,7 +964,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
       {/* Experiment: one cursor-anchored input for text + IME + control keys. */}
       {UNIFIED_INPUT && ready && wtRef.current && (
-        <UnifiedInput ref={unifiedInputRef} term={wtRef.current} agentId={agentId} autoFocus={!isTouchDevice} touch={isTouchDevice} />
+        <UnifiedInput ref={unifiedInputRef} term={wtRef.current} agentId={agentId} channel={channel} autoFocus={!isTouchDevice} touch={isTouchDevice} />
       )}
 
       {debug && debugInfo && (
