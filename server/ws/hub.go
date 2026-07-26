@@ -832,6 +832,15 @@ func (h *Hub) handleShellAttach(c *Client, payload TerminalAttachPayload) {
 	h.sendActivitySnapshot(c, payload.AgentID)
 }
 
+// sendActivitySnapshot pushes the current activity to a client that just attached, so
+// re-opening a running session shows what the agent is doing immediately instead of
+// waiting for the next poll tick.
+//
+// Called from native:open and shell:attach — deliberately NOT from terminal:attach.
+// The gap it closes is at most one 800ms tick, and the terminal track (shell / custom
+// commands) has virtually no Claude activity to show, so matching it there would add
+// code for no visible gain. If terminal sessions ever need the panel, this same line
+// is all it takes.
 func (h *Hub) sendActivitySnapshot(c *Client, agentID string) {
 	if h.activity == nil {
 		return
