@@ -180,11 +180,23 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   }, [cwd, driver, navigate]);
 
   // Grow the input with its content (up to a cap, then it scrolls internally).
+  //
+  // The height we assign INCLUDES the border (Tailwind's preflight makes everything
+  // border-box) but scrollHeight EXCLUDES it, so assigning scrollHeight straight left
+  // the content box a border's worth too short — scrollHeight stayed greater than
+  // clientHeight and the box showed a scrollbar even while empty. Measure the actual
+  // border instead of assuming a width, so this stays correct if the styling changes.
+  //
+  // Overflow is toggled rather than left on `auto`: below the cap there is nothing to
+  // scroll, and a permanently-scrollable box is what made the stray bar visible.
   useEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
-    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+    const border = ta.offsetHeight - ta.clientHeight; // 0 when there is no border
+    const needed = ta.scrollHeight + border;
+    ta.style.height = `${Math.min(needed, 160)}px`;
+    ta.style.overflowY = needed > 160 ? 'auto' : 'hidden';
   }, [draft]);
 
   const onFilePick = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -704,7 +716,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
             rows={1}
             placeholder="Claude에게 메시지…"
             style={{ maxHeight: 160 }}
-            className="w-full resize-none overflow-y-auto bg-deck-surface border border-deck-border rounded-lg px-3 py-2 text-sm text-deck-text outline-none focus:border-deck-accent"
+            className="w-full resize-none overflow-y-hidden bg-deck-surface border border-deck-border rounded-lg px-3 py-2 text-sm text-deck-text outline-none focus:border-deck-accent"
           />
 
           <div className="flex items-center gap-2">
