@@ -207,31 +207,12 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 // bypassPermissions would hang the tool call forever because nobody is watching for
 // approval cards.
 //
-// If the policy is not yet in `policies` but the session IS in `sessions` (for
-// example, a session registered directly without going through startSession), this
-// function derives and caches the policy from the session object. This makes the
-// lookup resilient to the restart window even in that code path: the first call
-// while the session is alive populates `policies`, so subsequent calls during the
-// window still find it there.
-//
-// An id that was never started by this server will be absent from both maps, so
+// An id that was never started by this server will be absent from `policies`, so
 // the guard "unknown session → surface to a human" is preserved.
 func (s *NativeService) autoDecision(req PermissionRequest) (PermissionDecision, bool) {
-	s.mu.Lock()
+	s.mu.RLock()
 	pol, ok := s.policies[req.SessionID]
-	if !ok {
-		// `policies` is the primary source (survives the restart window), but if a
-		// session was registered via the sessions map directly — before this path had
-		// a chance to cache it — derive and cache the policy now so the next call
-		// (including one that arrives mid-restart, after sessions is deleted) still
-		// finds it.
-		if sess := s.sessions[req.SessionID]; sess != nil {
-			pol = sessionPolicy{mode: sess.mode, cwd: sess.cwd}
-			s.policies[req.SessionID] = pol
-			ok = true
-		}
-	}
-	s.mu.Unlock()
+	s.mu.RUnlock()
 	if !ok {
 		return PermissionDecision{}, false
 	}

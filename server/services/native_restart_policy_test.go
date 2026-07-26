@@ -45,7 +45,9 @@ func TestBypassPolicySurvivesRestartWindow(t *testing.T) {
 	s.SetHandlers(nil, func(PermissionRequest) { asked++ })
 
 	s.mu.Lock()
+	// Mirrors what startSession records: both maps written under the same lock.
 	s.sessions["agent-1"] = &nativeSession{id: "agent-1", mode: BypassMode, cwd: "/tmp/proj"}
+	s.policies["agent-1"] = sessionPolicy{mode: BypassMode, cwd: "/tmp/proj"}
 	s.mu.Unlock()
 
 	// Baseline: with the session in the map, 전체 허용 answers without a human.
@@ -83,7 +85,9 @@ func TestAutoPolicySurvivesRestartWindow(t *testing.T) {
 	s.SetHandlers(nil, func(PermissionRequest) { asked++ })
 
 	s.mu.Lock()
+	// Mirrors what startSession records: both maps written under the same lock.
 	s.sessions["agent-2"] = &nativeSession{id: "agent-2", mode: AutoMode, cwd: "/tmp/proj"}
+	s.policies["agent-2"] = sessionPolicy{mode: AutoMode, cwd: "/tmp/proj"}
 	s.mu.Unlock()
 
 	// Read is unconditionally safe, so auto mode answers it without a human.
