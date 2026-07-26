@@ -36,6 +36,19 @@ func nativeResultEvent() *StreamEvent {
 	return &StreamEvent{Type: StreamTypeResult, Raw: raw}
 }
 
+// sessionPolicy holds the permission mode and working directory for a session.
+// These belong to the AGENT (user's choice), not to the driver process. A restart
+// replaces the driver but must preserve the mode the user chose — so this is stored
+// separately from the session map, which is empty during the restart window.
+//
+// Storing mode+cwd together (rather than just mode) mirrors what autoDecide needs:
+// editWithinCwd compares the tool's target path against cwd, so cwd is as much part
+// of the policy as the mode name.
+type sessionPolicy struct {
+	mode string
+	cwd  string
+}
+
 // NativeService owns the live native sessions: it starts a driver per session,
 // wires that session's approval bridge, and fans the event stream out to whoever
 // is watching (the WS hub).
@@ -51,6 +64,16 @@ type NativeService struct {
 
 	mu       sync.RWMutex
 	sessions map[string]*nativeSession
+	// policies holds the permission policy (mode + cwd) for every session the server
+	// has ever started, keyed by session id. Unlike `sessions`, this map is NOT cleared
+	// on restart — restart() deletes from `sessions` before the new driver is running,
+	// creating a window where permission requests arrive with no session object to look
+	// up. Reading policy from a separate, longer-lived map closes that window.
+	//
+	// A policy entry is only removed when the session GENUINELY ends (pump's `current`
+	// branch), never when a restart swaps drivers. This is the invariant that matters:
+	// the user's mode choice outlives the process that implements it.
+	policies map[string]sessionPolicy
 
 	// onEvent/onApproval are set by the hub at wiring time.
 	onEvent    func(sessionID string, ev *StreamEvent)
@@ -102,6 +125,7 @@ func NewNativeService(baseURL string) *NativeService {
 		baseURL:  baseURL,
 		selfBin:  selfBin,
 		sessions: make(map[string]*nativeSession),
+		policies: make(map[string]sessionPolicy),
 	}
 }
 
@@ -173,14 +197,45 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 }
 
 // autoDecision applies the auto-approval policy for the request's session.
+//
+// It reads from `policies` — a map with a longer lifetime than `sessions`. The two
+// maps have different lifetimes deliberately: `sessions` is empty during the restart
+// window (restart() deletes the old entry before startSession adds the new one),
+// whereas `policies` is only cleared when the session genuinely ends. Reading policy
+// from `policies` means a permission request that lands mid-restart still resolves
+// by the user's chosen mode, instead of falling through to "ask a human" — which in
+// bypassPermissions would hang the tool call forever because nobody is watching for
+// approval cards.
+//
+// If the policy is not yet in `policies` but the session IS in `sessions` (for
+// example, a session registered directly without going through startSession), this
+// function derives and caches the policy from the session object. This makes the
+// lookup resilient to the restart window even in that code path: the first call
+// while the session is alive populates `policies`, so subsequent calls during the
+// window still find it there.
+//
+// An id that was never started by this server will be absent from both maps, so
+// the guard "unknown session → surface to a human" is preserved.
 func (s *NativeService) autoDecision(req PermissionRequest) (PermissionDecision, bool) {
-	s.mu.RLock()
-	sess := s.sessions[req.SessionID]
-	s.mu.RUnlock()
-	if sess == nil {
+	s.mu.Lock()
+	pol, ok := s.policies[req.SessionID]
+	if !ok {
+		// `policies` is the primary source (survives the restart window), but if a
+		// session was registered via the sessions map directly — before this path had
+		// a chance to cache it — derive and cache the policy now so the next call
+		// (including one that arrives mid-restart, after sessions is deleted) still
+		// finds it.
+		if sess := s.sessions[req.SessionID]; sess != nil {
+			pol = sessionPolicy{mode: sess.mode, cwd: sess.cwd}
+			s.policies[req.SessionID] = pol
+			ok = true
+		}
+	}
+	s.mu.Unlock()
+	if !ok {
 		return PermissionDecision{}, false
 	}
-	return autoDecide(sess.mode, req.ToolName, req.Input, sess.cwd)
+	return autoDecide(pol.mode, req.ToolName, req.Input, pol.cwd)
 }
 
 // Start launches a native Claude or Codex session for an agent. Idempotent:
@@ -294,6 +349,10 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	}
 	s.mu.Lock()
 	s.sessions[sessionID] = sess
+	// Record the policy under the same lock so any permission request that arrives
+	// after this point — including during a future restart window — can still resolve
+	// the user's mode choice without finding the session object.
+	s.policies[sessionID] = sessionPolicy{mode: mode, cwd: cwd}
 	save := s.saveConfig
 	s.mu.Unlock()
 
@@ -357,6 +416,14 @@ func (s *NativeService) pump(sess *nativeSession) {
 	current := s.sessions[sess.id] == sess
 	if current {
 		delete(s.sessions, sess.id)
+		// The policy (mode + cwd) outlives the driver process so it survives restarts,
+		// but when the session GENUINELY ends there is no replacement — clean it up.
+		// We must remove it here, under the same lock, so that any permission request
+		// that sneaks in after the process exits but before this block runs still finds
+		// a policy (and resolves by mode), while a brand-new session that reuses the
+		// same id later starts from a clean slate rather than inheriting a stale cwd
+		// or mode from its predecessor.
+		delete(s.policies, sess.id)
 	}
 	s.mu.Unlock()
 	if current {
