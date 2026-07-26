@@ -4,108 +4,17 @@ import { agentDeckWS } from '../lib/ws';
 import { api } from '../lib/api';
 import { useAppStore, type AgentSummary, type PendingApproval } from '../stores/appStore';
 import { BottomNav } from '../components/layout/BottomNav';
+import { ATTN_ORDER } from '../components/control/liveState';
+import { dot } from '../components/control/LiveDot';
+import { AttentionRail } from '../components/control/AttentionRail';
+import { ProjectGroup } from '../components/control/ProjectGroup';
+import { ApprovalFeed } from '../components/control/ApprovalFeed';
 
 // Control Room (v0.3.0): the multi-session overview. It renders purely from
 // server-computed summaries + the global approval queue — it never watches any one
 // session's detailed stream. Initial state comes over REST; live changes arrive as
 // agent:summaries / native:approval / approval:resolved deltas applied to the store
 // (wired in useWebSocket), so this page just reads and reacts.
-
-const ATTN_ORDER: Record<string, number> = { approval: 0, error: 1, stalled: 2 };
-
-function attnClasses(primary: string): string {
-  switch (primary) {
-    case 'approval':
-      return 'border-deck-warning text-deck-warning';
-    case 'error':
-      return 'border-deck-danger text-deck-danger';
-    case 'stalled':
-      return 'border-deck-text-dim text-deck-text-dim';
-    default:
-      return 'border-deck-border text-deck-text-dim';
-  }
-}
-
-function attnLabel(r: { kind: string; count?: number }): string {
-  const base = r.kind;
-  return r.count && r.count > 1 ? `${base} ·${r.count}` : base;
-}
-
-function kindGlyph(preset: string): string {
-  const p = (preset || '').toLowerCase();
-  if (p.includes('codex')) return 'codex';
-  if (p.includes('claude')) return 'claude';
-  return 'shell';
-}
-
-function timeAgo(ms: number): string {
-  if (!ms) return '—';
-  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (s < 5) return 'now';
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
-
-function dot(hue: number, hollow = false) {
-  const color = `hsl(${hue}, 55%, 55%)`;
-  return (
-    <span
-      className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-      style={hollow ? { border: `1.5px solid ${color}` } : { background: color }}
-    />
-  );
-}
-
-// Three live states, the thing the overview must make obvious at a glance:
-//   working — running AND produced activity in the last ~30s (a tool is moving)
-//   idle    — running but quiet (alive, on standby)
-//   stopped — not running
-type LiveState = 'working' | 'idle' | 'stopped';
-
-const WORKING_WINDOW_MS = 30_000;
-
-function liveState(s: AgentSummary): LiveState {
-  if (s.status !== 'running') return 'stopped';
-  if (s.lastActivityAt > 0 && Date.now() - s.lastActivityAt < WORKING_WINDOW_MS) return 'working';
-  return 'idle';
-}
-
-const STATE_CHIP: Record<LiveState, { label: string; cls: string }> = {
-  working: { label: '작업 중', cls: 'border-deck-accent/50 text-deck-accent-light bg-deck-accent/10' },
-  idle: { label: '대기', cls: 'border-deck-success/40 text-deck-success' },
-  stopped: { label: '정지', cls: 'border-deck-border text-deck-text-faint' },
-};
-
-// LiveDot: hollow for stopped, a steady dot for idle, and a pulsing (ping) dot for
-// working — so "is it doing anything right now" reads instantly, without parsing text.
-function LiveDot({ hue, state }: { hue: number; state: LiveState }) {
-  const color = `hsl(${hue}, 60%, 58%)`;
-  if (state === 'stopped') {
-    return <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0 border-[1.5px] border-deck-text-faint" />;
-  }
-  return (
-    <span className="relative inline-flex w-2.5 h-2.5 shrink-0">
-      {state === 'working' && (
-        <span className="absolute inline-flex h-full w-full rounded-full animate-ping" style={{ background: color, opacity: 0.55 }} />
-      )}
-      <span className="relative inline-flex w-2.5 h-2.5 rounded-full" style={{ background: color }} />
-    </span>
-  );
-}
-
-// WorkingBar: an indeterminate sweep shown only while an agent is actively working —
-// motion is the clearest "this one is live" signal on a wall of tiles.
-function WorkingBar() {
-  return (
-    <div className="h-0.5 rounded-full overflow-hidden bg-deck-accent/10 mt-2">
-      <div className="h-full w-1/3 bg-deck-accent/70 animate-working-bar" />
-    </div>
-  );
-}
 
 export function ControlRoomPage() {
   const navigate = useNavigate();
@@ -218,132 +127,6 @@ export function ControlRoomPage() {
     }
   }
 
-  // 정지 is the reversible stop (keeps the session, can be restarted) — NOT a delete.
-  // Disabled when the agent isn't running. Full delete lives on the dashboard.
-  const QuickActions = ({ s }: { s: AgentSummary }) => (
-    <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-deck-border-soft">
-      <ActBtn onClick={() => navigate(`/agents/${s.agentId}`)}>열기</ActBtn>
-      <ActBtn onClick={() => restart(s.agentId)}>재시작</ActBtn>
-      <ActBtn disabled={s.status !== 'running'} onClick={() => stop(s)}>정지</ActBtn>
-      <ActBtn onClick={() => navigate('/logs')}>로그</ActBtn>
-    </div>
-  );
-
-  const Tile = ({ s }: { s: AgentSummary }) => {
-    const attn = s.attention?.primary;
-    const st = liveState(s);
-    const chip = STATE_CHIP[st];
-    const borderCls = attn
-      ? 'border-2 ' + attnClasses(attn).split(' ')[0]
-      : st === 'working'
-        ? 'border-deck-accent/40'
-        : st === 'stopped'
-          ? 'border-deck-border-soft'
-          : 'border-deck-border';
-    return (
-      <div
-        className={`rounded-lg border bg-deck-surface p-3 transition-all ${borderCls} ${
-          st === 'working' ? 'shadow-[0_0_0_1px_rgba(99,102,241,0.15)]' : ''
-        } ${st === 'stopped' ? 'opacity-60' : ''}`}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <LiveDot hue={s.colorHue} state={st} />
-            <span className={`font-mono text-xs font-semibold truncate ${st === 'stopped' ? 'text-deck-text-dim' : ''}`}>
-              {s.name}
-            </span>
-            <span className="text-[9px] uppercase tracking-wide px-1 rounded border border-deck-border text-deck-text-faint">
-              {kindGlyph(s.preset)}
-            </span>
-          </div>
-          {attn ? (
-            <span className={`text-[9px] font-mono px-1.5 rounded-full border ${attnClasses(attn)}`}>
-              {attnLabel(s.attention.reasons[0] || { kind: attn })}
-            </span>
-          ) : (
-            <span className={`text-[9px] font-mono px-1.5 rounded-full border whitespace-nowrap ${chip.cls}`}>
-              {chip.label}
-            </span>
-          )}
-        </div>
-        {st === 'working' ? (
-          <WorkingBar />
-        ) : (
-          <div className="h-0.5 mt-2" /> // reserve the space so tiles don't jump when the bar toggles
-        )}
-        <div
-          className={`font-mono text-[10px] mt-2 leading-relaxed ${
-            st === 'stopped' ? 'text-deck-text-faint' : 'text-deck-text-dim'
-          }`}
-        >
-          <div className="truncate">
-            tool&nbsp;&nbsp;: <span className={st === 'working' ? 'text-deck-accent-light' : ''}>{s.lastTool || '—'}</span>
-          </div>
-          <div className="truncate">target: {s.lastTarget || '—'}</div>
-          <div>
-            ×{s.toolCount} · {timeAgo(s.lastActivityAt)}
-          </div>
-        </div>
-        <div className="flex gap-1.5 mt-2">
-          <Badge>✓ 완료 {s.unread?.completed ?? 0}</Badge>
-          <Badge>⚠ 에러 {s.unread?.errors ?? 0}</Badge>
-        </div>
-        <QuickActions s={s} />
-      </div>
-    );
-  };
-
-  const ApprovalCard = ({ a }: { a: PendingApproval }) => (
-    <div className="rounded-lg border border-deck-border bg-deck-surface p-3 mb-2.5">
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-[10.5px] font-semibold truncate">
-          {summaries[a.agentId]?.name || a.agentId}
-        </span>
-        <span className="font-mono text-[10px] text-deck-text-dim">{timeAgo(Date.parse(a.askedAt))}</span>
-      </div>
-      <div className="font-mono text-[11px] my-1.5">{a.toolName}</div>
-      {a.input != null && (
-        <div className="border border-dashed border-deck-border-soft rounded p-1.5 mb-2 max-h-16 overflow-hidden">
-          <pre className="font-mono text-[9px] text-deck-text-dim whitespace-pre-wrap break-all">
-            {JSON.stringify(a.input).slice(0, 160)}
-          </pre>
-        </div>
-      )}
-      <div className="flex gap-2">
-        <button
-          onClick={() => decide(a, 'allow')}
-          className="px-2.5 py-1 rounded text-[10px] font-mono font-bold bg-deck-accent text-white active:opacity-80"
-        >
-          허용
-        </button>
-        <button
-          onClick={() => decide(a, 'deny')}
-          className="px-2.5 py-1 rounded text-[10px] font-mono border border-deck-border text-deck-text active:opacity-80"
-        >
-          거부
-        </button>
-        <button
-          onClick={() => navigate(`/agents/${a.agentId}`)}
-          className="px-2.5 py-1 rounded text-[10px] font-mono border border-dashed border-deck-border text-deck-text-dim active:opacity-80"
-        >
-          세션 열기
-        </button>
-      </div>
-    </div>
-  );
-
-  const ApprovalFeed = () => (
-    <>
-      <h3 className="font-mono text-xs font-semibold">승인 대기 ({approvals.length})</h3>
-      <div className="font-mono text-[9.5px] text-deck-text-faint mb-3">전역 피드 — 세션 watch 불필요</div>
-      {approvals.length === 0 ? (
-        <div className="font-mono text-[10px] text-deck-text-faint py-6 text-center">대기 중인 승인이 없습니다</div>
-      ) : (
-        approvals.map((a) => <ApprovalCard key={a.requestId} a={a} />)
-      )}
-    </>
-  );
-
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       {/* Top bar */}
@@ -374,37 +157,7 @@ export function ControlRoomPage() {
         <main className="flex-1 overflow-y-auto min-h-0 p-4 lg:border-r border-deck-border">
           {/* Attention Rail */}
           {attention.length > 0 && (
-            <div className="rounded-lg border border-deck-border bg-deck-raised p-2.5 mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-[10px] font-bold uppercase tracking-wide text-deck-warning">
-                  Attention · {attention.length}
-                </span>
-                <span className="font-mono text-[9px] text-deck-text-faint hidden sm:block">
-                  approval &gt; error &gt; stalled · since ↑
-                </span>
-              </div>
-              <div className="flex gap-2.5 overflow-x-auto pb-1">
-                {attention.map((s) => (
-                  <button
-                    key={s.agentId}
-                    onClick={() => navigate(`/agents/${s.agentId}`)}
-                    className={`min-w-[150px] text-left rounded-md border bg-deck-surface p-2 ${attnClasses(s.attention.primary).split(' ')[0]}`}
-                  >
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <LiveDot hue={s.colorHue} state={liveState(s)} />
-                      <span className="font-mono text-[11px] font-bold truncate">{s.name}</span>
-                    </div>
-                    <span className={`text-[9px] font-mono px-1.5 rounded-full border ${attnClasses(s.attention.primary)}`}>
-                      {attnLabel(s.attention.reasons[0] || { kind: s.attention.primary })}
-                    </span>
-                    <div className="font-mono text-[9px] text-deck-text-dim mt-1 truncate">
-                      {s.lastTool ? `${s.lastTool} · ` : ''}
-                      {timeAgo(s.lastActivityAt)}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
+            <AttentionRail items={attention} onOpen={(agentId) => navigate(`/agents/${agentId}`)} />
           )}
 
           {/* Project groups */}
@@ -414,37 +167,27 @@ export function ControlRoomPage() {
             </div>
           ) : (
             groups.map((g) => (
-              <div key={g.label} className="mb-6">
-                <div className="flex items-center gap-2.5 mb-2">
-                  <span className="font-mono text-[10px] uppercase tracking-wide text-deck-text-faint">project</span>
-                  <span className="font-mono text-[11px] font-semibold truncate">{g.label}</span>
-                  <span className="font-mono text-[9px] px-1.5 rounded-full border border-deck-border text-deck-text-dim">
-                    {g.agents.length}
-                  </span>
-                  {(() => {
-                    const working = g.agents.filter((a) => liveState(a) === 'working').length;
-                    return working > 0 ? (
-                      <span className="font-mono text-[9px] px-1.5 rounded-full border border-deck-accent/40 bg-deck-accent/10 text-deck-accent-light flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-deck-accent-light animate-pulse-soft" />
-                        {working} 작업 중
-                      </span>
-                    ) : null;
-                  })()}
-                  <span className="flex-1 border-t border-dashed border-deck-border-soft" />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {g.agents.map((s) => (
-                    <Tile key={s.agentId} s={s} />
-                  ))}
-                </div>
-              </div>
+              <ProjectGroup
+                key={g.label}
+                label={g.label}
+                agents={g.agents}
+                onOpen={(id) => navigate(`/agents/${id}`)}
+                onRestart={restart}
+                onStop={stop}
+                onLogs={() => navigate('/logs')}
+              />
             ))
           )}
         </main>
 
         {/* SIDE: approval feed (desktop) */}
         <aside className="hidden lg:block w-[290px] shrink-0 overflow-y-auto p-4 bg-deck-surface/40">
-          <ApprovalFeed />
+          <ApprovalFeed
+            approvals={approvals}
+            summaries={summaries}
+            onDecide={decide}
+            onOpen={(agentId) => navigate(`/agents/${agentId}`)}
+          />
         </aside>
       </div>
 
@@ -461,7 +204,12 @@ export function ControlRoomPage() {
             className="absolute left-0 right-0 bottom-0 max-h-[70%] overflow-y-auto rounded-t-2xl border-t-2 border-deck-border bg-deck-bg p-4 pb-6 animate-slide-up"
           >
             <div className="w-9 h-1 rounded bg-deck-border mx-auto mb-3" />
-            <ApprovalFeed />
+            <ApprovalFeed
+              approvals={approvals}
+              summaries={summaries}
+              onDecide={decide}
+              onOpen={(agentId) => navigate(`/agents/${agentId}`)}
+            />
           </div>
         </div>
       )}
@@ -473,41 +221,5 @@ export function ControlRoomPage() {
         </div>
       )}
     </div>
-  );
-}
-
-function ActBtn({
-  children,
-  onClick,
-  danger,
-  disabled,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  danger?: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`px-2.5 py-1 rounded text-[10px] font-mono border active:opacity-80 ${
-        disabled
-          ? 'border-deck-border-soft text-deck-text-faint opacity-50 cursor-not-allowed'
-          : danger
-            ? 'border-deck-danger text-deck-danger'
-            : 'border-deck-border text-deck-text'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Badge({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="font-mono text-[9px] px-1.5 py-0.5 rounded-full border border-deck-border text-deck-text-dim">
-      {children}
-    </span>
   );
 }
