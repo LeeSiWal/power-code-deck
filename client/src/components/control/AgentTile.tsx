@@ -86,10 +86,10 @@ export function AgentTile({
         {/* 되돌릴 수 있는 정지는 실행 중일 때만, 되돌릴 수 없는 삭제는 이미 멈춘
             세션에만 노출한다 — 밀도 높은 벽에서 오클릭으로 살아있는 세션을
             날리는 일이 없도록. */}
-        {s.status === 'running' ? (
-          <ActBtn onClick={() => onStop(s)}>정지</ActBtn>
-        ) : (
+        {st === 'stopped' ? (
           <ActBtn danger onClick={() => onDestroy(s)}>삭제</ActBtn>
+        ) : (
+          <ActBtn onClick={() => onStop(s)}>정지</ActBtn>
         )}
       </div>
     </div>
