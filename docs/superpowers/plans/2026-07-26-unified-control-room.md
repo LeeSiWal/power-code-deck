@@ -236,11 +236,14 @@ git commit -m "fix(approve): AskUserQuestion에 승인 카드가 뜨지 않게 a
 // 건너뛰어도 정규 티커가 곧 처리하므로 공백은 최대 3초로 제한된다.
 func (h *Hub) pollMetaSoon() {
 	h.metaMu.Lock()
-	recent := time.Since(h.lastMetaPoll) < 3*time.Second
-	h.metaMu.Unlock()
-	if recent {
+	if time.Since(h.lastMetaPoll) < 3*time.Second {
+		h.metaMu.Unlock()
 		return
 	}
+	// 검사와 스탬프를 같은 임계구역에서 처리한다 — 둘을 나눠 잡으면 두 고루틴이
+	// 모두 검사를 통과해 스캔이 중복된다. 무거운 pollMeta 본문은 락 밖에서 돈다.
+	h.lastMetaPoll = time.Now()
+	h.metaMu.Unlock()
 	h.pollMeta()
 }
 ```
