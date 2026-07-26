@@ -87,6 +87,9 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
   // state), an idle TUI (Antigravity's trust prompt, a resumed session) would show
   // nothing forever. We use this to re-request the replay once when nothing lands.
   const dataSinceAttachRef = useRef(false);
+  // Rolling tail of recent output + whether it ends in a password prompt.
+  const secretTailRef = useRef('');
+  const [secretPrompt, setSecretPrompt] = useState(false);
   const readyRef = useRef(false);
   const colsRef = useRef(80);
   const rowsRef = useRef(24);
@@ -194,9 +197,31 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
     else if (data.includes('\x1b[?1006l')) sgrMouseRef.current = false;
   }, []);
 
+  // Detect a password prompt so the input can mask itself and stop wrapping the
+  // secret in bracketed paste.
+  //
+  // There is no in-band signal for this: the program turns echo off with termios on
+  // the PTY slave, which never reaches us. What DOES reach us is the prompt text, and
+  // the shapes are stable across the tools that ask (sudo, ssh, git credential,
+  // gpg) — a line ending in "password"/"passphrase" + colon with nothing after it.
+  //
+  // Trailing-newline output clears it, so a wrong guess un-sticks on the very next
+  // line instead of leaving the input masked forever.
+  const scanSecretPrompt = useCallback((data: string) => {
+    const tail = (secretTailRef.current + data).slice(-240);
+    secretTailRef.current = tail;
+    const lastLine = tail.slice(tail.lastIndexOf('\n') + 1);
+    // Strip CSI sequences so colouring/positioning in the prompt doesn't hide the colon.
+    const plain = lastLine.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').trimEnd();
+    // `.*` rather than `[^:]*`: git prints "Password for 'https://host':" — the URL
+    // carries its own colon, and a no-colon class would skip exactly that case.
+    setSecretPrompt(/(password|passphrase|암호|비밀번호).*:$/i.test(plain));
+  }, []);
+
   const writeToTerm = useCallback((data: string) => {
     dataSinceAttachRef.current = true; // replay/live output is flowing for this attach
     scanMouseMode(data);
+    scanSecretPrompt(data);
     if (selectingRef.current) {
       pendingRef.current.push(data);
       pendingLenRef.current += data.length;
@@ -204,7 +229,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       return;
     }
     handleRef.current?.write(data);
-  }, [flushPending, scanMouseMode]);
+  }, [flushPending, scanMouseMode, scanSecretPrompt]);
 
   // Force the running app to repaint the WHOLE screen cleanly. Claude Code scrolls
   // its conversation with insert-line (ESC[L), and ghostty fills the inserted lines
@@ -964,7 +989,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
       {/* Experiment: one cursor-anchored input for text + IME + control keys. */}
       {UNIFIED_INPUT && ready && wtRef.current && (
-        <UnifiedInput ref={unifiedInputRef} term={wtRef.current} agentId={agentId} channel={channel} autoFocus={!isTouchDevice} touch={isTouchDevice} />
+        <UnifiedInput ref={unifiedInputRef} term={wtRef.current} agentId={agentId} channel={channel} masked={secretPrompt} autoFocus={!isTouchDevice} touch={isTouchDevice} />
       )}
 
       {debug && debugInfo && (

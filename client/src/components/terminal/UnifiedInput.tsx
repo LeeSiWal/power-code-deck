@@ -43,6 +43,10 @@ interface UnifiedInputProps {
   term: CustomTerm;
   agentId: string;
   channel?: 'terminal' | 'shell';
+  /** The remote is asking for a secret. The PTY turns echo OFF for these prompts,
+   *  but this input echoes into a REAL textarea, so the password would otherwise be
+   *  typed in the clear. Hides the draft locally and sends it raw (see submit). */
+  masked?: boolean;
   /** Focus the textarea on mount (desktop; skipped on touch to avoid popping the keyboard). */
   autoFocus?: boolean;
   /** Touch device: soft-keyboard Enter arrives as a beforeinput 'insertLineBreak'
@@ -51,7 +55,7 @@ interface UnifiedInputProps {
 }
 
 export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(function UnifiedInput(
-  { term, agentId, channel = 'terminal', autoFocus, touch },
+  { term, agentId, channel = 'terminal', masked = false, autoFocus, touch },
   ref,
 ) {
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -105,10 +109,18 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
 
   // Enter: commit the draft as a bracketed paste (the Prompt Bar's exact path), or,
   // when there's no draft, send a raw CR so it confirms the app's current line/menu.
+  //
+  // EXCEPT at a password prompt. Bracketed paste is a mode the *application* has to
+  // turn on (ESC[?2004h); sudo/ssh/git read the password with a plain tty read and
+  // never enable it, so the wrapper bytes ESC[200~ / ESC[201~ arrive as part of the
+  // secret and the password is silently wrong. Send it raw instead — which is also
+  // exactly what typing it character by character would have produced.
   const submit = useCallback(() => {
     const text = valueRef.current;
     if (text) {
-      if (channel === 'terminal') {
+      if (masked) {
+        sendInput(text + '\r');
+      } else if (channel === 'terminal') {
         agentDeckWS.send('terminal:pasteSubmit', { agentId, text, mode: 'bracketed-paste' });
       } else {
         agentDeckWS.send('shell:input', { agentId, data: `\x1b[200~${text}\x1b[201~\r` });
@@ -118,7 +130,7 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
     } else {
       sendInput('\r');
     }
-  }, [agentId, channel, sendInput, term]);
+  }, [agentId, channel, masked, sendInput, term]);
 
   // Insert text (a clipboard paste from the mobile toolbar) into the draft at the
   // caret, then restore focus + caret. Goes through the same draft the user submits.
@@ -216,6 +228,11 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
     lineHeight: `${rect.height}px`,
     whiteSpace: 'pre-wrap',
     overflow: 'hidden',
+    // Hide the secret while keeping a real textarea (so the IME and the caret still
+    // work). -webkit-text-security is non-standard but is what Safari/Chrome — the
+    // browsers this deck actually runs in — implement; `textSecurity` is the
+    // standards-track name, set alongside it so a future engine picks it up.
+    ...(masked ? ({ WebkitTextSecurity: 'disc', textSecurity: 'disc' } as CSSProperties) : null),
     zIndex: 15,
   };
 
