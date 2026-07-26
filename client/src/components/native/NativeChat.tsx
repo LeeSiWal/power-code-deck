@@ -49,14 +49,12 @@ const MODELS: { id: string; label: string; desc: string }[] = [
 
 const CODEX_MODELS: typeof MODELS = [
   { id: '', label: 'Auto', desc: 'Codex 기본 모델' },
-  { id: 'gpt-5.6', label: 'GPT-5.6', desc: '최신 · 복잡한 에이전틱 작업' },
   { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', desc: '깊은 분석 · 높은 완성도' },
   { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', desc: '균형 잡힌 일상 작업' },
   { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', desc: '빠르고 명확한 반복 작업' },
   { id: 'gpt-5.5', label: 'GPT-5.5', desc: '이전 세대 범용 모델' },
   { id: 'gpt-5.4', label: 'GPT-5.4', desc: '복잡한 코딩 작업' },
-  { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', desc: 'Codex 최적화 모델' },
-  { id: 'gpt-5.3-codex-spark', label: 'Codex Spark', desc: '빠른 코딩 작업' },
+  { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', desc: '가볍고 빠른 코딩 작업' },
 ];
 
 // Permission modes — the TUI's Shift+Tab cycle. `id` → --permission-mode.
@@ -99,7 +97,13 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const evictedRef = useRef(false);
   useEffect(() => { evictedRef.current = evicted; }, [evicted]);
   const sentTimer = useRef<number | null>(null);
-  const [modelId, setModelId] = useState(() => localStorage.getItem(`pcd:model:${agentId}`) || '');
+  const [modelId, setModelId] = useState(() => {
+    const saved = localStorage.getItem(`pcd:model:${agentId}`) || '';
+    // Model catalogs change across Codex releases. Never keep launching a stale
+    // slug that the current switcher no longer supports: a failed app-server
+    // restart otherwise leaves the chat looking blank on every reopen.
+    return driver === 'codex' && !CODEX_MODELS.some((choice) => choice.id === saved) ? '' : saved;
+  });
   const [modeId, setModeId] = useState(() => localStorage.getItem(`pcd:mode:${agentId}`) || '');
   const [menu, setMenu] = useState<null | 'add' | 'model' | 'mode'>(null);
   // `/plugin` is intercepted here (the CLI refuses it over the stream), opening this
