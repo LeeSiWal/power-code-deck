@@ -195,7 +195,7 @@ export function TerminalPage() {
           // / refresh (see ProjectSelectPage).
           try { localStorage.setItem('pcd:lastAgentId', agentId); } catch { /* ignore */ }
         })
-        .catch(() => navigate('/dashboard'));
+        .catch(() => navigate('/control'));
     }
   }, [agentId, navigate]);
 

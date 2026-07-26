@@ -13,7 +13,7 @@ export function ProjectSelectPage() {
 
   const forceNew = searchParams.get('new') === '1';
 
-  // Auto-redirect to dashboard if agents are running
+  // Auto-redirect to the control room if agents are running
   useEffect(() => {
     if (forceNew) {
       setReady(true);
@@ -35,7 +35,7 @@ export function ProjectSelectPage() {
         if (last && running.some((a: any) => a.id === last)) {
           navigate(`/agents/${last}`, { replace: true });
         } else {
-          navigate('/dashboard', { replace: true });
+          navigate('/control', { replace: true });
         }
       })
       .catch(() => setReady(true));
