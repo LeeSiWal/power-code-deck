@@ -8,6 +8,10 @@ import (
 	"powercodedeck/services"
 )
 
+// CLI가 이 이름을 바꾸면 필터가 조용히 뚫린다(승인 카드가 슬그머니 부활).
+// 회귀 확인 항목: 선택지가 뜰 때 허용/거부 카드가 없어야 한다.
+const askUserQuestionTool = "AskUserQuestion"
+
 // NativeApprove is the deck side of the permission bridge: `pcd mcp-approve`
 // (spawned by Claude, see cli/mcp_approve.go) POSTs here when Claude wants to run
 // a tool, and this handler holds the HTTP response open until a human answers on
@@ -48,6 +52,19 @@ func NativeApprove(broker *services.PermissionBroker, tokens services.ApproveTok
 		id := req.ToolUseID
 		if id == "" {
 			id = req.SessionID + ":" + req.ToolName // best effort; the CLI always sends one
+		}
+
+		// AskUserQuestion은 게이팅 대상이 아니다: 파일을 쓰지도 명령을 실행하지도 않고,
+		// 사용자는 승인이 아니라 "답변"으로 응한다. 선택지 버튼은 클라이언트가 tool_use
+		// 입력에서 직접 렌더하므로(lib/nativeEvents.ts), 여기서 끊지 않으면 선택지와
+		// 허용/거부 카드가 동시에 뜬다. 게다가 native:approval은 BroadcastAll이라
+		// 컨트롤 룸 승인 피드와 "승인 필요" 푸시까지 오염된다.
+		if req.ToolName == askUserQuestionTool {
+			writeJSON(w, http.StatusOK, services.PermissionDecision{
+				Behavior:     "allow",
+				UpdatedInput: req.Input,
+			})
+			return
 		}
 
 		decision, err := broker.Ask(services.PermissionRequest{
