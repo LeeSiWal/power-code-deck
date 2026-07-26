@@ -2,11 +2,11 @@ import { useParams } from 'react-router-dom';
 import { AgentLauncher } from '../components/agent/AgentLauncher';
 import { useProjectLauncher } from '../hooks/useProjectLauncher';
 import { IconBack } from '../components/icons';
-import { useGoBack } from '../hooks/useGoBack';
+import { useGoUp } from '../hooks/useGoUp';
 
 export function AgentLauncherPage() {
   const { encodedPath } = useParams<{ encodedPath: string }>();
-  const goBack = useGoBack('/');
+  const goUp = useGoUp('/');
   const { launchAgent } = useProjectLauncher();
 
   const workingDir = decodeURIComponent(encodedPath || '');
@@ -22,7 +22,7 @@ export function AgentLauncherPage() {
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       <header className="flex items-center gap-3 px-4 py-2 bg-deck-surface border-b border-deck-border">
-        <button onClick={goBack} className="p-1 rounded hover:bg-deck-border/30">
+        <button onClick={goUp} className="p-1 rounded hover:bg-deck-border/30">
           <IconBack size={16} />
         </button>
         <span className="text-sm font-medium">Launch Agent</span>

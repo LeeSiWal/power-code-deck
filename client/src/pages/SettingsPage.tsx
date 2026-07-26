@@ -5,13 +5,13 @@ import { UiScaleSettings } from '../components/settings/UiScaleSettings';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack } from '../components/icons';
 import { useAppStore } from '../stores/appStore';
-import { useGoBack } from '../hooks/useGoBack';
+import { useGoUp } from '../hooks/useGoUp';
 import { APP_VERSION } from '../version';
 
 export function SettingsPage() {
   const { logout } = useAuth();
   const { authConfig } = useAppStore();
-  const goBack = useGoBack();
+  const goUp = useGoUp('/control');
 
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
@@ -20,7 +20,7 @@ export function SettingsPage() {
             they'd be stranded here (PWA has no browser back). Falls back to the
             dashboard when there's no history to pop. */}
         <button
-          onClick={goBack}
+          onClick={goUp}
           className="hidden md:inline-flex p-1 -ml-1 rounded hover:bg-deck-border/30 text-deck-text-dim"
           title="뒤로"
         >
