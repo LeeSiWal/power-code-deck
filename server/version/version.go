@@ -26,6 +26,7 @@ import (
 //	v0.2.6 = native Codex app-server chat driver
 //	v0.3.0 = Control Room (multi-session overview)
 //	v0.4.0 = Unified Control Room (dashboard absorbed, hierarchical back-nav)
+//	v0.5.0 = Todo checklist, notification centre, companion shell
 //
 //go:embed VERSION
 var versionFile string
