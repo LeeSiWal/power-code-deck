@@ -26,6 +26,10 @@ interface PendingApproval {
   toolName: string;
   input: Record<string, unknown>;
   askedAt: string;
+  // canRemember·rememberTarget: 서버가 판정해 실어 보낸 값. optional — 낡은
+  // 서버나 캐시된 상태에는 없을 수 있고, 없으면 버튼을 감추는(안전한) 쪽으로 떨어진다.
+  canRemember?: boolean;
+  rememberTarget?: string;
 }
 
 interface NativeChatProps {
@@ -430,8 +434,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     setDraft('');
   }, [draft, attachments, sendText]);
 
-  const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string) => {
-    agentDeckWS.send('native:decide', { agentId, id, behavior, message });
+  const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string, remember?: boolean) => {
+    agentDeckWS.send('native:decide', { agentId, id, behavior, message, remember });
     setPending((prev) => prev.filter((p) => p.id !== id));
   }, [agentId]);
 
@@ -1124,7 +1128,7 @@ function ToolRow({ item }: { item: Extract<ChatItem, { kind: 'tool' }> }) {
  */
 function ApprovalCard({ req, onDecide }: {
   req: PendingApproval;
-  onDecide: (id: string, behavior: 'allow' | 'deny', message?: string) => void;
+  onDecide: (id: string, behavior: 'allow' | 'deny', message?: string, remember?: boolean) => void;
 }) {
   const [reason, setReason] = useState('');
   const [showReason, setShowReason] = useState(false);
@@ -1189,6 +1193,18 @@ function ApprovalCard({ req, onDecide }: {
         >
           허용
         </button>
+        {/* canRemember가 true일 때만 렌더: 위험 판정된 호출에는 버튼을 숨긴다.
+            undefined(낡은 서버·캐시)는 false와 같이 처리 — 안전한 쪽으로 떨어진다. */}
+        {req.canRemember && (
+          <button
+            data-approve-focusable
+            onClick={() => onDecide(req.id, 'allow', undefined, true)}
+            className="flex-1 py-2.5 rounded-lg bg-green-500/10 text-green-300 text-sm font-medium outline-none focus:ring-2 focus:ring-green-300"
+            title="이 프로젝트에서 같은 호출을 다시 묻지 않습니다"
+          >
+            항상 허용
+          </button>
+        )}
         <button
           data-approve-focusable
           onClick={() => {
@@ -1202,6 +1218,15 @@ function ApprovalCard({ req, onDecide }: {
           {showReason ? '거부하기' : '거부'}
         </button>
       </div>
+      {/* 무엇이 저장되는지 모르고 누르는 버튼은 신뢰할 수 없는 결정이다.
+          rememberTarget이 있으면 그 대상을, 없으면 도구 전체를 표시한다. */}
+      {req.canRemember && (
+        <div className="text-[10px] text-deck-text-faint">
+          {req.rememberTarget
+            ? <>"항상 허용"은 이 프로젝트에서 <span className="font-mono">{req.rememberTarget}</span> 를 다시 묻지 않습니다.</>
+            : <>"항상 허용"은 이 프로젝트에서 <span className="font-mono">{req.toolName}</span> 도구 전체를 다시 묻지 않습니다.</>}
+        </div>
+      )}
     </div>
   );
 }

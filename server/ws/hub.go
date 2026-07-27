@@ -334,12 +334,29 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 			// BroadcastAll (not per-agent): the Control Room approval feed isn't a
 			// viewer of any single session, so a per-agent broadcast would never
 			// reach it. Session-scoped surfaces filter by agentId on the client.
+			//
+			// CanRemember·RememberTarget: 판정은 서버에만 두고 클라이언트로 실어 보낸다.
+			// 권한 판정이 두 곳에 살면 어긋나고, 어긋나는 쪽은 항상 사용자에게
+			// 거짓말을 하는 쪽이다. SetNativeService 안의 콜백이라 h.native는 nil이
+			// 아니지만 SessionCwd가 "" 을 돌려줄 수 있다 — cwd가 없으면 프로젝트를
+			// 특정할 수 없으므로 CanRemember=false로 둔다.
+			cwd := h.native.SessionCwd(req.SessionID)
+			canRemember := false
+			rememberTarget := ""
+			if cwd != "" && services.IsSafeToolCall(req.ToolName, req.Input, cwd) {
+				if target, ok := services.RuleTarget(req.ToolName, req.Input, cwd); ok {
+					canRemember = true
+					rememberTarget = target
+				}
+			}
 			h.BroadcastAll(EventNativeApproval, NativeApprovalPayload{
-				AgentID:  req.SessionID,
-				ID:       req.ID,
-				ToolName: req.ToolName,
-				Input:    req.Input,
-				AskedAt:  req.AskedAt.Format(time.RFC3339),
+				AgentID:        req.SessionID,
+				ID:             req.ID,
+				ToolName:       req.ToolName,
+				Input:          req.Input,
+				AskedAt:        req.AskedAt.Format(time.RFC3339),
+				CanRemember:    canRemember,
+				RememberTarget: rememberTarget,
 			})
 			h.NoteAgentChange(req.SessionID)
 			// A blocked agent goes nowhere until a human answers — the single most
@@ -1043,10 +1060,23 @@ func (h *Hub) sendNativeHistory(c *Client, agentID string) {
 
 	pending := h.native.Pending(agentID)
 	out := make([]NativeApprovalPayload, 0, len(pending))
+	// 재접속 시에도 CanRemember·RememberTarget을 채워야 버튼이 사라지지 않는다.
+	// 브로드캐스트 지점과 동일한 계산을 쓴다 — 판정 로직이 두 곳에 살지 않도록
+	// 서버 함수를 그대로 호출한다.
+	cwd := h.native.SessionCwd(agentID)
 	for _, p := range pending {
+		canRemember := false
+		rememberTarget := ""
+		if cwd != "" && services.IsSafeToolCall(p.ToolName, p.Input, cwd) {
+			if target, ok := services.RuleTarget(p.ToolName, p.Input, cwd); ok {
+				canRemember = true
+				rememberTarget = target
+			}
+		}
 		out = append(out, NativeApprovalPayload{
 			AgentID: agentID, ID: p.ID, ToolName: p.ToolName,
 			Input: p.Input, AskedAt: p.AskedAt.Format(time.RFC3339),
+			CanRemember: canRemember, RememberTarget: rememberTarget,
 		})
 	}
 	c.sendEvent(EventNativeState, NativeStatePayload{

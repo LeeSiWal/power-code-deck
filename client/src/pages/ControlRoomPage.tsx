@@ -105,8 +105,8 @@ export function ControlRoomPage() {
     return [...byKey.values()].sort((a, b) => a.label.localeCompare(b.label));
   }, [list]);
 
-  function decide(a: PendingApproval, behavior: 'allow' | 'deny') {
-    agentDeckWS.send('native:decide', { agentId: a.agentId, id: a.requestId, behavior });
+  function decide(a: PendingApproval, behavior: 'allow' | 'deny', remember?: boolean) {
+    agentDeckWS.send('native:decide', { agentId: a.agentId, id: a.requestId, behavior, remember });
     // Optimistic: the approval:resolved broadcast will also remove it, but dropping
     // it now keeps the tap responsive. (Idempotent — remove-by-id is a no-op twice.)
     useAppStore.getState().removeApproval(a.requestId);
