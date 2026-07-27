@@ -64,9 +64,6 @@ type NativeService struct {
 
 	mu       sync.RWMutex
 	sessions map[string]*nativeSession
-	// rules는 "앞으로도 허용" 규칙이다. nil일 수 있다 — 주입되지 않은 배포에서는
-	// 규칙 검사가 통째로 생략되고 기존 동작이 그대로 유지된다.
-	rules *ApprovalRuleStore
 	// policies holds the permission policy (mode + cwd) for every session the server
 	// has ever started, keyed by session id. Unlike `sessions`, this map is NOT cleared
 	// on restart — restart() deletes from `sessions` before the new driver is running,
@@ -77,6 +74,10 @@ type NativeService struct {
 	// branch), never when a restart swaps drivers. This is the invariant that matters:
 	// the user's mode choice outlives the process that implements it.
 	policies map[string]sessionPolicy
+
+	// rules는 "앞으로도 허용" 규칙이다. nil일 수 있다 — 주입되지 않은 배포에서는
+	// 규칙 검사가 통째로 생략되고 기존 동작이 그대로 유지된다.
+	rules *ApprovalRuleStore
 
 	// onEvent/onApproval are set by the hub at wiring time.
 	onEvent    func(sessionID string, ev *StreamEvent)
