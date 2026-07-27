@@ -66,6 +66,7 @@ type Hub struct {
 	native         *services.NativeService
 	activity       *services.ActivityManager
 	controlRoom    *services.ControlRoomService
+	rules          *services.ApprovalRuleStore
 	allowedOrigins map[string]bool
 	upgrader       websocket.Upgrader
 
@@ -351,6 +352,11 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 
 func (h *Hub) SetActivityManager(activity *services.ActivityManager) {
 	h.activity = activity
+}
+
+// SetApprovalRules wires the allowlist so a "항상 허용" decision can persist.
+func (h *Hub) SetApprovalRules(store *services.ApprovalRuleStore) {
+	h.rules = store
 }
 
 // SetPushService wires the Web Push fan-out. Must be called before SetNativeService
@@ -695,6 +701,20 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		// answered (by another device). Tell the deciding client which happened, and
 		// on a real resolution tell EVERY client so the card disappears everywhere —
 		// otherwise a browser that didn't decide keeps showing a dead approval.
+
+		// "항상 허용"이면 규칙으로 남긴다. Resolve가 pending에서 요청을 지우므로
+		// 도구 이름과 입력을 결정 전에 스냅샷해 둔다.
+		var ruleTool string
+		var ruleInput json.RawMessage
+		if payload.Remember && payload.Behavior == "allow" && h.rules != nil && h.native != nil {
+			for _, p := range h.native.Broker().Pending(payload.AgentID) {
+				if p.ID == payload.ID {
+					ruleTool, ruleInput = p.ToolName, p.Input
+					break
+				}
+			}
+		}
+
 		ok := h.native.Decide(payload.ID, services.PermissionDecision{
 			Behavior:     payload.Behavior,
 			UpdatedInput: payload.UpdatedInput,
@@ -703,6 +723,15 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		result := "already_resolved"
 		if ok {
 			result = "accepted"
+			// 저장 실패는 승인 자체를 실패시키지 않는다 — 부가 기능이 주 기능을
+			// 막으면 안 된다. 안전 판정 재확인은 ApprovalRuleStore.Save가 한다.
+			if ruleInput != nil {
+				if cwd := h.native.SessionCwd(payload.AgentID); cwd != "" {
+					if err := h.rules.Save(cwd, ruleTool, ruleInput); err != nil {
+						log.Printf("approval rule: not saved: %v", err)
+					}
+				}
+			}
 			h.BroadcastAll(EventApprovalResolved, ApprovalResolvedPayload{
 				RequestID: payload.ID,
 				AgentID:   payload.AgentID,

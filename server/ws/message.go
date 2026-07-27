@@ -280,6 +280,9 @@ type NativeDecidePayload struct {
 	Behavior     string          `json:"behavior"`
 	UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
 	Message      string          `json:"message,omitempty"`
+	// Remember는 "앞으로도 허용"이다. omitempty라 낡은 클라이언트는 영향받지 않는다.
+	// 허용일 때만 의미가 있으며, 서버가 저장 전에 안전 판정을 다시 확인한다.
+	Remember bool `json:"remember,omitempty"`
 }
 
 type NativeStopPayload struct {

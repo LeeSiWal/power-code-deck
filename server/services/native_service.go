@@ -137,6 +137,14 @@ func NewNativeService(baseURL string) *NativeService {
 func (s *NativeService) Broker() *PermissionBroker { return s.broker }
 func (s *NativeService) Tokens() ApproveTokenStore { return s.tokens }
 
+// SessionCwd reports a session's working directory, which the approval rule store
+// needs to scope a rule to its project. Empty when the session is unknown.
+func (s *NativeService) SessionCwd(sessionID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.policies[sessionID].cwd
+}
+
 // SetPersistence wires where the resume id is stored and read from.
 func (s *NativeService) SetPersistence(save func(agentID, claudeSessionID string), load func(agentID string) string) {
 	s.mu.Lock()
