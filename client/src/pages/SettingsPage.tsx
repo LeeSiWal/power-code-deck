@@ -2,6 +2,7 @@ import { useAuth } from '../hooks/useAuth';
 import { SoundSettings } from '../components/settings/SoundSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
 import { UiScaleSettings } from '../components/settings/UiScaleSettings';
+import { ApprovalRules } from '../components/settings/ApprovalRules';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack } from '../components/icons';
 import { useAppStore } from '../stores/appStore';
@@ -33,6 +34,7 @@ export function SettingsPage() {
         <UiScaleSettings />
         <NotificationSettings />
         <SoundSettings />
+        <ApprovalRules />
 
         <div className="card p-3">
           <div className="text-sm font-medium mb-1">About</div>
