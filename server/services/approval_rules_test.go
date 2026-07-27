@@ -142,3 +142,72 @@ func TestSaveIsIdempotent(t *testing.T) {
 		t.Fatalf("중복 저장으로 규칙이 %d개가 됐다", len(rules))
 	}
 }
+
+// 규칙은 모드를 이기지 않는다. plan 모드의 약속은 "실행하지 않는다"이고, 규칙이
+// 그것을 뒤집으면 모드 자체를 신뢰할 수 없게 된다.
+func TestRuleDoesNotOverridePlanMode(t *testing.T) {
+	store := ruleStore(t)
+	store.Save("/tmp/proj", "Bash", bash("go test ./..."))
+
+	s := NewNativeService("http://127.0.0.1:0")
+	s.SetApprovalRules(store)
+	s.mu.Lock()
+	s.policies["a1"] = sessionPolicy{mode: "plan", cwd: "/tmp/proj"}
+	s.mu.Unlock()
+
+	if _, ok := s.autoDecision(PermissionRequest{
+		SessionID: "a1", ToolName: "Bash", Input: bash("go test ./..."),
+	}); ok {
+		t.Fatal("plan 모드에서 규칙이 실행을 허용했다")
+	}
+}
+
+// 수동(기본) 모드에서 규칙이 있으면 사람을 거치지 않는다 — 이 기능의 목적이다.
+func TestRuleAutoAllowsInManualMode(t *testing.T) {
+	store := ruleStore(t)
+	store.Save("/tmp/proj", "Bash", bash("go test ./..."))
+
+	s := NewNativeService("http://127.0.0.1:0")
+	s.SetApprovalRules(store)
+	s.mu.Lock()
+	s.policies["a1"] = sessionPolicy{mode: "", cwd: "/tmp/proj"}
+	s.mu.Unlock()
+
+	d, ok := s.autoDecision(PermissionRequest{
+		SessionID: "a1", ToolName: "Bash", Input: bash("go test ./..."),
+	})
+	if !ok || d.Behavior != "allow" {
+		t.Fatalf("규칙이 있는데 허용되지 않았다: ok=%v d=%+v", ok, d)
+	}
+}
+
+// 규칙이 없는 호출은 그대로 사람에게 간다.
+func TestUnmatchedCallStillAsks(t *testing.T) {
+	store := ruleStore(t)
+	store.Save("/tmp/proj", "Bash", bash("go test ./..."))
+
+	s := NewNativeService("http://127.0.0.1:0")
+	s.SetApprovalRules(store)
+	s.mu.Lock()
+	s.policies["a1"] = sessionPolicy{mode: "", cwd: "/tmp/proj"}
+	s.mu.Unlock()
+
+	if _, ok := s.autoDecision(PermissionRequest{
+		SessionID: "a1", ToolName: "Bash", Input: bash("npm publish"),
+	}); ok {
+		t.Fatal("규칙이 없는 호출이 자동 결정됐다")
+	}
+}
+
+// 스토어가 주입되지 않은 배포에서도 동작해야 한다(nil 안전).
+func TestNilStoreDoesNotPanic(t *testing.T) {
+	s := NewNativeService("http://127.0.0.1:0")
+	s.mu.Lock()
+	s.policies["a1"] = sessionPolicy{mode: "", cwd: "/tmp/proj"}
+	s.mu.Unlock()
+	if _, ok := s.autoDecision(PermissionRequest{
+		SessionID: "a1", ToolName: "Bash", Input: bash("ls"),
+	}); ok {
+		t.Fatal("스토어 없이 자동 결정됐다")
+	}
+}

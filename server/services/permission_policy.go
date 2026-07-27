@@ -16,6 +16,9 @@ import (
 const (
 	AutoMode   = "auto"
 	BypassMode = "bypassPermissions"
+	// PlanMode는 탐색만 하고 실행하지 않는 모드다. 허용 목록 규칙이 이 약속을
+	// 뒤집지 않도록 이름을 상수로 둔다.
+	PlanMode = "plan"
 )
 
 // autoDecide applies the session's permission mode as a server-side auto-approval

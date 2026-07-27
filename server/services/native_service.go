@@ -64,6 +64,9 @@ type NativeService struct {
 
 	mu       sync.RWMutex
 	sessions map[string]*nativeSession
+	// rules는 "앞으로도 허용" 규칙이다. nil일 수 있다 — 주입되지 않은 배포에서는
+	// 규칙 검사가 통째로 생략되고 기존 동작이 그대로 유지된다.
+	rules *ApprovalRuleStore
 	// policies holds the permission policy (mode + cwd) for every session the server
 	// has ever started, keyed by session id. Unlike `sessions`, this map is NOT cleared
 	// on restart — restart() deletes from `sessions` before the new driver is running,
@@ -138,6 +141,14 @@ func (s *NativeService) SetPersistence(save func(agentID, claudeSessionID string
 	s.mu.Lock()
 	s.onSessionID = save
 	s.resumeIDFor = load
+	s.mu.Unlock()
+}
+
+// SetApprovalRules wires the persistent allowlist. Injected like the other stores so
+// this service keeps owning processes, not rows.
+func (s *NativeService) SetApprovalRules(store *ApprovalRuleStore) {
+	s.mu.Lock()
+	s.rules = store
 	s.mu.Unlock()
 }
 
@@ -219,11 +230,26 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 func (s *NativeService) autoDecision(req PermissionRequest) (PermissionDecision, bool) {
 	s.mu.RLock()
 	pol, ok := s.policies[req.SessionID]
+	rules := s.rules
 	s.mu.RUnlock()
 	if !ok {
 		return PermissionDecision{}, false
 	}
-	return autoDecide(pol.mode, req.ToolName, req.Input, pol.cwd)
+	if d, decided := autoDecide(pol.mode, req.ToolName, req.Input, pol.cwd); decided {
+		return d, true
+	}
+	// 모드 정책이 결정하지 못했을 때만 규칙을 본다. 순서가 중요하다 — 규칙이 모드보다
+	// 먼저 오면 plan 모드에서도 발동해 "실행하지 않는다"는 약속이 깨진다.
+	//
+	// plan은 그래서 명시적으로 제외한다: autoDecide는 plan에서 false를 반환하므로
+	// 이 지점에 도달하지만, 규칙이 그 모드를 뒤집어서는 안 된다.
+	if rules == nil || pol.mode == PlanMode {
+		return PermissionDecision{}, false
+	}
+	if rules.Allows(pol.cwd, req.ToolName, req.Input) {
+		return PermissionDecision{Behavior: "allow"}, true
+	}
+	return PermissionDecision{}, false
 }
 
 // Start launches a native Claude or Codex session for an agent. Idempotent:
