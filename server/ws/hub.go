@@ -341,14 +341,7 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 			// 아니지만 SessionCwd가 "" 을 돌려줄 수 있다 — cwd가 없으면 프로젝트를
 			// 특정할 수 없으므로 CanRemember=false로 둔다.
 			cwd := h.native.SessionCwd(req.SessionID)
-			canRemember := false
-			rememberTarget := ""
-			if cwd != "" && services.IsSafeToolCall(req.ToolName, req.Input, cwd) {
-				if target, ok := services.RuleTarget(req.ToolName, req.Input, cwd); ok {
-					canRemember = true
-					rememberTarget = target
-				}
-			}
+			canRemember, rememberTarget := services.CanRememberCall(req.ToolName, req.Input, cwd)
 			h.BroadcastAll(EventNativeApproval, NativeApprovalPayload{
 				AgentID:        req.SessionID,
 				ID:             req.ID,
@@ -1061,18 +1054,9 @@ func (h *Hub) sendNativeHistory(c *Client, agentID string) {
 	pending := h.native.Pending(agentID)
 	out := make([]NativeApprovalPayload, 0, len(pending))
 	// 재접속 시에도 CanRemember·RememberTarget을 채워야 버튼이 사라지지 않는다.
-	// 브로드캐스트 지점과 동일한 계산을 쓴다 — 판정 로직이 두 곳에 살지 않도록
-	// 서버 함수를 그대로 호출한다.
 	cwd := h.native.SessionCwd(agentID)
 	for _, p := range pending {
-		canRemember := false
-		rememberTarget := ""
-		if cwd != "" && services.IsSafeToolCall(p.ToolName, p.Input, cwd) {
-			if target, ok := services.RuleTarget(p.ToolName, p.Input, cwd); ok {
-				canRemember = true
-				rememberTarget = target
-			}
-		}
+		canRemember, rememberTarget := services.CanRememberCall(p.ToolName, p.Input, cwd)
 		out = append(out, NativeApprovalPayload{
 			AgentID: agentID, ID: p.ID, ToolName: p.ToolName,
 			Input: p.Input, AskedAt: p.AskedAt.Format(time.RFC3339),

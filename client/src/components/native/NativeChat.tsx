@@ -1200,7 +1200,9 @@ function ApprovalCard({ req, onDecide }: {
             data-approve-focusable
             onClick={() => onDecide(req.id, 'allow', undefined, true)}
             className="flex-1 py-2.5 rounded-lg bg-green-500/10 text-green-300 text-sm font-medium outline-none focus:ring-2 focus:ring-green-300"
-            title="이 프로젝트에서 같은 호출을 다시 묻지 않습니다"
+            title={req.rememberTarget
+              ? `"항상 허용"은 이 프로젝트에서 ${req.rememberTarget} 를 다시 묻지 않습니다.`
+              : `"항상 허용"은 이 프로젝트에서 ${req.toolName} 도구 전체를 다시 묻지 않습니다.`}
           >
             항상 허용
           </button>

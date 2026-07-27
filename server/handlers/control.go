@@ -41,14 +41,7 @@ func ListApprovals(native *services.NativeService) http.HandlerFunc {
 		for _, req := range reqs {
 			// WS 브로드캐스트·재접속과 동일한 계산: cwd가 없으면 CanRemember=false.
 			cwd := native.SessionCwd(req.SessionID)
-			canRemember := false
-			rememberTarget := ""
-			if cwd != "" && services.IsSafeToolCall(req.ToolName, req.Input, cwd) {
-				if target, ok := services.RuleTarget(req.ToolName, req.Input, cwd); ok {
-					canRemember = true
-					rememberTarget = target
-				}
-			}
+			canRemember, rememberTarget := services.CanRememberCall(req.ToolName, req.Input, cwd)
 			out = append(out, PendingApproval{
 				RequestID:      req.ID,
 				AgentID:        req.SessionID,
