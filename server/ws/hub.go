@@ -706,7 +706,7 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		// 도구 이름과 입력을 결정 전에 스냅샷해 둔다.
 		var ruleTool string
 		var ruleInput json.RawMessage
-		if payload.Remember && payload.Behavior == "allow" && h.rules != nil && h.native != nil {
+		if payload.Remember && payload.Behavior == "allow" && h.rules != nil {
 			for _, p := range h.native.Broker().Pending(payload.AgentID) {
 				if p.ID == payload.ID {
 					ruleTool, ruleInput = p.ToolName, p.Input
@@ -714,6 +714,8 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 				}
 			}
 		}
+		// 다른 기기가 같은 요청을 먼저 처리했다면 Decide는 false를 반환하고,
+		// 스냅샷은 사용되지 않으며 규칙이 저장되지 않는다 — 이는 의도적이다.
 
 		ok := h.native.Decide(payload.ID, services.PermissionDecision{
 			Behavior:     payload.Behavior,
