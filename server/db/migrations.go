@@ -162,5 +162,17 @@ func Migrate(db *sql.DB) error {
 	// can be aimed at only the session's active device. Non-fatal if it already exists.
 	db.Exec("ALTER TABLE push_subscriptions ADD COLUMN device_id TEXT DEFAULT ''")
 
+	// 승인 허용 목록. 에이전트가 아니라 프로젝트(작업 디렉토리)에 속하므로 외래키를
+	// 걸지 않는다 — 세션을 지우고 다시 만들어도 규칙은 살아남아야 한다.
+	// UNIQUE가 중복 저장을 막는다(INSERT OR IGNORE와 짝).
+	db.Exec(`CREATE TABLE IF NOT EXISTS approval_rules (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		working_dir TEXT NOT NULL,
+		tool_name   TEXT NOT NULL,
+		target      TEXT NOT NULL DEFAULT '',
+		created_at  TEXT DEFAULT (datetime('now')),
+		UNIQUE(working_dir, tool_name, target)
+	)`)
+
 	return nil
 }

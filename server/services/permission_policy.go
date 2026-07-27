@@ -31,19 +31,21 @@ func autoDecide(mode, tool string, input json.RawMessage, cwd string) (Permissio
 	case BypassMode:
 		return PermissionDecision{Behavior: "allow"}, true
 	case AutoMode:
-		if isSafeToolCall(tool, input, cwd) {
+		if IsSafeToolCall(tool, input, cwd) {
 			return PermissionDecision{Behavior: "allow"}, true
 		}
 	}
 	return PermissionDecision{}, false
 }
 
-// isSafeToolCall classifies a call as safe-to-auto-approve for "auto" mode. Reads and
-// searches are always safe; edits are safe only inside the project directory; shell
-// commands are safe only when every chained segment leads with a known-harmless
+// IsSafeToolCall classifies a call as safe-to-auto-approve for "auto" mode. Exported
+// because ApprovalRuleStore applies the same judgement when saving and when matching a
+// rule — a permanent rule for a dangerous call would defeat the approval gate.
+// Reads and searches are always safe; edits are safe only inside the project directory;
+// shell commands are safe only when every chained segment leads with a known-harmless
 // command and no dangerous token appears. Anything unrecognized is NOT safe (ask) —
 // the policy fails toward asking, never toward running.
-func isSafeToolCall(tool string, input json.RawMessage, cwd string) bool {
+func IsSafeToolCall(tool string, input json.RawMessage, cwd string) bool {
 	switch tool {
 	case "Read", "Grep", "Glob", "LS", "NotebookRead", "TodoWrite", "WebSearch", "WebFetch":
 		return true
