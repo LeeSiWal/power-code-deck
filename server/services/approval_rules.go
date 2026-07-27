@@ -62,6 +62,10 @@ func RuleTarget(tool string, input json.RawMessage, cwd string) (string, bool) {
 		return filepath.Clean(p), true
 	}
 	// 대상 개념이 없는 도구는 도구 이름 자체가 최소 단위다.
+	// 주의: 이 분기는 IsSafeToolCall에는 있지만 이 switch에는 없는 도구를 처리한다.
+	// 빈 target으로 저장하면 그 도구 전체를 허용하는 규칙이 되어 사용자가 의도한
+	// 것보다 훨씬 넓어진다. IsSafeToolCall에 새 도구를 추가할 때는 반드시 이 switch
+	// 에도 추가해야 한다. 한쪽만 고치면 의도보다 훨씬 넓은 규칙이 조용히 만들어진다.
 	return "", true
 }
 
