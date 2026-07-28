@@ -43,9 +43,12 @@ func TestApprovalRulesRESTRoundTrip(t *testing.T) {
 	}
 
 	// --- GET /api/approval-rules 가 저장된 규칙을 반환해야 한다 ---
+	// gorilla/mux 라우터를 통해 요청을 보낸다 — GET 라우트 등록이 누락되면 여기서 잡힌다.
+	getRouter := mux.NewRouter()
+	getRouter.HandleFunc("/api/approval-rules", ListApprovalRules(store)).Methods("GET")
 	getW := httptest.NewRecorder()
 	getR := httptest.NewRequest(http.MethodGet, "/api/approval-rules", nil)
-	ListApprovalRules(store)(getW, getR)
+	getRouter.ServeHTTP(getW, getR)
 
 	if getW.Code != http.StatusOK {
 		t.Fatalf("GET status = %d, want 200", getW.Code)
