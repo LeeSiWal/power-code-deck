@@ -74,12 +74,20 @@ export function useWebSocket() {
       }),
       agentDeckWS.on('native:approval', (payload: any) => {
         // Same event the native chat uses; here it feeds the global approval queue.
+        //
+        // 주의: payload.id → requestId 로 이름이 바뀐다. 그래서 단순 스프레드를
+        // 쓸 수 없고, 필드를 명시적으로 나열해야 한다. 서버가 NativeApprovalPayload에
+        // 필드를 추가할 때마다 이 목록도 함께 업데이트해야 한다 — 이 매핑이 누락된
+        // 필드의 전형적인 은닉처다(canRemember·rememberTarget 이 6번의 리뷰를 통과한
+        // 이유가 정확히 이것이다).
         useAppStore.getState().addApproval({
           requestId: payload.id,
           agentId: payload.agentId,
           toolName: payload.toolName,
           input: payload.input,
           askedAt: payload.askedAt,
+          canRemember: payload.canRemember,
+          rememberTarget: payload.rememberTarget,
         });
       }),
       agentDeckWS.on('approval:resolved', (payload: any) => {

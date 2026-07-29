@@ -593,3 +593,13 @@ func (s *NativeService) Stop(sessionID string) {
 		sess.driver.Stop()
 	}
 }
+
+// SetPolicyForTest injects a session policy directly, without spawning a
+// driver. It exists solely to support ws-package tests that exercise the hub's
+// EventNativeDecide path without needing a live Claude/Codex process.
+// 테스트 전용 — 프로덕션 코드에서 호출하면 안 된다.
+func (s *NativeService) SetPolicyForTest(sessionID, cwd string) {
+	s.mu.Lock()
+	s.policies[sessionID] = sessionPolicy{cwd: cwd}
+	s.mu.Unlock()
+}
