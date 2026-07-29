@@ -81,7 +81,7 @@ func TestNativeDecideRememberSavesRule(t *testing.T) {
 
 	// --- Broker에 pending 요청을 심는다 (실제 Ask는 goroutine을 블록하므로
 	//     answer 채널을 버퍼링해 직접 inject한다) ---
-	answerCh := native.Broker().InjectPending(services.PermissionRequest{
+	answerCh := native.Broker().InjectPendingForTest(services.PermissionRequest{
 		ID:        reqID,
 		SessionID: agentID,
 		ToolName:  tool,
@@ -133,7 +133,7 @@ func TestNativeDecideRememberRequiresCwd(t *testing.T) {
 	store := testRuleStore(t)
 	h := &Hub{native: native, rules: store}
 
-	answerCh := native.Broker().InjectPending(services.PermissionRequest{
+	answerCh := native.Broker().InjectPendingForTest(services.PermissionRequest{
 		ID:        reqID,
 		SessionID: agentID,
 		ToolName:  tool,
