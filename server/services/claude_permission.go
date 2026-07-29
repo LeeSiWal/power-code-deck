@@ -168,3 +168,16 @@ func (b *PermissionBroker) forget(id string) {
 	delete(b.pending, id)
 	b.mu.Unlock()
 }
+
+// InjectPendingForTest registers a request directly in the pending map and returns
+// its answer channel. It exists solely to support hub tests that need a
+// pending approval present without running Ask (which blocks a goroutine).
+// The caller must drain the returned channel to avoid goroutine leaks.
+// 테스트 전용 — 프로덕션 코드에서 호출하면 안 된다.
+func (b *PermissionBroker) InjectPendingForTest(req PermissionRequest) <-chan PermissionDecision {
+	ch := make(chan PermissionDecision, 1)
+	b.mu.Lock()
+	b.pending[req.ID] = &pendingPermission{req: req, answer: ch}
+	b.mu.Unlock()
+	return ch
+}

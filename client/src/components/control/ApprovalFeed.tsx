@@ -9,7 +9,7 @@ function ApprovalCard({
 }: {
   a: PendingApproval;
   summaries: Record<string, AgentSummary>;
-  onDecide: (a: PendingApproval, behavior: 'allow' | 'deny') => void;
+  onDecide: (a: PendingApproval, behavior: 'allow' | 'deny', remember?: boolean) => void;
   onOpen: (agentId: string) => void;
 }) {
   return (
@@ -35,6 +35,19 @@ function ApprovalCard({
         >
           허용
         </button>
+        {/* 한 줄짜리 조밀한 목록이므로 설명은 title에만 넣는다.
+            canRemember가 true일 때만 렌더: 위험 판정 호출에는 버튼을 숨긴다. */}
+        {a.canRemember && (
+          <button
+            onClick={() => onDecide(a, 'allow', true)}
+            className="px-2.5 py-1 rounded text-[10px] font-mono border border-deck-accent/60 text-deck-accent-light active:opacity-80"
+            title={a.rememberTarget
+              ? `"항상 허용"은 이 프로젝트에서 ${a.rememberTarget} 를 다시 묻지 않습니다.`
+              : `"항상 허용"은 이 프로젝트에서 ${a.toolName} 도구 전체를 다시 묻지 않습니다.`}
+          >
+            항상 허용
+          </button>
+        )}
         <button
           onClick={() => onDecide(a, 'deny')}
           className="px-2.5 py-1 rounded text-[10px] font-mono border border-deck-border text-deck-text active:opacity-80"
@@ -60,7 +73,7 @@ export function ApprovalFeed({
 }: {
   approvals: PendingApproval[];
   summaries: Record<string, AgentSummary>;
-  onDecide: (a: PendingApproval, behavior: 'allow' | 'deny') => void;
+  onDecide: (a: PendingApproval, behavior: 'allow' | 'deny', remember?: boolean) => void;
   onOpen: (agentId: string) => void;
 }) {
   return (

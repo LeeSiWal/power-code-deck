@@ -66,6 +66,7 @@ type Hub struct {
 	native         *services.NativeService
 	activity       *services.ActivityManager
 	controlRoom    *services.ControlRoomService
+	rules          *services.ApprovalRuleStore
 	allowedOrigins map[string]bool
 	upgrader       websocket.Upgrader
 
@@ -333,12 +334,22 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 			// BroadcastAll (not per-agent): the Control Room approval feed isn't a
 			// viewer of any single session, so a per-agent broadcast would never
 			// reach it. Session-scoped surfaces filter by agentId on the client.
+			//
+			// CanRemember·RememberTarget: 판정은 서버에만 두고 클라이언트로 실어 보낸다.
+			// 권한 판정이 두 곳에 살면 어긋나고, 어긋나는 쪽은 항상 사용자에게
+			// 거짓말을 하는 쪽이다. SetNativeService 안의 콜백이라 h.native는 nil이
+			// 아니지만 SessionCwd가 "" 을 돌려줄 수 있다 — cwd가 없으면 프로젝트를
+			// 특정할 수 없으므로 CanRemember=false로 둔다.
+			cwd := h.native.SessionCwd(req.SessionID)
+			canRemember, rememberTarget := services.CanRememberCall(req.ToolName, req.Input, cwd)
 			h.BroadcastAll(EventNativeApproval, NativeApprovalPayload{
-				AgentID:  req.SessionID,
-				ID:       req.ID,
-				ToolName: req.ToolName,
-				Input:    req.Input,
-				AskedAt:  req.AskedAt.Format(time.RFC3339),
+				AgentID:        req.SessionID,
+				ID:             req.ID,
+				ToolName:       req.ToolName,
+				Input:          req.Input,
+				AskedAt:        req.AskedAt.Format(time.RFC3339),
+				CanRemember:    canRemember,
+				RememberTarget: rememberTarget,
 			})
 			h.NoteAgentChange(req.SessionID)
 			// A blocked agent goes nowhere until a human answers — the single most
@@ -351,6 +362,11 @@ func (h *Hub) SetNativeService(n *services.NativeService) {
 
 func (h *Hub) SetActivityManager(activity *services.ActivityManager) {
 	h.activity = activity
+}
+
+// SetApprovalRules wires the allowlist so a "항상 허용" decision can persist.
+func (h *Hub) SetApprovalRules(store *services.ApprovalRuleStore) {
+	h.rules = store
 }
 
 // SetPushService wires the Web Push fan-out. Must be called before SetNativeService
@@ -695,6 +711,22 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		// answered (by another device). Tell the deciding client which happened, and
 		// on a real resolution tell EVERY client so the card disappears everywhere —
 		// otherwise a browser that didn't decide keeps showing a dead approval.
+
+		// "항상 허용"이면 규칙으로 남긴다. Resolve가 pending에서 요청을 지우므로
+		// 도구 이름과 입력을 결정 전에 스냅샷해 둔다.
+		var ruleTool string
+		var ruleInput json.RawMessage
+		if payload.Remember && payload.Behavior == "allow" && h.rules != nil {
+			for _, p := range h.native.Broker().Pending(payload.AgentID) {
+				if p.ID == payload.ID {
+					ruleTool, ruleInput = p.ToolName, p.Input
+					break
+				}
+			}
+		}
+		// 다른 기기가 같은 요청을 먼저 처리했다면 Decide는 false를 반환하고,
+		// 스냅샷은 사용되지 않으며 규칙이 저장되지 않는다 — 이는 의도적이다.
+
 		ok := h.native.Decide(payload.ID, services.PermissionDecision{
 			Behavior:     payload.Behavior,
 			UpdatedInput: payload.UpdatedInput,
@@ -703,6 +735,15 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		result := "already_resolved"
 		if ok {
 			result = "accepted"
+			// 저장 실패는 승인 자체를 실패시키지 않는다 — 부가 기능이 주 기능을
+			// 막으면 안 된다. 안전 판정 재확인은 ApprovalRuleStore.Save가 한다.
+			if ruleInput != nil {
+				if cwd := h.native.SessionCwd(payload.AgentID); cwd != "" {
+					if err := h.rules.Save(cwd, ruleTool, ruleInput); err != nil {
+						log.Printf("approval rule: not saved: %v", err)
+					}
+				}
+			}
 			h.BroadcastAll(EventApprovalResolved, ApprovalResolvedPayload{
 				RequestID: payload.ID,
 				AgentID:   payload.AgentID,
@@ -1012,10 +1053,14 @@ func (h *Hub) sendNativeHistory(c *Client, agentID string) {
 
 	pending := h.native.Pending(agentID)
 	out := make([]NativeApprovalPayload, 0, len(pending))
+	// 재접속 시에도 CanRemember·RememberTarget을 채워야 버튼이 사라지지 않는다.
+	cwd := h.native.SessionCwd(agentID)
 	for _, p := range pending {
+		canRemember, rememberTarget := services.CanRememberCall(p.ToolName, p.Input, cwd)
 		out = append(out, NativeApprovalPayload{
 			AgentID: agentID, ID: p.ID, ToolName: p.ToolName,
 			Input: p.Input, AskedAt: p.AskedAt.Format(time.RFC3339),
+			CanRemember: canRemember, RememberTarget: rememberTarget,
 		})
 	}
 	c.sendEvent(EventNativeState, NativeStatePayload{

@@ -280,6 +280,9 @@ type NativeDecidePayload struct {
 	Behavior     string          `json:"behavior"`
 	UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
 	Message      string          `json:"message,omitempty"`
+	// Remember는 "앞으로도 허용"이다. omitempty라 낡은 클라이언트는 영향받지 않는다.
+	// 허용일 때만 의미가 있으며, 서버가 저장 전에 안전 판정을 다시 확인한다.
+	Remember bool `json:"remember,omitempty"`
 }
 
 type NativeStopPayload struct {
@@ -316,6 +319,14 @@ type NativeApprovalPayload struct {
 	ToolName string          `json:"toolName"`
 	Input    json.RawMessage `json:"input"`
 	AskedAt  string          `json:"askedAt"`
+	// CanRemember는 이 호출을 영구 규칙으로 저장할 수 있는지다. 위험 판정된
+	// 호출에는 "항상 허용"을 아예 보여주지 않는다 — 눌러도 서버가 거절할
+	// 버튼을 띄우는 것은 사용자에게 거짓말을 하는 것이다.
+	CanRemember bool `json:"canRemember"`
+	// RememberTarget은 저장될 규칙의 대상이다. 빈 문자열이면 도구 전체가
+	// 규칙이 된다(Read·Grep처럼 대상 개념이 없는 도구). 무엇이 저장되는지
+	// 카드가 정확히 말할 수 있도록 서버가 실어 보낸다.
+	RememberTarget string `json:"rememberTarget"`
 }
 
 type NativeStatePayload struct {

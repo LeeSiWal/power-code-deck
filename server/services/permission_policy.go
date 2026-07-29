@@ -16,6 +16,9 @@ import (
 const (
 	AutoMode   = "auto"
 	BypassMode = "bypassPermissions"
+	// PlanMode는 탐색만 하고 실행하지 않는 모드다. 허용 목록 규칙이 이 약속을
+	// 뒤집지 않도록 이름을 상수로 둔다.
+	PlanMode = "plan"
 )
 
 // autoDecide applies the session's permission mode as a server-side auto-approval
@@ -31,19 +34,21 @@ func autoDecide(mode, tool string, input json.RawMessage, cwd string) (Permissio
 	case BypassMode:
 		return PermissionDecision{Behavior: "allow"}, true
 	case AutoMode:
-		if isSafeToolCall(tool, input, cwd) {
+		if IsSafeToolCall(tool, input, cwd) {
 			return PermissionDecision{Behavior: "allow"}, true
 		}
 	}
 	return PermissionDecision{}, false
 }
 
-// isSafeToolCall classifies a call as safe-to-auto-approve for "auto" mode. Reads and
-// searches are always safe; edits are safe only inside the project directory; shell
-// commands are safe only when every chained segment leads with a known-harmless
+// IsSafeToolCall classifies a call as safe-to-auto-approve for "auto" mode. Exported
+// because ApprovalRuleStore applies the same judgement when saving and when matching a
+// rule — a permanent rule for a dangerous call would defeat the approval gate.
+// Reads and searches are always safe; edits are safe only inside the project directory;
+// shell commands are safe only when every chained segment leads with a known-harmless
 // command and no dangerous token appears. Anything unrecognized is NOT safe (ask) —
 // the policy fails toward asking, never toward running.
-func isSafeToolCall(tool string, input json.RawMessage, cwd string) bool {
+func IsSafeToolCall(tool string, input json.RawMessage, cwd string) bool {
 	switch tool {
 	case "Read", "Grep", "Glob", "LS", "NotebookRead", "TodoWrite", "WebSearch", "WebFetch":
 		return true
@@ -53,6 +58,36 @@ func isSafeToolCall(tool string, input json.RawMessage, cwd string) bool {
 		return isSafeBash(input)
 	}
 	return false
+}
+
+// CanRememberCall는 한 호출을 영구 규칙으로 저장할 수 있는지 판정하고, 저장될
+// 대상 문자열을 함께 돌려준다. 세 가지 조건이 모두 true여야 한다:
+//
+//  1. cwd가 빈 문자열이 아니어야 한다 — 프로젝트를 특정할 수 없는 규칙은 저장하지
+//     않는다. 이 조건이 먼저 확인되어야 IsSafeToolCall에 빈 cwd가 전달되지 않는다.
+//  2. IsSafeToolCall이 true여야 한다 — 위험 판정된 호출을 규칙으로 저장하면 승인
+//     게이트를 무력화한다.
+//  3. RuleTarget이 두 번째 값 true를 돌려줘야 한다 — 대상을 뽑지 못한 채 규칙을
+//     만들면 사용자가 의도한 것보다 훨씬 넓게 허용된다.
+//
+// 이 함수가 존재하는 이유: 동일한 판정 블록이 ws/hub.go(두 곳)와
+// handlers/control.go(한 곳)에 복제되어 있었다. 복제가 어긋나면 한 쪽만 cwd 검사를
+// 빠뜨리거나 RuleTarget 조건을 달리 쓸 수 있고, 어긋나는 쪽은 사용자에게 눌러도
+// 서버가 거절할 버튼을 보여주는 거짓말을 한다. 판정은 반드시 한 곳에만 있어야 한다.
+//
+// 두 번째 반환값이 false면 (false, "")을 반환한다 — 호출 쪽이 분기를 생략할 수 있도록.
+func CanRememberCall(tool string, input json.RawMessage, cwd string) (bool, string) {
+	if cwd == "" {
+		return false, ""
+	}
+	if !IsSafeToolCall(tool, input, cwd) {
+		return false, ""
+	}
+	target, ok := RuleTarget(tool, input, cwd)
+	if !ok {
+		return false, ""
+	}
+	return true, target
 }
 
 // editWithinCwd is true when the edit target resolves inside the project directory —

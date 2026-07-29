@@ -120,6 +120,10 @@ export interface PendingApproval {
   toolName: string;
   input?: any;
   askedAt: string;
+  // canRemember·rememberTarget: 서버가 판정해 실어 보낸 값. optional — 낡은
+  // 서버나 캐시된 상태에는 없을 수 있고, 없으면 버튼을 감추는(안전한) 쪽으로 떨어진다.
+  canRemember?: boolean;
+  rememberTarget?: string;
 }
 
 export interface AuthConfig {

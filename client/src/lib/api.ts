@@ -269,6 +269,11 @@ export const api = {
   agentLogs: (agentId: string, limit?: number) =>
     apiFetch(`/logs/${agentId}${limit ? `?limit=${limit}` : ''}`),
 
+  // Approval rules ("항상 허용")
+  // 규칙 목록은 페이지 로드 시 한 번, 삭제 후 낙관적으로 제거하므로 재로드 없이 동기화된다.
+  listApprovalRules: () => apiFetch<any[]>('/approval-rules'),
+  deleteApprovalRule: (id: number) => apiFetch(`/approval-rules/${id}`, { method: 'DELETE' }),
+
   // Notifications
   listNotifications: (agentId?: string) =>
     apiFetch(`/notifications${agentId ? `?agentId=${agentId}` : ''}`),

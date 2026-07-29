@@ -77,6 +77,9 @@ func main() {
 	notifSvc := services.NewNotificationService(database)
 	handoffSvc := services.NewHandoffService(database)
 	handoffSvc.CleanupExpired()
+	// "앞으로도 허용" 규칙 스토어 — 네이티브 서비스와 hub 양쪽에 주입한다.
+	// 네이티브 서비스는 자동 결정 경로에서 규칙을 읽고, hub은 결정 후 규칙을 저장한다.
+	approvalRules := services.NewApprovalRuleStore(database)
 
 	// Web Push (VAPID). The "sub" claim is contact info for the push services; prefer
 	// an explicit env, else the deck's own https origin, else a syntactically-valid
@@ -106,6 +109,8 @@ func main() {
 	// restart) continues the conversation instead of starting a blank one.
 	nativeSvc.SetPersistence(agentSvc.SetClaudeSessionID, agentSvc.ClaudeSessionID)
 	nativeSvc.SetConfigPersistence(agentSvc.SetNativeConfig, agentSvc.NativeConfig)
+	nativeSvc.SetApprovalRules(approvalRules)
+	hub.SetApprovalRules(approvalRules)
 	// Status truth: a native session counts as "running" too, so a native-track agent
 	// that's working isn't reported stopped for lacking a live PTY.
 	agentSvc.SetNativeLiveness(nativeSvc.Running)
@@ -252,6 +257,11 @@ func main() {
 	// Notifications
 	api.HandleFunc("/notifications", handlers.ListNotifications(notifSvc)).Methods("GET")
 	api.HandleFunc("/notifications/clear", handlers.ClearNotifications(notifSvc)).Methods("POST")
+
+	// "항상 허용" 규칙 관리 — 저장한 권한을 볼 수 없으면 시간이 지나며 위험 요소가 되므로
+	// 관리 경로는 이 기능의 일부다.
+	api.HandleFunc("/approval-rules", handlers.ListApprovalRules(approvalRules)).Methods("GET")
+	api.HandleFunc("/approval-rules/{id}", handlers.DeleteApprovalRule(approvalRules)).Methods("DELETE")
 
 	// Control Room (v0.3.0) — initial snapshot of the overview + global approval queue.
 	// Live deltas arrive over the WebSocket (agent:summaries, approval:resolved).
