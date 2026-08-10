@@ -62,17 +62,18 @@ const CODEX_MODELS: typeof MODELS = [
   { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', desc: '가볍고 빠른 코딩 작업' },
 ];
 
-// Permission modes — the TUI's Shift+Tab cycle. `id` → --permission-mode.
-// Switching restarts the session on the same conversation (server SetMode).
-// `pill` encodes risk in colour: neutral → indigo → sky (plan) → amber (careful).
-// NOTE: "자동 (안전 검사)" (id 'auto') is NOT a CLI --permission-mode — the CLI has no
-// such flag (the VS Code extension's version is extension-only). We implement it
-// SERVER-SIDE: the CLI runs in default, every gated tool routes to our approve bridge,
-// and the broker auto-approves safe calls / asks for risky ones. 전체 허용 is
-// bypassPermissions and approves EVERYTHING — and there the driver omits the approve
-// bridge entirely (claude_driver.go), because this CLI denies when the flag and a
-// prompt tool are both present. So in 전체 허용 nothing reaches our broker at all;
-// the CLI allows natively. Do not "fix" a missing bridge in that mode — it is correct.
+// Permission modes — the TUI's Shift+Tab cycle. Switching is applied to the LIVE
+// session (server SetMode → the CLI's set_permission_mode control request), so a turn
+// already in flight keeps running; only a driver that cannot switch in place (Codex,
+// an older CLI) falls back to a restart. `pill` encodes risk in colour: neutral →
+// indigo → sky (plan) → amber (careful).
+// NOTE: two of these are NOT CLI --permission-mode values. "자동 (안전 검사)" ('auto')
+// has no CLI flag at all, and 전체 허용 ('bypassPermissions') is deliberately not passed
+// to the CLI either — see cliPermissionMode in native_service.go. Both run the CLI in
+// its default mode so every gated tool routes through our approve bridge, where the
+// broker decides: auto approves safe calls and asks about risky ones, 전체 허용 approves
+// everything. So the bridge stays connected in EVERY mode — if it is missing, that is
+// a real fault in any mode, not an expected state.
 const MODES: { id: string; label: string; desc: string; icon: React.ComponentType<IconProps>; pill: string }[] = [
   { id: '', label: '수동', desc: '도구를 실행할 때마다 승인을 요청합니다', icon: IconHand, pill: 'border-deck-border bg-deck-surface text-deck-text-dim' },
   { id: 'acceptEdits', label: '자동 편집', desc: '파일 편집은 자동 승인, 명령 실행은 물어봅니다', icon: IconCodeSlash, pill: 'border-deck-accent/50 bg-deck-accent/10 text-deck-accent-light' },
@@ -457,7 +458,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       )}
       <div ref={scrollRef} onScroll={onScroll} className="selectable flex-1 overflow-y-auto px-3 py-3 space-y-2">
         {items.map((item) => (
-          <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} mode={modeId} />
+          <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} />
         ))}
         {!items.length && (
           <div className="text-deck-muted text-sm py-8 text-center">
@@ -802,7 +803,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   );
 }
 
-function ChatRow({ item, onAnswer, mode }: { item: ChatItem; onAnswer: (text: string) => void; mode: string }) {
+function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) => void }) {
   if (item.kind === 'session') {
     // Model / version / cwd are chrome, not conversation — the toolbar already shows
     // the model, so rendering them here just pushes the chat down on every session.
@@ -810,13 +811,12 @@ function ChatRow({ item, onAnswer, mode }: { item: ChatItem; onAnswer: (text: st
     // gated tool AND still calls the turn a success. That silence is exactly what we
     // must not reproduce, so it stays — and is now the only reason this row renders.
     //
-    // 전체 허용 is the one mode where a missing bridge is CORRECT, not a fault:
-    // claude_driver.go deliberately omits --mcp-config/--permission-prompt-tool there,
-    // because this CLI routes to the prompt tool and then DENIES when both the flag and
-    // a prompt tool are present. So the bridge is absent by design and the CLI allows
-    // everything natively — nothing is being denied, and warning about it is a false
-    // alarm that reads as "your session is broken".
-    if (item.bridgeOk || mode === 'bypassPermissions') return null;
+    // This used to be suppressed in 전체 허용, where the driver dropped the bridge on
+    // purpose. It no longer does: 전체 허용 is enforced server-side and the bridge is
+    // attached in every mode. A missing bridge is now a genuine fault everywhere, and
+    // that mode is the worst place to hide it — it is where a silent denial looks
+    // exactly like the agent deciding to skip the work.
+    if (item.bridgeOk) return null;
     return (
       <div className="text-[11px] text-red-400 border border-red-400/40 bg-red-400/5 rounded-lg px-3 py-2 flex items-center gap-1.5">
         <IconWarning size={13} className="shrink-0" />

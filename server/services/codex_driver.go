@@ -191,6 +191,15 @@ func (d *CodexDriver) Interrupt() error {
 	return err
 }
 
+// SetPermissionMode is not supported: Codex's approval policy and sandbox are fixed
+// when the thread starts (threadParams), and app-server has no equivalent of Claude's
+// set_permission_mode control request. Refusing makes NativeService fall back to a
+// restart — the only way to change them — which is better than accepting a mode the
+// running thread would not honour.
+func (d *CodexDriver) SetPermissionMode(string) error {
+	return fmt.Errorf("codex driver: the permission mode is fixed for the life of a thread")
+}
+
 func (d *CodexDriver) ConversationID() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()

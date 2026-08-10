@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 )
 
 // ClaudeDriver runs one Claude Code session as a structured stream instead of a
@@ -25,8 +26,10 @@ type ClaudeConfig struct {
 	Cwd       string
 	Model     string // "" = the CLI's default
 
-	// PermissionMode: default | acceptEdits | plan | bypassPermissions ("" = CLI
-	// default). What the TUI's Shift+Tab cycles.
+	// PermissionMode is the CLI's own vocabulary: "" (default) | acceptEdits | plan.
+	// It is NOT the deck's mode id — callers map through cliPermissionMode first, which
+	// keeps the two server-owned modes (auto, 전체 허용) off the command line. Changed on
+	// a live session with SetPermissionMode.
 	PermissionMode string
 
 	// ResumeID is Claude's own session_id, to continue a past conversation.
@@ -60,13 +63,19 @@ type ClaudeDriver struct {
 	// capabilities come from init: what this CLI build understands.
 	capabilities []string
 	interruptSeq int
+
+	// ctrlSeq numbers control_requests; ctrlWaiters parks the caller of each one
+	// until the CLI answers it, keyed by request id.
+	ctrlSeq     int
+	ctrlWaiters map[string]chan ControlResponse
 }
 
 func NewClaudeDriver(cfg ClaudeConfig) *ClaudeDriver {
 	return &ClaudeDriver{
-		cfg:    cfg,
-		events: make(chan *StreamEvent, 64),
-		done:   make(chan struct{}),
+		cfg:         cfg,
+		events:      make(chan *StreamEvent, 64),
+		done:        make(chan struct{}),
+		ctrlWaiters: make(map[string]chan ControlResponse),
 	}
 }
 
@@ -91,18 +100,18 @@ func (d *ClaudeDriver) buildArgs() []string {
 		// echo could arrive after the reply started, flipping the on-screen order,
 		// and would double-print alongside our own record.
 	}
-	// The approve bridge is required in every mode EXCEPT bypassPermissions. In
-	// bypass ("전체 허용") the CLI allows every tool natively (verified: bypass alone
-	// runs Bash with no denials). Registering our approve tool ON TOP makes this CLI
-	// version (2.1.x) route to the prompt tool and then DENY the call — the flag and a
-	// prompt-tool are contradictory. So for bypass we omit the bridge entirely; for
-	// default/auto/acceptEdits/plan it MUST stay (without it a gated tool is denied).
-	if d.cfg.PermissionMode != "bypassPermissions" {
-		args = append(args,
-			"--mcp-config", d.mcpConfigJSON(),
-			"--permission-prompt-tool", "mcp__pcd__approve",
-		)
-	}
+	// The approve bridge goes on in EVERY mode. Without it the CLI has nobody to ask,
+	// so a permission-gated tool is denied outright while the turn still reports
+	// success — from the deck that reads as "작업이 승인 요청도 없이 스킵됐다".
+	//
+	// This used to be omitted for bypassPermissions, because passing that flag AND a
+	// prompt tool makes the CLI route to the prompt tool and then deny. The fix is not
+	// to drop the bridge but to never pass the flag: 전체 허용 is enforced server-side
+	// (cliPermissionMode → "", autoDecide → allow), so the contradiction never arises.
+	args = append(args,
+		"--mcp-config", d.mcpConfigJSON(),
+		"--permission-prompt-tool", "mcp__pcd__approve",
+	)
 	if d.cfg.Model != "" {
 		args = append(args, "--model", d.cfg.Model)
 	}
@@ -217,6 +226,7 @@ func (d *ClaudeDriver) Start() error {
 func (d *ClaudeDriver) readPump(stdout io.ReadCloser) {
 	defer close(d.events)
 	defer close(d.done)
+	defer d.releaseControlWaiters()
 
 	sc := bufio.NewScanner(stdout)
 	// A single event can carry a whole file's contents (a Write tool_use, or a
@@ -237,6 +247,12 @@ func (d *ClaudeDriver) readPump(stdout io.ReadCloser) {
 			d.claudeSessionID = ev.SessionID
 			d.capabilities = ev.Capabilities
 			d.mu.Unlock()
+		}
+		// Hand a control_response to whoever is waiting on it BEFORE the event goes
+		// to the fan-out: events is buffered but finite, and a stalled consumer must
+		// not be able to wedge a waiting SetPermissionMode.
+		if ev.Type == StreamTypeControlResponse && ev.Response != nil {
+			d.deliverControl(*ev.Response)
 		}
 		d.events <- ev
 	}
@@ -303,6 +319,104 @@ func (d *ClaudeDriver) Interrupt() error {
 	}
 	_, err = stdin.Write(append(b, '\n'))
 	return err
+}
+
+// setPermissionModeTimeout bounds the wait for the CLI's control_response. The CLI
+// answers this frame immediately (it is not queued behind the turn), so a wait this
+// long only ever expires on a build that ignores the frame entirely — and then the
+// caller falls back to a restart rather than believing a switch that never happened.
+const setPermissionModeTimeout = 5 * time.Second
+
+// SetPermissionMode changes a LIVE session's permission mode without restarting it.
+//
+// This is the whole point: the mode used to be applied by killing the process and
+// resuming, which threw away whatever turn was in flight — change your mind mid-task
+// and the task stopped. The CLI accepts the change on the same stdin pipe instead.
+//
+// mode is the CLI's vocabulary ("" → "default", acceptEdits, plan). Server-owned
+// modes (auto, 전체 허용) must be mapped through cliPermissionMode first; asking the
+// CLI for bypassPermissions here is refused unless it was launched with
+// --dangerously-skip-permissions.
+//
+// It waits for the CLI's answer rather than firing and forgetting: a refusal that we
+// reported as success would leave the deck showing one mode while the session runs
+// another.
+func (d *ClaudeDriver) SetPermissionMode(mode string) error {
+	d.mu.Lock()
+	stdin := d.stdin
+	stopped := d.stopped
+	d.ctrlSeq++
+	id := fmt.Sprintf("set-mode-%d", d.ctrlSeq)
+	wait := make(chan ControlResponse, 1)
+	d.ctrlWaiters[id] = wait
+	d.mu.Unlock()
+
+	if stdin == nil || stopped {
+		d.forgetControl(id)
+		return fmt.Errorf("claude driver: session is not running")
+	}
+	b, err := json.Marshal(NewSetPermissionModeRequest(id, mode))
+	if err != nil {
+		d.forgetControl(id)
+		return err
+	}
+	if _, err := stdin.Write(append(b, '\n')); err != nil {
+		d.forgetControl(id)
+		return err
+	}
+
+	timer := time.NewTimer(setPermissionModeTimeout)
+	defer timer.Stop()
+	select {
+	case resp, ok := <-wait:
+		if !ok {
+			return fmt.Errorf("claude driver: session ended before the mode change was acknowledged")
+		}
+		if resp.Subtype != "success" {
+			msg := resp.Error
+			if msg == "" {
+				msg = resp.Subtype
+			}
+			return fmt.Errorf("claude driver: the CLI refused the mode change: %s", msg)
+		}
+		d.mu.Lock()
+		d.cfg.PermissionMode = mode
+		d.mu.Unlock()
+		return nil
+	case <-timer.C:
+		d.forgetControl(id)
+		return fmt.Errorf("claude driver: this CLI build did not answer set_permission_mode")
+	}
+}
+
+// deliverControl routes one control_response to its waiter. An id nobody waits on is
+// dropped: Interrupt fires and forgets, so its response is expected to be orphaned.
+func (d *ClaudeDriver) deliverControl(resp ControlResponse) {
+	d.mu.Lock()
+	w := d.ctrlWaiters[resp.RequestID]
+	delete(d.ctrlWaiters, resp.RequestID)
+	d.mu.Unlock()
+	if w != nil {
+		w <- resp
+	}
+}
+
+// releaseControlWaiters frees everyone still waiting when the process exits, so a
+// dead session reports "it ended" at once instead of after the full timeout.
+func (d *ClaudeDriver) releaseControlWaiters() {
+	d.mu.Lock()
+	waiters := d.ctrlWaiters
+	d.ctrlWaiters = make(map[string]chan ControlResponse)
+	d.mu.Unlock()
+	for _, w := range waiters {
+		close(w)
+	}
+}
+
+func (d *ClaudeDriver) forgetControl(id string) {
+	d.mu.Lock()
+	delete(d.ctrlWaiters, id)
+	d.mu.Unlock()
 }
 
 // ClaudeSessionID is the CLI's own session id (from system/init) — what --resume

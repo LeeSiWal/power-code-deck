@@ -203,13 +203,12 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 		// answer channel is buffered, so resolving here synchronously is safe (Ask
 		// isn't blocked yet).
 		//
-		// The bypass branch is a BACKSTOP, not the main path. A session started in
-		// 전체 허용 has no approve bridge at all (claude_driver.go omits --mcp-config
-		// and --permission-prompt-tool there, because this CLI denies when the flag and
-		// a prompt tool are both present), so nothing reaches this handler. It still
-		// matters for the window where a session's driver carries the bridge while its
-		// policy already says bypass — e.g. mid restart(), which is exactly the hole
-		// TestBypassPolicySurvivesRestartWindow pins.
+		// The bypass branch is the MAIN path, not a backstop: 전체 허용 is no longer a
+		// CLI flag (cliPermissionMode keeps it off the command line), so the bridge is
+		// attached in that mode too and every gated call arrives right here to be
+		// allowed. It also still has to hold during a restart window, where the driver
+		// is being replaced but the policy must already answer by the user's mode —
+		// the hole TestBypassPolicySurvivesRestartWindow pins.
 		if d, ok := s.autoDecision(req); ok {
 			s.broker.Resolve(req.ID, d)
 			return
@@ -314,13 +313,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	if kind == "" {
 		kind = "claude"
 	}
-	// "auto" (안전 검사) is OUR mode, not a CLI --permission-mode: run the Claude CLI in
-	// its default mode so every gated tool routes to our approve bridge, where the
-	// policy allows safe calls and asks for risky ones. sess.mode stays "auto".
-	cliMode := mode
-	if mode == AutoMode {
-		cliMode = ""
-	}
+	cliMode := cliPermissionMode(mode)
 	var d NativeDriver
 	var token string
 	var err error
@@ -488,16 +481,75 @@ func (s *NativeService) SetModel(sessionID, model string) error {
 	return s.restart(sessionID, model, mode)
 }
 
+// cliPermissionMode maps OUR mode vocabulary to what the Claude CLI is told.
+//
+// Two of the five modes are the SERVER's, not the CLI's, and both run the CLI in its
+// default mode so every gated tool routes through our approve bridge:
+//
+//   - auto (안전 검사) — the CLI has no such flag at all; the policy decides here.
+//   - bypassPermissions (전체 허용) — the CLI HAS this flag, but passing it forced the
+//     driver to drop the approve bridge (flag + prompt-tool together makes the CLI
+//     deny), and a session with no bridge silently refuses anything the CLI still
+//     wants a decision on. It also cannot be entered or left at runtime, so it made
+//     every switch into or out of 전체 허용 a process restart. Enforcing it in
+//     autoDecide instead costs nothing and removes both failure modes.
+func cliPermissionMode(mode string) string {
+	switch mode {
+	case AutoMode, BypassMode:
+		return ""
+	}
+	return mode
+}
+
 // SetMode switches the permission mode (the TUI's Shift+Tab), keeping the model.
+//
+// It steers the running session rather than replacing it. The old implementation went
+// through restart(), which killed the CLI process — so changing your mind about
+// permissions in the middle of a task killed the task with it. A driver that cannot
+// switch in place (Codex, an older CLI build) says so, and only then do we restart.
 func (s *NativeService) SetMode(sessionID, mode string) error {
 	s.mu.RLock()
 	sess := s.sessions[sessionID]
 	s.mu.RUnlock()
-	model := ""
-	if sess != nil {
-		model = sess.model
+	if sess == nil {
+		return fmt.Errorf("native session %s is not running", sessionID)
 	}
-	return s.restart(sessionID, model, mode)
+	s.mu.RLock()
+	current, model := sess.mode, sess.model
+	s.mu.RUnlock()
+	if current == mode {
+		return nil
+	}
+	// Only bother the CLI when the mode it sees actually changes: auto ↔ 전체 허용 are
+	// both "default" to the CLI and differ only in our policy.
+	if cliPermissionMode(mode) != cliPermissionMode(current) {
+		if err := sess.driver.SetPermissionMode(cliPermissionMode(mode)); err != nil {
+			return s.restart(sessionID, model, mode)
+		}
+	}
+	s.applyMode(sess, mode)
+	return nil
+}
+
+// applyMode records a mode the running session has already accepted: on the session
+// (what the UI reads back), on the policy the approve bridge judges by, and in the DB
+// so another device resumes with it. Kept together because a mode that lands in one
+// place and not the others is worse than no switch at all — the deck would show one
+// mode while approvals were decided by another.
+func (s *NativeService) applyMode(sess *nativeSession, mode string) {
+	s.mu.Lock()
+	sess.mode = mode
+	if pol, ok := s.policies[sess.id]; ok {
+		pol.mode = mode
+		s.policies[sess.id] = pol
+	}
+	model := sess.model
+	save := s.saveConfig
+	s.mu.Unlock()
+
+	if save != nil {
+		save(sess.id, model, mode)
+	}
 }
 
 // emit records an event in the session's history (bounded) and fans it out to
