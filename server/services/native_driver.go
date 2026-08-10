@@ -10,4 +10,9 @@ type NativeDriver interface {
 	Interrupt() error
 	ConversationID() string
 	Stop()
+	// SetPermissionMode changes the permission mode of the running session in place.
+	// An error means "I can't do that without being restarted" — NativeService takes
+	// that as permission to fall back to a restart, which is what every driver did
+	// unconditionally before.
+	SetPermissionMode(mode string) error
 }

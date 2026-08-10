@@ -263,7 +263,9 @@ type NativeSetModelPayload struct {
 }
 
 // NativeSetModePayload switches the permission mode (the TUI's Shift+Tab):
-// "" | acceptEdits | plan | bypassPermissions. Restarts on the same conversation.
+// "" | acceptEdits | auto | plan | bypassPermissions. Applied to the LIVE session, so
+// a turn already in flight is not interrupted; only a driver that cannot switch in
+// place (Codex, an older CLI build) falls back to restarting the conversation.
 type NativeSetModePayload struct {
 	AgentID string `json:"agentId"`
 	Mode    string `json:"mode"`

@@ -6,13 +6,16 @@ import (
 	"strings"
 )
 
-// Permission mode ids shared with the client. "auto" is OURS — the CLI has no such
-// --permission-mode (the VS Code extension's "Auto (safety check)" is extension-only),
-// so we implement it here: every gated tool routes through our approve bridge and this
-// policy decides. bypassPermissions is the CLI's, but we ALSO enforce it here because
-// a session started in bypass has no bridge at all (claude_driver.go omits it there),
-// so this branch is a backstop for the window where the driver still carries the bridge
-// while the policy already says bypass — mid restart(), most of all.
+// Permission mode ids shared with the client. Two of them are OURS, not the CLI's,
+// and both run the CLI in its default mode with our approve bridge attached (see
+// cliPermissionMode):
+//
+//   - "auto" — the CLI has no such --permission-mode at all (the VS Code extension's
+//     "Auto (safety check)" is extension-only), so this policy is the whole feature.
+//   - "bypassPermissions" — the CLI does have this flag, but passing it forced the
+//     driver to drop the approve bridge, and a bridge-less session silently denies
+//     anything the CLI still wants a decision on. Deciding it here keeps the bridge
+//     attached in every mode, and keeps the mode switchable without a restart.
 const (
 	AutoMode   = "auto"
 	BypassMode = "bypassPermissions"

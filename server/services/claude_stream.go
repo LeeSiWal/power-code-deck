@@ -56,6 +56,9 @@ type StreamEvent struct {
 	// it; nil/"" for the main conversation.
 	ParentToolUseID *string `json:"parent_tool_use_id"`
 
+	// control_response — the CLI's answer to a control_request we wrote on stdin.
+	Response *ControlResponse `json:"response"`
+
 	// result
 	IsError          bool               `json:"is_error"`
 	Result           string             `json:"result"`
@@ -140,6 +143,23 @@ type ControlRequest struct {
 
 type ControlRequestBody struct {
 	Subtype string `json:"subtype"`
+	// Mode carries the target for subtype "set_permission_mode". Omitted otherwise —
+	// an interrupt frame with a stray empty mode is not the shape the CLI expects.
+	Mode string `json:"mode,omitempty"`
+}
+
+// ControlResponse is the CLI's reply to one control_request, matched by RequestID.
+// Captured from claude 2.1.226:
+//
+//	<- {"type":"control_response","response":{"subtype":"success","request_id":"set-mode-1",
+//	                                          "response":{"mode":"plan"}}}
+//	<- {"type":"control_response","response":{"subtype":"error","request_id":"set-mode-1",
+//	     "error":"Cannot set permission mode to bypassPermissions because the session was
+//	              not launched with --dangerously-skip-permissions"}}
+type ControlResponse struct {
+	Subtype   string `json:"subtype"` // success | error
+	RequestID string `json:"request_id"`
+	Error     string `json:"error"`
 }
 
 // NewInterruptRequest builds the frame that stops the current turn. Only send it
@@ -147,6 +167,25 @@ type ControlRequestBody struct {
 // ignore the line and the user's 중단 tap would do nothing, silently.
 func NewInterruptRequest(id string) ControlRequest {
 	return ControlRequest{Type: "control_request", RequestID: id, Request: ControlRequestBody{Subtype: "interrupt"}}
+}
+
+// NewSetPermissionModeRequest builds the frame that changes the permission mode of a
+// LIVE session — the whole point being that it does not restart anything, so a turn
+// in flight survives the switch.
+//
+// mode is the CLI's own vocabulary: "default" | "acceptEdits" | "plan". The CLI
+// refuses "bypassPermissions" here unless the session was launched with
+// --dangerously-skip-permissions (verified against 2.1.226), which is one reason
+// 전체 허용 is a server-side policy and never a CLI flag — see cliPermissionMode.
+func NewSetPermissionModeRequest(id, mode string) ControlRequest {
+	if mode == "" {
+		mode = "default"
+	}
+	return ControlRequest{
+		Type:      "control_request",
+		RequestID: id,
+		Request:   ControlRequestBody{Subtype: "set_permission_mode", Mode: mode},
+	}
 }
 
 // NewUserText builds the stdin frame for a plain user turn.
