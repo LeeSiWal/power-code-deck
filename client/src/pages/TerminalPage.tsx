@@ -9,6 +9,7 @@ import { HandoffModal } from '../components/terminal/HandoffModal';
 import { SessionHistory } from '../components/terminal/SessionHistory';
 import { CompanionShell } from '../components/terminal/CompanionShell';
 import { TodoStrip } from '../components/terminal/TodoStrip';
+import { TodoPanel } from '../components/terminal/TodoPanel';
 import { FileExplorer } from '../components/file/FileExplorer';
 import { FilePreview } from '../components/file/FilePreview';
 import { FileEditor } from '../components/file/FileEditor';
@@ -66,10 +67,24 @@ function usesNative(agent: { preset?: string; command?: string } | null | undefi
 const PANEL_MIN = 180;
 const PANEL_MAX = 640;
 
+const TODO_MIN = 72;
+// 고정 구역이 탭 콘텐츠를 완전히 밀어내지 못하게 막는다. 서브에이전트 패널이나
+// 동반 셸이 한 줄만 남으면 그 탭은 없는 것과 같다.
+const TODO_MAX_RATIO = 0.7;
+const TODO_DEFAULT = 160;
+
 function readPanelWidth(side: 'left' | 'right', fallback: number): number {
   const raw = Number(localStorage.getItem(`pcd:panel:${side}`));
   if (!Number.isFinite(raw) || raw <= 0) return fallback;
   return Math.max(PANEL_MIN, Math.min(PANEL_MAX, raw));
+}
+
+// 읽는 시점에는 최소값만 자른다. 최대값은 우측 패널의 실제 높이에 비례하므로
+// 렌더 전에는 알 수 없다 — 드래그 핸들러가 그때의 높이로 자른다.
+function readTodoHeight(): number {
+  const raw = Number(localStorage.getItem('pcd:panel:todos'));
+  if (!Number.isFinite(raw) || raw <= 0) return TODO_DEFAULT;
+  return Math.max(TODO_MIN, raw);
 }
 
 export function TerminalPage() {
@@ -171,6 +186,9 @@ export function TerminalPage() {
   // sticks instead of snapping back on every reload.
   const [leftWidth, setLeftWidth] = useState(() => readPanelWidth('left', 300));
   const [rightWidth, setRightWidth] = useState(() => readPanelWidth('right', 340));
+  const [todoHeight, setTodoHeight] = useState(readTodoHeight);
+  const todoHeightRef = useRef(todoHeight);
+  useEffect(() => { todoHeightRef.current = todoHeight; }, [todoHeight]);
   // The mouseup handler is created once per drag and would otherwise close over the
   // width as it was when the drag STARTED — these mirror the live value.
   const leftWidthRef = useRef(leftWidth);
@@ -290,6 +308,46 @@ export function TerminalPage() {
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
   }, [leftWidth, rightWidth]);
+
+  // 세로 스플리터는 Pointer Events로 만든다. 좌우 스플리터는 mousedown 기반이라
+  // 터치에서 잡히지 않는데, 이 패널의 대상 기기에는 iPad가 포함된다(useDevice는
+  // 768px 이상을 전부 데스크톱 레이아웃으로 보낸다). setPointerCapture 덕분에
+  // 포인터가 핸들을 벗어나도 이동 이벤트가 계속 들어온다.
+  const handleTodoResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const handle = e.currentTarget;
+    const panelHeight = handle.parentElement?.clientHeight ?? 600;
+    const startY = e.clientY;
+    const startHeight = todoHeightRef.current;
+    const max = Math.max(TODO_MIN, Math.round(panelHeight * TODO_MAX_RATIO));
+    handle.setPointerCapture(e.pointerId);
+    let rafId = 0;
+    let latestHeight = startHeight;
+
+    const onMove = (ev: PointerEvent) => {
+      cancelAnimationFrame(rafId);
+      latestHeight = Math.max(TODO_MIN, Math.min(max, startHeight + (ev.clientY - startY)));
+      rafId = requestAnimationFrame(() => {
+        setTodoHeight(latestHeight);
+      });
+    };
+
+    const onUp = () => {
+      cancelAnimationFrame(rafId);
+      // Save once when drag ends, not every frame — one write instead of hundreds,
+      // using the latest computed height so the drop point isn't lagged by a pending frame.
+      try {
+        localStorage.setItem('pcd:panel:todos', String(latestHeight));
+      } catch { /* private mode — 다음 번엔 기본값으로 시작한다 */ }
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+    };
+
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  }, []);
 
   if (!agentId) return null;
 
@@ -786,15 +844,28 @@ export function TerminalPage() {
               onMouseDown={(e) => handleMouseDown('right', e)}
             />
             <div className="shrink-0 flex flex-col overflow-hidden min-h-0 border-l border-deck-border" style={{ width: `${rightWidth}px` }}>
-              {rightTab === 'browser' ? (
-                <BrowserPanel agentId={agentId} onClose={() => setRightPanelOpen(false)} />
-              ) : rightTab === 'sessions' ? (
-                <SessionHistory agentId={agentId} onClose={() => setRightPanelOpen(false)} />
-              ) : rightTab === 'shell' ? (
-                <CompanionShell agentId={agentId} onClose={() => setRightPanelOpen(false)} />
-              ) : (
-                <SubAgentPanel activity={activity} palette={generatePalette(agent?.colorHue ?? 220)} onClose={() => setRightPanelOpen(false)} />
+              {/* 탭보다 위에 고정한다. 탭으로 만들면 동반 셸을 여는 순간 사라져서
+                  "항상 보인다"는 약속이 깨진다. */}
+              {!!activity?.todos?.length && (
+                <>
+                  <TodoPanel todos={activity.todos} height={todoHeight} />
+                  <div
+                    className="h-1 shrink-0 cursor-row-resize touch-none bg-purple-500 opacity-0 hover:opacity-100 transition-opacity"
+                    onPointerDown={handleTodoResize}
+                  />
+                </>
               )}
+              <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                {rightTab === 'browser' ? (
+                  <BrowserPanel agentId={agentId} onClose={() => setRightPanelOpen(false)} />
+                ) : rightTab === 'sessions' ? (
+                  <SessionHistory agentId={agentId} onClose={() => setRightPanelOpen(false)} />
+                ) : rightTab === 'shell' ? (
+                  <CompanionShell agentId={agentId} onClose={() => setRightPanelOpen(false)} />
+                ) : (
+                  <SubAgentPanel activity={activity} palette={generatePalette(agent?.colorHue ?? 220)} onClose={() => setRightPanelOpen(false)} />
+                )}
+              </div>
             </div>
           </>
         )}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,8 @@ type ActivityManager struct {
 	watchers map[string]*transcriptWatcher
 	latest   map[string]AgentActivitySnapshot
 	emit     func(agentID string, snap AgentActivitySnapshot)
+
+	sessionIDFor func(agentID string) string
 }
 
 func NewActivityManager() *ActivityManager {
@@ -40,6 +43,15 @@ func (m *ActivityManager) SetEmitter(fn func(agentID string, snap AgentActivityS
 	m.mu.Unlock()
 }
 
+// SetSessionIDLookup wires how a watcher learns its agent's Claude session id, so it
+// can follow that conversation's transcript instead of whichever file in the project
+// was written last. Called once from main.go, like SetEmitter.
+func (m *ActivityManager) SetSessionIDLookup(fn func(agentID string) string) {
+	m.mu.Lock()
+	m.sessionIDFor = fn
+	m.mu.Unlock()
+}
+
 // Start begins watching an agent's transcript. It is a no-op for non-Claude presets
 // (only Claude Code writes the JSONL transcripts we parse). Safe to call repeatedly —
 // an existing watcher for the same id is replaced.
@@ -51,13 +63,15 @@ func (m *ActivityManager) Start(agentID, preset, command, cwd string) {
 
 	m.mu.Lock()
 	emit := m.emit
+	lookup := m.sessionIDFor
 	w := &transcriptWatcher{
-		agentID: agentID,
-		dir:     claudeProjectDir(cwd),
-		stop:    make(chan struct{}),
-		nodes:   make(map[string]*activityNode),
-		tools:   make(map[string]*toolRun),
-		subByID: make(map[string]string),
+		agentID:      agentID,
+		dir:          claudeProjectDir(cwd),
+		sessionIDFor: lookup,
+		stop:         make(chan struct{}),
+		nodes:        make(map[string]*activityNode),
+		tools:        make(map[string]*toolRun),
+		subByID:      make(map[string]string),
 		emit: func(snap AgentActivitySnapshot) {
 			m.mu.Lock()
 			m.latest[agentID] = snap
@@ -174,6 +188,12 @@ type transcriptWatcher struct {
 	stop    chan struct{}
 	emit    func(AgentActivitySnapshot)
 
+	// sessionIDFor는 이 에이전트의 claude_session_id를 매번 조회한다. 값이 아니라
+	// 게터인 이유: id는 시작 시점에 없을 수 있다. 네이티브는 system/init이 와야
+	// 알고(main.go의 SetPersistence), 이어하기는 시작 시점에 안다.
+	// nil이거나 빈 문자열을 주면 최신 파일로 물러난다.
+	sessionIDFor func(agentID string) string
+
 	// tail state
 	curFile string
 	offset  int64
@@ -186,6 +206,13 @@ type transcriptWatcher struct {
 	openSubs []string          // still-running subagent node ids (attribution stack)
 	recent   []*toolRun
 	todos    []ActivityTodo
+	// todoIDs parallels todos: todoIDs[i] is the taskId the CLI uses for todos[i].
+	// Kept beside the list rather than inside ActivityTodo because the id is a
+	// transport detail of the Task* tools — the clients render content/status and
+	// have no use for it. A deletion drops both entries, so the ids of the survivors
+	// never shift.
+	todoIDs  []int
+	taskSeq  int
 	orderSeq int
 
 	wasNonEmpty bool
@@ -205,10 +232,10 @@ func (w *transcriptWatcher) run() {
 	}
 }
 
-// poll picks the newest transcript file for this project and consumes any bytes
-// appended since the last read.
+// poll fetches the agent's target transcript file (its own session, or the
+// newest if unknown) and consumes any bytes appended since the last read.
 func (w *transcriptWatcher) poll() {
-	path := w.newestTranscript()
+	path := w.targetTranscript()
 	if path == "" {
 		return
 	}
@@ -224,6 +251,8 @@ func (w *transcriptWatcher) poll() {
 		w.openSubs = nil
 		w.recent = nil
 		w.todos = nil
+		w.todoIDs = nil
+		w.taskSeq = 0
 	}
 
 	f, err := os.Open(path)
@@ -262,6 +291,27 @@ func (w *transcriptWatcher) poll() {
 			w.processLine(line)
 		}
 	}
+}
+
+// targetTranscript는 이 워처가 따라갈 파일을 고른다.
+//
+// 워처는 에이전트별이지만 dir은 프로젝트 단위다. "가장 최근에 쓰인 파일"만 보면 한
+// 프로젝트에 세션이 둘일 때 서로의 활동과 할일 목록을 보게 된다. 에이전트의 세션 id를
+// 알면 그 파일을 직접 지목해 그 혼선을 없앤다.
+//
+// 알 수 없을 때(터미널 트랙에서 새로 띄운 claude는 자기 id를 우리에게 알려주지 않는다)
+// 는 예전 동작으로 물러난다 — 틀린 목록을 보여줄 위험보다 아무것도 안 보여주는 쪽이
+// 더 나쁘다.
+func (w *transcriptWatcher) targetTranscript() string {
+	if w.sessionIDFor != nil {
+		if sid := w.sessionIDFor(w.agentID); sid != "" {
+			p := filepath.Join(w.dir, sid+".jsonl")
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p
+			}
+		}
+	}
+	return w.newestTranscript()
 }
 
 func (w *transcriptWatcher) newestTranscript() string {
@@ -332,10 +382,8 @@ func (w *transcriptWatcher) processLine(raw string) {
 }
 
 func (w *transcriptWatcher) onToolUse(b contentBlock, sidechain bool, ts int64) {
-	if b.Name == "TodoWrite" && !sidechain {
-		if todos, ok := parseTodos(b.Input); ok {
-			w.todos = todos
-		}
+	if !sidechain {
+		w.onChecklistTool(b)
 	}
 	if isSubagentTool(b.Name) {
 		// A sub-agent spawn. Create a child node and mark the main agent busy
@@ -505,6 +553,112 @@ func (w *transcriptWatcher) emitSnapshot() {
 	}
 	w.wasNonEmpty = nonEmpty
 	w.emit(snap)
+}
+
+// Checklist tool names. The CLI has used two shapes for the same feature:
+//
+//	TodoWrite   — the WHOLE list every call (a snapshot; last call wins)
+//	TaskCreate  — append one task          {subject, description, activeForm}
+//	TaskUpdate  — revise one task          {taskId, status?, subject?, activeForm?}
+//
+// Both are handled, because both still occur on the main chain. When the CLI moved to
+// the Task* pair this watcher only knew TodoWrite, so the checklist went silently
+// blank on every session that used the new tools — no error, just no input, which is
+// the worst way for a feature to fail.
+const (
+	toolTodoWrite  = "TodoWrite"
+	toolTaskCreate = "TaskCreate"
+	toolTaskUpdate = "TaskUpdate"
+)
+
+// onChecklistTool folds one main-chain checklist call into the list. Main chain only:
+// a subagent keeps its own checklist and letting it through would overwrite the plan
+// the user is actually watching.
+func (w *transcriptWatcher) onChecklistTool(b contentBlock) {
+	switch b.Name {
+	case toolTodoWrite:
+		// A snapshot IS the whole list, so it replaces whatever the Task* tools built.
+		// Renumbering from 1 keeps a later TaskUpdate addressing the rows now on screen.
+		if todos, ok := parseTodos(b.Input); ok {
+			w.todos = todos
+			w.todoIDs = make([]int, len(todos))
+			for i := range todos {
+				w.todoIDs[i] = i + 1
+			}
+			w.taskSeq = len(todos)
+		}
+	case toolTaskCreate:
+		var in struct {
+			Subject    string `json:"subject"`
+			ActiveForm string `json:"activeForm"`
+		}
+		if json.Unmarshal(b.Input, &in) != nil || in.Subject == "" {
+			return // keep the previous list rather than append a blank row
+		}
+		w.taskSeq++
+		w.todos = append(w.todos, ActivityTodo{
+			Content: in.Subject, Status: "pending", ActiveForm: in.ActiveForm,
+		})
+		w.todoIDs = append(w.todoIDs, w.taskSeq)
+	case toolTaskUpdate:
+		var in struct {
+			TaskID     json.RawMessage `json:"taskId"` // string in the wild, number tolerated
+			Status     string          `json:"status"`
+			Subject    string          `json:"subject"`
+			ActiveForm string          `json:"activeForm"`
+		}
+		if json.Unmarshal(b.Input, &in) != nil {
+			return
+		}
+		id, ok := parseTaskID(in.TaskID)
+		if !ok {
+			return
+		}
+		idx := -1
+		for i, tid := range w.todoIDs {
+			if tid == id {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return // an id we never saw created — ignore rather than invent a row
+		}
+		if in.Status == "deleted" {
+			w.todos = append(w.todos[:idx], w.todos[idx+1:]...)
+			w.todoIDs = append(w.todoIDs[:idx], w.todoIDs[idx+1:]...)
+			return
+		}
+		// Every field is optional: an update that only revises wording must not reset
+		// the status, and vice versa.
+		if in.Status == "pending" || in.Status == "in_progress" || in.Status == "completed" {
+			w.todos[idx].Status = in.Status
+		}
+		if in.Subject != "" {
+			w.todos[idx].Content = in.Subject
+		}
+		if in.ActiveForm != "" {
+			w.todos[idx].ActiveForm = in.ActiveForm
+		}
+	}
+}
+
+// parseTaskID accepts the id as a JSON string ("2", what the CLI sends today) or a
+// bare number, so a future switch between the two doesn't blank the checklist again.
+func parseTaskID(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		n, err := strconv.Atoi(strings.TrimSpace(s))
+		return n, err == nil
+	}
+	var n int
+	if json.Unmarshal(raw, &n) == nil {
+		return n, true
+	}
+	return 0, false
 }
 
 func parseTodos(input json.RawMessage) ([]ActivityTodo, bool) {

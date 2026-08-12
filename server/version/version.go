@@ -28,6 +28,7 @@ import (
 //	v0.4.0 = Unified Control Room (dashboard absorbed, hierarchical back-nav)
 //	v0.5.0 = Todo checklist, notification centre, companion shell
 //	v0.6.0 = Approval allowlist (always-allow saves a permanent per-project rule)
+//	v0.6.1 = Todo side panel; checklist restored (TaskCreate/TaskUpdate); transcript targeting fix; permission mode live switch
 //
 //go:embed VERSION
 var versionFile string
