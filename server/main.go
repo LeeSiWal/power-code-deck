@@ -67,6 +67,9 @@ func main() {
 	// terminal scraping). Wired to the hub below once it exists.
 	activitySvc := services.NewActivityManager()
 	agentSvc.SetActivityManager(activitySvc)
+	// 워처가 프로젝트에서 가장 최근에 쓰인 파일이 아니라 이 에이전트의 대화를 따라가게
+	// 한다. 한 프로젝트에 세션이 둘일 때 서로의 활동·할일이 섞이는 것을 막는다.
+	activitySvc.SetSessionIDLookup(agentSvc.ClaudeSessionID)
 	fileSvc := services.NewFileService()
 	watcherSvc := services.NewWatcherService()
 	projectSvc := services.NewProjectService(database)

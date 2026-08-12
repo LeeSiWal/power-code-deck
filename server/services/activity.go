@@ -24,6 +24,8 @@ type ActivityManager struct {
 	watchers map[string]*transcriptWatcher
 	latest   map[string]AgentActivitySnapshot
 	emit     func(agentID string, snap AgentActivitySnapshot)
+
+	sessionIDFor func(agentID string) string
 }
 
 func NewActivityManager() *ActivityManager {
@@ -41,6 +43,15 @@ func (m *ActivityManager) SetEmitter(fn func(agentID string, snap AgentActivityS
 	m.mu.Unlock()
 }
 
+// SetSessionIDLookup wires how a watcher learns its agent's Claude session id, so it
+// can follow that conversation's transcript instead of whichever file in the project
+// was written last. Called once from main.go, like SetEmitter.
+func (m *ActivityManager) SetSessionIDLookup(fn func(agentID string) string) {
+	m.mu.Lock()
+	m.sessionIDFor = fn
+	m.mu.Unlock()
+}
+
 // Start begins watching an agent's transcript. It is a no-op for non-Claude presets
 // (only Claude Code writes the JSONL transcripts we parse). Safe to call repeatedly —
 // an existing watcher for the same id is replaced.
@@ -52,13 +63,15 @@ func (m *ActivityManager) Start(agentID, preset, command, cwd string) {
 
 	m.mu.Lock()
 	emit := m.emit
+	lookup := m.sessionIDFor
 	w := &transcriptWatcher{
-		agentID: agentID,
-		dir:     claudeProjectDir(cwd),
-		stop:    make(chan struct{}),
-		nodes:   make(map[string]*activityNode),
-		tools:   make(map[string]*toolRun),
-		subByID: make(map[string]string),
+		agentID:      agentID,
+		dir:          claudeProjectDir(cwd),
+		sessionIDFor: lookup,
+		stop:         make(chan struct{}),
+		nodes:        make(map[string]*activityNode),
+		tools:        make(map[string]*toolRun),
+		subByID:      make(map[string]string),
 		emit: func(snap AgentActivitySnapshot) {
 			m.mu.Lock()
 			m.latest[agentID] = snap
@@ -175,6 +188,12 @@ type transcriptWatcher struct {
 	stop    chan struct{}
 	emit    func(AgentActivitySnapshot)
 
+	// sessionIDFor는 이 에이전트의 claude_session_id를 매번 조회한다. 값이 아니라
+	// 게터인 이유: id는 시작 시점에 없을 수 있다. 네이티브는 system/init이 와야
+	// 알고(main.go의 SetPersistence), 이어하기는 시작 시점에 안다.
+	// nil이거나 빈 문자열을 주면 최신 파일로 물러난다.
+	sessionIDFor func(agentID string) string
+
 	// tail state
 	curFile string
 	offset  int64
@@ -216,7 +235,7 @@ func (w *transcriptWatcher) run() {
 // poll picks the newest transcript file for this project and consumes any bytes
 // appended since the last read.
 func (w *transcriptWatcher) poll() {
-	path := w.newestTranscript()
+	path := w.targetTranscript()
 	if path == "" {
 		return
 	}
@@ -272,6 +291,27 @@ func (w *transcriptWatcher) poll() {
 			w.processLine(line)
 		}
 	}
+}
+
+// targetTranscript는 이 워처가 따라갈 파일을 고른다.
+//
+// 워처는 에이전트별이지만 dir은 프로젝트 단위다. "가장 최근에 쓰인 파일"만 보면 한
+// 프로젝트에 세션이 둘일 때 서로의 활동과 할일 목록을 보게 된다. 에이전트의 세션 id를
+// 알면 그 파일을 직접 지목해 그 혼선을 없앤다.
+//
+// 알 수 없을 때(터미널 트랙에서 새로 띄운 claude는 자기 id를 우리에게 알려주지 않는다)
+// 는 예전 동작으로 물러난다 — 틀린 목록을 보여줄 위험보다 아무것도 안 보여주는 쪽이
+// 더 나쁘다.
+func (w *transcriptWatcher) targetTranscript() string {
+	if w.sessionIDFor != nil {
+		if sid := w.sessionIDFor(w.agentID); sid != "" {
+			p := filepath.Join(w.dir, sid+".jsonl")
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p
+			}
+		}
+	}
+	return w.newestTranscript()
 }
 
 func (w *transcriptWatcher) newestTranscript() string {
