@@ -256,6 +256,15 @@ export function toolSummary(name: string, input: Record<string, unknown>): strin
       return s(input.pattern) + (input.path ? ` in ${s(input.path)}` : '');
     case 'Task':
       return s(input.description);
+    // The checklist tools. TaskCreate/TaskUpdate replaced TodoWrite's whole-list
+    // snapshot with per-task deltas, so each one is a small row rather than a card —
+    // the CURRENT list lives in the TodoStrip above the composer. Without these cases
+    // the default branch below shows TaskUpdate as its first string field, which is
+    // the bare id ("1").
+    case 'TaskCreate':
+      return s(input.subject);
+    case 'TaskUpdate':
+      return [s(input.subject), s(input.status)].filter(Boolean).join(' — ') || `#${s(input.taskId)}`;
     case 'WebFetch':
       return s(input.url);
     default: {

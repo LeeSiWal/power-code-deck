@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -186,6 +187,13 @@ type transcriptWatcher struct {
 	openSubs []string          // still-running subagent node ids (attribution stack)
 	recent   []*toolRun
 	todos    []ActivityTodo
+	// todoIDs parallels todos: todoIDs[i] is the taskId the CLI uses for todos[i].
+	// Kept beside the list rather than inside ActivityTodo because the id is a
+	// transport detail of the Task* tools — the clients render content/status and
+	// have no use for it. A deletion drops both entries, so the ids of the survivors
+	// never shift.
+	todoIDs  []int
+	taskSeq  int
 	orderSeq int
 
 	wasNonEmpty bool
@@ -224,6 +232,8 @@ func (w *transcriptWatcher) poll() {
 		w.openSubs = nil
 		w.recent = nil
 		w.todos = nil
+		w.todoIDs = nil
+		w.taskSeq = 0
 	}
 
 	f, err := os.Open(path)
@@ -332,10 +342,8 @@ func (w *transcriptWatcher) processLine(raw string) {
 }
 
 func (w *transcriptWatcher) onToolUse(b contentBlock, sidechain bool, ts int64) {
-	if b.Name == "TodoWrite" && !sidechain {
-		if todos, ok := parseTodos(b.Input); ok {
-			w.todos = todos
-		}
+	if !sidechain {
+		w.onChecklistTool(b)
 	}
 	if isSubagentTool(b.Name) {
 		// A sub-agent spawn. Create a child node and mark the main agent busy
@@ -505,6 +513,112 @@ func (w *transcriptWatcher) emitSnapshot() {
 	}
 	w.wasNonEmpty = nonEmpty
 	w.emit(snap)
+}
+
+// Checklist tool names. The CLI has used two shapes for the same feature:
+//
+//	TodoWrite   — the WHOLE list every call (a snapshot; last call wins)
+//	TaskCreate  — append one task          {subject, description, activeForm}
+//	TaskUpdate  — revise one task          {taskId, status?, subject?, activeForm?}
+//
+// Both are handled, because both still occur on the main chain. When the CLI moved to
+// the Task* pair this watcher only knew TodoWrite, so the checklist went silently
+// blank on every session that used the new tools — no error, just no input, which is
+// the worst way for a feature to fail.
+const (
+	toolTodoWrite  = "TodoWrite"
+	toolTaskCreate = "TaskCreate"
+	toolTaskUpdate = "TaskUpdate"
+)
+
+// onChecklistTool folds one main-chain checklist call into the list. Main chain only:
+// a subagent keeps its own checklist and letting it through would overwrite the plan
+// the user is actually watching.
+func (w *transcriptWatcher) onChecklistTool(b contentBlock) {
+	switch b.Name {
+	case toolTodoWrite:
+		// A snapshot IS the whole list, so it replaces whatever the Task* tools built.
+		// Renumbering from 1 keeps a later TaskUpdate addressing the rows now on screen.
+		if todos, ok := parseTodos(b.Input); ok {
+			w.todos = todos
+			w.todoIDs = make([]int, len(todos))
+			for i := range todos {
+				w.todoIDs[i] = i + 1
+			}
+			w.taskSeq = len(todos)
+		}
+	case toolTaskCreate:
+		var in struct {
+			Subject    string `json:"subject"`
+			ActiveForm string `json:"activeForm"`
+		}
+		if json.Unmarshal(b.Input, &in) != nil || in.Subject == "" {
+			return // keep the previous list rather than append a blank row
+		}
+		w.taskSeq++
+		w.todos = append(w.todos, ActivityTodo{
+			Content: in.Subject, Status: "pending", ActiveForm: in.ActiveForm,
+		})
+		w.todoIDs = append(w.todoIDs, w.taskSeq)
+	case toolTaskUpdate:
+		var in struct {
+			TaskID     json.RawMessage `json:"taskId"` // string in the wild, number tolerated
+			Status     string          `json:"status"`
+			Subject    string          `json:"subject"`
+			ActiveForm string          `json:"activeForm"`
+		}
+		if json.Unmarshal(b.Input, &in) != nil {
+			return
+		}
+		id, ok := parseTaskID(in.TaskID)
+		if !ok {
+			return
+		}
+		idx := -1
+		for i, tid := range w.todoIDs {
+			if tid == id {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return // an id we never saw created — ignore rather than invent a row
+		}
+		if in.Status == "deleted" {
+			w.todos = append(w.todos[:idx], w.todos[idx+1:]...)
+			w.todoIDs = append(w.todoIDs[:idx], w.todoIDs[idx+1:]...)
+			return
+		}
+		// Every field is optional: an update that only revises wording must not reset
+		// the status, and vice versa.
+		if in.Status == "pending" || in.Status == "in_progress" || in.Status == "completed" {
+			w.todos[idx].Status = in.Status
+		}
+		if in.Subject != "" {
+			w.todos[idx].Content = in.Subject
+		}
+		if in.ActiveForm != "" {
+			w.todos[idx].ActiveForm = in.ActiveForm
+		}
+	}
+}
+
+// parseTaskID accepts the id as a JSON string ("2", what the CLI sends today) or a
+// bare number, so a future switch between the two doesn't blank the checklist again.
+func parseTaskID(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		n, err := strconv.Atoi(strings.TrimSpace(s))
+		return n, err == nil
+	}
+	var n int
+	if json.Unmarshal(raw, &n) == nil {
+		return n, true
+	}
+	return 0, false
 }
 
 func parseTodos(input json.RawMessage) ([]ActivityTodo, bool) {
