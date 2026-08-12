@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ActivityTodo } from '../../stores/appStore';
+import { TodoRows } from './TodoRows';
 
 export function TodoStrip({ todos }: { todos?: ActivityTodo[] }) {
   const [open, setOpen] = useState(false);
@@ -19,22 +20,7 @@ export function TodoStrip({ todos }: { todos?: ActivityTodo[] }) {
       </button>
       {open && (
         <div className="max-h-44 overflow-y-auto px-3 pb-2 space-y-1">
-          {todos.map((todo, index) => (
-            <div key={`${index}-${todo.content}`} className="flex gap-2 text-xs">
-              <span className={
-                todo.status === 'completed'
-                  ? 'text-emerald-400'
-                  : todo.status === 'in_progress'
-                    ? 'text-deck-accent'
-                    : 'text-deck-text-faint'
-              }>
-                {todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '▸' : '○'}
-              </span>
-              <span className={todo.status === 'completed' ? 'text-deck-text-faint line-through' : 'text-deck-text-dim'}>
-                {todo.status === 'in_progress' ? todo.activeForm || todo.content : todo.content}
-              </span>
-            </div>
-          ))}
+          <TodoRows todos={todos} />
         </div>
       )}
     </div>
