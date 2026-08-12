@@ -322,20 +322,22 @@ export function TerminalPage() {
     const max = Math.max(TODO_MIN, Math.round(panelHeight * TODO_MAX_RATIO));
     handle.setPointerCapture(e.pointerId);
     let rafId = 0;
+    let latestHeight = startHeight;
 
     const onMove = (ev: PointerEvent) => {
       cancelAnimationFrame(rafId);
+      latestHeight = Math.max(TODO_MIN, Math.min(max, startHeight + (ev.clientY - startY)));
       rafId = requestAnimationFrame(() => {
-        setTodoHeight(Math.max(TODO_MIN, Math.min(max, startHeight + (ev.clientY - startY))));
+        setTodoHeight(latestHeight);
       });
     };
 
     const onUp = () => {
       cancelAnimationFrame(rafId);
-      // 드래그가 끝날 때 한 번만 저장한다 — 프레임마다 쓰면 수백 번이 되고,
-      // 저장되는 값은 결국 마지막에 놓은 그 값이다.
+      // Save once when drag ends, not every frame — one write instead of hundreds,
+      // using the latest computed height so the drop point isn't lagged by a pending frame.
       try {
-        localStorage.setItem('pcd:panel:todos', String(todoHeightRef.current));
+        localStorage.setItem('pcd:panel:todos', String(latestHeight));
       } catch { /* private mode — 다음 번엔 기본값으로 시작한다 */ }
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);

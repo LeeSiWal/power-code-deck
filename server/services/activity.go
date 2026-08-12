@@ -232,8 +232,8 @@ func (w *transcriptWatcher) run() {
 	}
 }
 
-// poll picks the newest transcript file for this project and consumes any bytes
-// appended since the last read.
+// poll fetches the agent's target transcript file (its own session, or the
+// newest if unknown) and consumes any bytes appended since the last read.
 func (w *transcriptWatcher) poll() {
 	path := w.targetTranscript()
 	if path == "" {
