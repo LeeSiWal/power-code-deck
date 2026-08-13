@@ -570,9 +570,17 @@ func withAgentPath(env []string) []string {
 
 // findAgentCommand returns an absolute path to command if it's installed — either
 // on PATH or in one of the agent bin dirs — or "" if it genuinely isn't.
+//
+// When several installs exist it picks the NEWEST, not the first on PATH. As a systemd
+// service the deck has a bare PATH (/usr/bin and friends), so a root-owned system-wide
+// install wins every time — even when the user has been updating their own copy under
+// ~/.npm-global for months. pickNewest keeps the deck on whichever CLI the user
+// actually maintains, and falls back to this function's original order whenever the
+// versions can't be compared.
 func findAgentCommand(command string) string {
+	var candidates []string
 	if p, err := exec.LookPath(command); err == nil {
-		return p
+		candidates = append(candidates, p)
 	}
 	for _, dir := range agentBinDirs() {
 		cand := filepath.Join(dir, command)
@@ -580,10 +588,10 @@ func findAgentCommand(command string) string {
 			cand += ".cmd"
 		}
 		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
-			return cand
+			candidates = append(candidates, cand)
 		}
 	}
-	return ""
+	return pickNewest(candidates)
 }
 
 // resolveLaunchCommand decides what to actually spawn for a requested command:

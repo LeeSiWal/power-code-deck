@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -58,6 +59,40 @@ type ClaudeConfig struct {
 	SelfPath string
 }
 
+// has reports whether the CLI understands a flag. Unknown capabilities (no probe, or
+// a probe that failed) answer yes, preserving the behaviour from before the probe.
+func (d *ClaudeDriver) has(flag string) bool {
+	if d.supports == nil {
+		return true
+	}
+	return d.supports[flag]
+}
+
+// tailBuffer keeps the last maxTail bytes written to it and discards the rest, so a
+// chatty CLI can neither fill the pipe nor grow this without bound.
+type tailBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+const maxTail = 4096
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > maxTail {
+		t.buf = t.buf[len(t.buf)-maxTail:]
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.TrimSpace(string(t.buf))
+}
+
 // DefaultEffort is what a session runs at until someone chooses otherwise. The CLI's
 // own default is xhigh — the level tuned for the hardest agentic work — which bills
 // every routine turn at the top of the scale. high is the documented minimum for
@@ -90,6 +125,18 @@ type ClaudeDriver struct {
 	events  chan *StreamEvent
 	done    chan struct{}
 	stopped bool
+
+	// supports is the set of long flags this CLI build advertises, probed at Start.
+	// nil means "couldn't tell" — everything is passed, as before the probe existed.
+	supports map[string]bool
+
+	// stderrTail keeps the CLI's last diagnostics. When the process refuses its own
+	// arguments it says so on stderr and exits; without this the deck saw a session
+	// that started and vanished with no reason recorded anywhere.
+	stderrTail *tailBuffer
+	// exited closes when the process is reaped; exitErr is why.
+	exited  chan struct{}
+	exitErr error
 
 	// claudeSessionID is learned from system/init and is what --resume needs.
 	claudeSessionID string
@@ -151,31 +198,37 @@ func (d *ClaudeDriver) buildArgs() []string {
 	// Always pinned, never omitted: leaving --effort off doesn't mean "no effort", it
 	// means the CLI's own default (xhigh), which is the most expensive level and wrong
 	// for the routine turns that make up most of a session.
-	args = append(args, "--effort", normalizeEffort(d.cfg.Effort))
+	if d.has("--effort") {
+		args = append(args, "--effort", normalizeEffort(d.cfg.Effort))
+	}
 	// Sub-agent text arrives tagged with parent_tool_use_id, which the client renders
 	// under the calling Task instead of in the main thread. Always on rather than a
 	// setting: it changes only what the CLI hands us, never what the model does, so it
 	// costs no tokens — and without it the deck's sub-agent panel can only ever show
 	// that a sub-agent ran, not what it found.
-	args = append(args, "--forward-subagent-text")
+	if d.has("--forward-subagent-text") {
+		args = append(args, "--forward-subagent-text")
+	}
 	// Extra roots beyond cwd. Passed as one variadic flag — the CLI stops collecting
 	// at the next "--" token, and every path is absolute and vetted by Normalize.
-	if dirs := d.cfg.Options.AddDirs; len(dirs) > 0 {
+	if dirs := d.cfg.Options.AddDirs; len(dirs) > 0 && d.has("--add-dir") {
 		args = append(args, "--add-dir")
 		args = append(args, dirs...)
 	}
-	if budget := d.cfg.Options.MaxBudgetUSD; budget > 0 {
+	if budget := d.cfg.Options.MaxBudgetUSD; budget > 0 && d.has("--max-budget-usd") {
 		args = append(args, "--max-budget-usd", strconv.FormatFloat(budget, 'f', -1, 64))
 	}
 	// Always pinned, like --effort and for the same reason: omitting it isn't "no
 	// compaction policy", it's the CLI's own — which lets context grow to the full 1M
 	// window, so every request in a long session re-reads up to a million tokens.
-	if ac := d.cfg.Options.Autocompact; ac != "" {
-		args = append(args, "--autocompact", ac)
-	} else {
-		args = append(args, "--autocompact", DefaultAutocompact)
+	if d.has("--autocompact") {
+		if ac := d.cfg.Options.Autocompact; ac != "" {
+			args = append(args, "--autocompact", ac)
+		} else {
+			args = append(args, "--autocompact", DefaultAutocompact)
+		}
 	}
-	if fm := d.cfg.Options.FallbackModel; fm != "" {
+	if fm := d.cfg.Options.FallbackModel; fm != "" && d.has("--fallback-model") {
 		args = append(args, "--fallback-model", fm)
 	}
 	// Permission mode (Shift+Tab in the TUI): default | acceptEdits | plan |
@@ -245,6 +298,13 @@ func (d *ClaudeDriver) Start() error {
 	if resolved := findAgentCommand("claude"); resolved != "" {
 		bin = resolved
 	}
+	// Ask this CLI what it understands BEFORE building the command line. The deck and
+	// the CLI ship separately, so a flag the deck knows may be one this build has never
+	// heard of — and an unknown flag isn't ignored, it kills the process on startup.
+	d.mu.Lock()
+	d.supports = supportedFlags(bin)
+	d.mu.Unlock()
+
 	cmd := exec.Command(bin, d.buildArgs()...)
 	cmd.Dir = d.cfg.Cwd
 	locale := utf8Locale()
@@ -261,14 +321,16 @@ func (d *ClaudeDriver) Start() error {
 	if err != nil {
 		return err
 	}
-	// Keep stderr out of the event stream: it carries the CLI's own diagnostics,
-	// which are not protocol. Drain it so a chatty CLI can't fill the pipe and
-	// wedge the process.
+	// Keep stderr out of the event stream — it carries the CLI's own diagnostics, which
+	// are not protocol — but KEEP THE TAIL. Discarding it (as this used to) is what let
+	// a CLI rejecting one of our flags look like a session that started and vanished:
+	// the reason was printed, then thrown away, and the deck had nothing to report.
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return err
 	}
-	go io.Copy(io.Discard, stderr)
+	d.stderrTail = &tailBuffer{}
+	go io.Copy(d.stderrTail, stderr)
 
 	if err := cmd.Start(); err != nil {
 		return err
@@ -277,11 +339,45 @@ func (d *ClaudeDriver) Start() error {
 	d.mu.Lock()
 	d.cmd = cmd
 	d.stdin = stdin
+	d.exited = make(chan struct{})
+	exited := d.exited
 	d.mu.Unlock()
+
+	go func() {
+		err := cmd.Wait()
+		d.mu.Lock()
+		d.exitErr = err
+		d.mu.Unlock()
+		close(exited)
+	}()
+
+	// A process that dies on its own arguments dies at once. Waiting a beat here turns
+	// that into a real Start error, which the caller already knows how to handle — it
+	// logs it, tells the user, and retries without --resume. Without this the failure
+	// was invisible: Start succeeded, the session was registered, and the pump quietly
+	// removed it a moment later, so the next message reported "session is not running"
+	// with nothing anywhere saying why.
+	select {
+	case <-exited:
+		detail := d.stderrTail.String()
+		if detail == "" {
+			detail = "no output on stderr"
+		}
+		d.mu.Lock()
+		exitErr := d.exitErr
+		d.mu.Unlock()
+		return fmt.Errorf("claude exited immediately (%v): %s", exitErr, detail)
+	case <-time.After(startupGrace):
+	}
 
 	go d.readPump(stdout)
 	return nil
 }
+
+// startupGrace is how long Start waits to see whether the CLI rejects its own command
+// line. Argument errors are immediate; anything slower (loading a large transcript,
+// for instance) is a healthy start and must not be delayed by more than this.
+const startupGrace = 700 * time.Millisecond
 
 // readPump turns stdout lines into events. A line we can't parse is skipped, not
 // fatal: the CLI prints the occasional non-protocol line, and one bad line must
@@ -320,12 +416,8 @@ func (d *ClaudeDriver) readPump(stdout io.ReadCloser) {
 		d.events <- ev
 	}
 
-	d.mu.Lock()
-	cmd := d.cmd
-	d.mu.Unlock()
-	if cmd != nil {
-		_ = cmd.Wait()
-	}
+	// The process is reaped by the goroutine Start launched — waiting again here would
+	// race it and return "Wait was already called".
 }
 
 // Events yields the session's stream. Closed when the process exits.
