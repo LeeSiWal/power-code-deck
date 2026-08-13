@@ -80,10 +80,14 @@ func NewSession(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Carry the chosen model + permission mode onto the new agent, so continuing
-		// in the same project keeps your choices instead of snapping back to defaults.
-		if model, mode := agentSvc.NativeConfig(agent.ID); model != "" || mode != "" {
-			agentSvc.SetNativeConfig(newAgent.ID, model, mode)
+		// Carry the chosen model + permission mode + effort onto the new agent, so
+		// continuing in the same project keeps your choices instead of snapping back
+		// to defaults.
+		if model, mode, effort := agentSvc.NativeConfig(agent.ID); model != "" || mode != "" || effort != "" {
+			agentSvc.SetNativeConfig(newAgent.ID, model, mode, effort)
+		}
+		if opts := agentSvc.NativeOptions(agent.ID); !opts.IsZero() {
+			agentSvc.SetNativeOptions(newAgent.ID, opts)
 		}
 		hub.BroadcastAll(ws.EventAgentCreated, newAgent)
 		w.WriteHeader(http.StatusCreated)
@@ -118,10 +122,13 @@ func ResumeSession(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFun
 		// opens the resumed agent blank (fresh session, no prior conversation), and
 		// NativeService can't seed history from the transcript either.
 		agentSvc.SetClaudeSessionID(newAgent.ID, sid)
-		// Carry the chosen model + permission mode across the resume, so 이어하기 keeps
-		// your choices instead of resetting to defaults on the freshly created agent.
-		if model, mode := agentSvc.NativeConfig(agent.ID); model != "" || mode != "" {
-			agentSvc.SetNativeConfig(newAgent.ID, model, mode)
+		// Carry the chosen model + permission mode + effort across the resume, so 이어하기
+		// keeps your choices instead of resetting to defaults on the freshly created agent.
+		if model, mode, effort := agentSvc.NativeConfig(agent.ID); model != "" || mode != "" || effort != "" {
+			agentSvc.SetNativeConfig(newAgent.ID, model, mode, effort)
+		}
+		if opts := agentSvc.NativeOptions(agent.ID); !opts.IsZero() {
+			agentSvc.SetNativeOptions(newAgent.ID, opts)
 		}
 		hub.BroadcastAll(ws.EventAgentCreated, newAgent)
 		w.WriteHeader(http.StatusCreated)

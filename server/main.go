@@ -112,6 +112,7 @@ func main() {
 	// restart) continues the conversation instead of starting a blank one.
 	nativeSvc.SetPersistence(agentSvc.SetClaudeSessionID, agentSvc.ClaudeSessionID)
 	nativeSvc.SetConfigPersistence(agentSvc.SetNativeConfig, agentSvc.NativeConfig)
+	nativeSvc.SetOptionsPersistence(agentSvc.SetNativeOptions, agentSvc.NativeOptions)
 	nativeSvc.SetApprovalRules(approvalRules)
 	hub.SetApprovalRules(approvalRules)
 	// Status truth: a native session counts as "running" too, so a native-track agent

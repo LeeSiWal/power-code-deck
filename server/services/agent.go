@@ -273,8 +273,8 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 	if req.Preset == "codex-cli" || req.Command == "codex" {
 		driver = "codex"
 	}
-	if model, mode := s.inheritedNativeConfig(workingDir, driver); model != "" || mode != "" {
-		s.SetNativeConfig(agent.ID, model, mode)
+	if model, mode, effort := s.inheritedNativeConfig(workingDir, driver); model != "" || mode != "" || effort != "" {
+		s.SetNativeConfig(agent.ID, model, mode, effort)
 	}
 
 	insertAgentLog(s.db, agent.ID, "세션 생성됨 · "+agent.Name+" ("+agent.Command+")")
@@ -282,31 +282,32 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 	return agent, nil
 }
 
-// inheritedNativeConfig picks the model + permission mode a new session should start
-// with: the most recent prior session in the SAME project, or — if this project has
+// inheritedNativeConfig picks the model + permission mode + effort a new session should
+// start with: the most recent prior session in the SAME project, or — if this project has
 // none yet — the last choice made anywhere. Empty strings mean no prior choice
 // (Claude's defaults). The just-created row can't match itself: it's still empty, so
-// the "!= ''" filter excludes it.
-func (s *AgentService) inheritedNativeConfig(workingDir, driver string) (model, mode string) {
+// the "!= ”" filter excludes it.
+func (s *AgentService) inheritedNativeConfig(workingDir, driver string) (model, mode, effort string) {
 	match := `( (? = 'codex' AND (preset = 'codex-cli' OR command = 'codex'))
 	            OR (? = 'claude' AND (preset IN ('claude', 'claude-code') OR command = 'claude')) )`
+	const set = `(native_model != '' OR native_mode != '' OR native_effort != '')`
 	err := s.db.QueryRow(
-		`SELECT COALESCE(native_model, ''), COALESCE(native_mode, '')
+		`SELECT COALESCE(native_model, ''), COALESCE(native_mode, ''), COALESCE(native_effort, '')
 		   FROM agents
-		  WHERE working_dir = ? AND (native_model != '' OR native_mode != '') AND `+match+`
+		  WHERE working_dir = ? AND `+set+` AND `+match+`
 		  ORDER BY created_at DESC LIMIT 1`, workingDir, driver, driver,
-	).Scan(&model, &mode)
-	if err == nil && (model != "" || mode != "") {
-		return model, mode
+	).Scan(&model, &mode, &effort)
+	if err == nil && (model != "" || mode != "" || effort != "") {
+		return model, mode, effort
 	}
 	_ = s.db.QueryRow(
-		`SELECT COALESCE(native_model, ''), COALESCE(native_mode, '')
+		`SELECT COALESCE(native_model, ''), COALESCE(native_mode, ''), COALESCE(native_effort, '')
 		   FROM agents
-		  WHERE (native_model != '' OR native_mode != '') AND `+match+`
+		  WHERE `+set+` AND `+match+`
 		  ORDER BY created_at DESC LIMIT 1`,
 		driver, driver,
-	).Scan(&model, &mode)
-	return model, mode
+	).Scan(&model, &mode, &effort)
+	return model, mode, effort
 }
 
 func (s *AgentService) Delete(id string) error {
@@ -355,22 +356,44 @@ func (s *AgentService) SetClaudeSessionID(id, sessionID string) {
 	_, _ = s.db.Exec("UPDATE agents SET claude_session_id = ? WHERE id = ?", sessionID, id)
 }
 
-// NativeConfig returns the remembered native-chat model + permission mode for an
-// agent (both "" if never set — meaning Claude's defaults).
-func (s *AgentService) NativeConfig(id string) (model, mode string) {
+// NativeConfig returns the remembered native-chat model + permission mode + effort for
+// an agent (all "" if never set — meaning the deck's own defaults apply).
+func (s *AgentService) NativeConfig(id string) (model, mode, effort string) {
 	_ = s.db.QueryRow(
-		"SELECT COALESCE(native_model, ''), COALESCE(native_mode, '') FROM agents WHERE id = ?", id,
-	).Scan(&model, &mode)
-	return model, mode
+		`SELECT COALESCE(native_model, ''), COALESCE(native_mode, ''), COALESCE(native_effort, '')
+		   FROM agents WHERE id = ?`, id,
+	).Scan(&model, &mode, &effort)
+	return model, mode, effort
 }
 
-// SetNativeConfig persists the native-chat model + permission mode so a restart or
-// another device resumes with the same choices. Best-effort, like the resume id.
-func (s *AgentService) SetNativeConfig(id, model, mode string) {
+// SetNativeConfig persists the native-chat model + permission mode + effort so a restart
+// or another device resumes with the same choices. Best-effort, like the resume id.
+func (s *AgentService) SetNativeConfig(id, model, mode, effort string) {
 	if id == "" {
 		return
 	}
-	_, _ = s.db.Exec("UPDATE agents SET native_model = ?, native_mode = ? WHERE id = ?", model, mode, id)
+	_, _ = s.db.Exec(
+		"UPDATE agents SET native_model = ?, native_mode = ?, native_effort = ? WHERE id = ?",
+		model, mode, effort, id,
+	)
+}
+
+// NativeOptions returns the remembered per-agent session options. A row that was never
+// configured — or one holding unparseable JSON — yields the zero value, which means
+// "pass no extra flags".
+func (s *AgentService) NativeOptions(id string) NativeOptions {
+	var raw string
+	_ = s.db.QueryRow("SELECT COALESCE(native_options, '') FROM agents WHERE id = ?", id).Scan(&raw)
+	return DecodeNativeOptions(raw)
+}
+
+// SetNativeOptions persists the per-agent session options. Best-effort, like the rest
+// of the native config: losing them costs the settings, never the session.
+func (s *AgentService) SetNativeOptions(id string, opts NativeOptions) {
+	if id == "" {
+		return
+	}
+	_, _ = s.db.Exec("UPDATE agents SET native_options = ? WHERE id = ?", EncodeNativeOptions(opts), id)
 }
 
 func (s *AgentService) Restart(id string) (*Agent, error) {

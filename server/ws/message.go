@@ -38,13 +38,15 @@ const (
 	// Native track — a Claude session driven as a structured stream instead of a
 	// terminal. There is no attach/resize/ack here: without a screen there is
 	// nothing to size, and nothing to meter for backpressure.
-	EventNativeOpen      = "native:open"   // start (or adopt) a session and replay its history
-	EventNativeInput     = "native:input"  // a user turn
-	EventNativeDecide    = "native:decide" // answer a pending approval
-	EventNativeStop      = "native:stop"
-	EventNativeInterrupt = "native:interrupt" // stop the turn, keep the session
-	EventNativeSetModel  = "native:setModel"  // switch model, resume same conversation
-	EventNativeSetMode   = "native:setMode"   // switch permission mode (Shift+Tab)
+	EventNativeOpen       = "native:open"   // start (or adopt) a session and replay its history
+	EventNativeInput      = "native:input"  // a user turn
+	EventNativeDecide     = "native:decide" // answer a pending approval
+	EventNativeStop       = "native:stop"
+	EventNativeInterrupt  = "native:interrupt"  // stop the turn, keep the session
+	EventNativeSetModel   = "native:setModel"   // switch model, resume same conversation
+	EventNativeSetMode    = "native:setMode"    // switch permission mode (Shift+Tab)
+	EventNativeSetEffort  = "native:setEffort"  // switch effort level, resume same conversation
+	EventNativeSetOptions = "native:setOptions" // set-once session options (dirs, budget, …)
 )
 
 // Control Room (v0.3.0) — the multi-session overview. These go to EVERY client so a
@@ -87,6 +89,7 @@ const (
 	EventNativeHistory  = "native:history"  // events so far, on open
 	EventNativeState    = "native:state"    // running/stopped + pending approvals
 	EventNativeError    = "native:error"    // something failed — say so, never swallow it
+	EventNativeOptions  = "native:options"  // the session options in force, + what validation dropped
 	// Sent to a device whose native session was taken over by another device opening
 	// it. The evicted device drops to a standby screen with a "reclaim" button, so
 	// only one device is the active session at a time (and only it gets push).
@@ -247,6 +250,7 @@ type NativeOpenPayload struct {
 	Cwd     string `json:"cwd"`
 	Model   string `json:"model"`
 	Mode    string `json:"mode"`   // permission mode: "" | acceptEdits | plan | bypassPermissions
+	Effort  string `json:"effort"` // low | medium | high | xhigh | max ("" = server default)
 	Resume  string `json:"resume"` // Claude's own session_id, to continue a past run
 }
 
@@ -260,6 +264,42 @@ type NativeInputPayload struct {
 type NativeSetModelPayload struct {
 	AgentID string `json:"agentId"`
 	Model   string `json:"model"`
+}
+
+// NativeSetEffortPayload switches how deeply Claude thinks — and with it, how many
+// tokens a turn costs. Like the model and unlike the permission mode, effort is a spawn
+// flag with no live control_request, so the session restarts and resumes the same
+// conversation.
+type NativeSetEffortPayload struct {
+	AgentID string `json:"agentId"`
+	Effort  string `json:"effort"` // low | medium | high | xhigh | max
+}
+
+// NativeSessionOptions mirrors services.NativeOptions on the wire. Every field is
+// optional; a zero value means "don't pass that flag", restoring the CLI's default.
+type NativeSessionOptions struct {
+	AddDirs       []string `json:"addDirs"`
+	MaxBudgetUSD  float64  `json:"maxBudgetUsd"`
+	Autocompact   string   `json:"autocompact"`
+	FallbackModel string   `json:"fallbackModel"`
+}
+
+// NativeSetOptionsPayload replaces an agent's set-once session options. All four are
+// spawn flags, so applying them restarts the session on the same conversation. Values
+// that don't survive validation come back as a warning rather than failing the call —
+// see NativeOptionsPayload.
+type NativeSetOptionsPayload struct {
+	AgentID string               `json:"agentId"`
+	Options NativeSessionOptions `json:"options"`
+}
+
+// NativeOptionsPayload reports the options a session is actually using, plus anything
+// validation dropped, so the deck can say WHICH value was rejected instead of quietly
+// showing a setting that never took effect.
+type NativeOptionsPayload struct {
+	AgentID string               `json:"agentId"`
+	Options NativeSessionOptions `json:"options"`
+	Dropped []string             `json:"dropped,omitempty"`
 }
 
 // NativeSetModePayload switches the permission mode (the TUI's Shift+Tab):
@@ -307,11 +347,16 @@ type NativeHistoryPayload struct {
 	AgentID string            `json:"agentId"`
 	Events  []json.RawMessage `json:"events"`
 	Running bool              `json:"running"`
-	// Model + Mode are the session's current choices, so a device opening the page
-	// displays what the session is actually using (possibly set on another device),
-	// not its own last local guess.
-	Model string `json:"model"`
-	Mode  string `json:"mode"`
+	// Model + Mode + Effort are the session's current choices, so a device opening the
+	// page displays what the session is actually using (possibly set on another device),
+	// not its own last local guess. Effort is "" on Codex, which has no such setting —
+	// the client hides the control rather than showing one that does nothing.
+	Model  string `json:"model"`
+	Mode   string `json:"mode"`
+	Effort string `json:"effort"`
+	// Options travel with the history so a device shows the real configuration on
+	// open, without a second round trip.
+	Options NativeSessionOptions `json:"options"`
 }
 
 // NativeApprovalPayload is one pending "may I?".

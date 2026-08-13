@@ -75,16 +75,49 @@ func TestBuildArgsKeepsApprovalBridgeInEveryMode(t *testing.T) {
 	}
 }
 
+// --effort는 항상 붙어야 한다. 빼면 "effort 없음"이 아니라 CLI 기본값(xhigh)이 되고,
+// 라우팅 같은 가벼운 턴까지 최상위 설정으로 돌아 토큰이 필요 이상으로 나간다. 그리고
+// 클라이언트가 이상한 값을 보내도 그게 커맨드라인까지 가면 세션 시작 자체가 실패하므로,
+// 알 수 없는 값은 기본값으로 접힌다.
+func TestBuildArgsAlwaysPinsEffort(t *testing.T) {
+	cases := []struct{ given, want string }{
+		{"", DefaultEffort},       // 고른 적 없음 → 덱의 기본값
+		{"low", "low"},            // 유효한 값은 그대로
+		{"max", "max"},            //
+		{"xhigh", "xhigh"},        //
+		{"ultra", DefaultEffort},  // 오타/구버전 값 → 기본값으로 방어
+		{"HIGH", DefaultEffort},   // CLI는 소문자만 받는다
+		{"--flag", DefaultEffort}, // 인자 주입 시도도 값으로만 취급된다
+	}
+	for _, tc := range cases {
+		d := NewClaudeDriver(ClaudeConfig{SessionID: "a1", Effort: tc.given, SelfPath: "/opt/pcd"})
+		args := d.buildArgs()
+		idx := -1
+		for i, a := range args {
+			if a == "--effort" {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 || idx+1 >= len(args) {
+			t.Fatalf("effort %q: --effort missing from args: %v", tc.given, args)
+		}
+		if got := args[idx+1]; got != tc.want {
+			t.Errorf("effort %q: --effort %q, want %q", tc.given, got, tc.want)
+		}
+	}
+}
+
 // 모드를 바꿔도 진행 중인 작업이 죽으면 안 된다. 예전 SetMode는 매번 restart()를 통해
 // 프로세스를 kill했고, 그래서 작업 도중 모드를 바꾸면 턴이 통째로 사라졌다.
 func TestSetModeSwitchesInPlaceWithoutKillingTheProcess(t *testing.T) {
 	s := NewNativeService("http://127.0.0.1:0")
-	saved := make(chan [3]string, 8)
-	s.SetConfigPersistence(func(id, model, mode string) { saved <- [3]string{id, model, mode} }, nil)
+	saved := make(chan [4]string, 8)
+	s.SetConfigPersistence(func(id, model, mode, effort string) { saved <- [4]string{id, model, mode, effort} }, nil)
 
 	fd := newFakeNativeDriver()
 	s.mu.Lock()
-	s.sessions["a1"] = &nativeSession{id: "a1", driver: fd, kind: "claude", cwd: "/tmp/proj", model: "claude-opus-5"}
+	s.sessions["a1"] = &nativeSession{id: "a1", driver: fd, kind: "claude", cwd: "/tmp/proj", model: "claude-opus-5", effort: "high"}
 	s.policies["a1"] = sessionPolicy{mode: "", cwd: "/tmp/proj"}
 	s.mu.Unlock()
 
@@ -97,9 +130,13 @@ func TestSetModeSwitchesInPlaceWithoutKillingTheProcess(t *testing.T) {
 	if len(fd.modes) != 1 || fd.modes[0] != PlanMode {
 		t.Fatalf("driver modes = %v, want [plan]", fd.modes)
 	}
-	model, mode := s.Config("a1")
+	model, mode, effort := s.Config("a1")
 	if model != "claude-opus-5" || mode != PlanMode {
 		t.Fatalf("Config = (%q, %q), want (claude-opus-5, plan)", model, mode)
+	}
+	// An in-place mode switch must not disturb the effort the session launched with.
+	if effort != "high" {
+		t.Fatalf("Config effort = %q, want high — SetMode must not reset it", effort)
 	}
 	s.mu.RLock()
 	pol := s.policies["a1"]
@@ -109,8 +146,8 @@ func TestSetModeSwitchesInPlaceWithoutKillingTheProcess(t *testing.T) {
 	}
 	select {
 	case got := <-saved:
-		if got != [3]string{"a1", "claude-opus-5", PlanMode} {
-			t.Fatalf("persisted %v, want [a1 claude-opus-5 plan]", got)
+		if got != [4]string{"a1", "claude-opus-5", PlanMode, "high"} {
+			t.Fatalf("persisted %v, want [a1 claude-opus-5 plan high]", got)
 		}
 	default:
 		t.Fatal("mode change was not persisted — another device would resume with the old mode")
