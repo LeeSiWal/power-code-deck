@@ -27,6 +27,7 @@ import { NotificationBadge } from '../components/notification/NotificationBadge'
 import { api } from '../lib/api';
 import { writeClipboard, readClipboard } from '../lib/clipboard';
 import { generatePalette } from '../lib/paletteGenerator';
+import { currentZoom } from '../lib/uiScale';
 import { useAppStore } from '../stores/appStore';
 
 type CenterTab = 'terminal' | 'editor';
@@ -273,13 +274,17 @@ export function TerminalPage() {
     resizingRef.current = side;
     const startX = e.clientX;
     const startWidth = side === 'left' ? leftWidth : rightWidth;
+    // 포인터 좌표는 zoom이 적용되지 않은 뷰포트 픽셀이고, 패널 폭은 #root의
+    // `zoom` 안쪽 레이아웃 픽셀이다(uiScale.ts). 나누지 않으면 큰 화면일수록
+    // 구분선이 커서보다 zoom 배수만큼 앞서 달아난다.
+    const zoom = currentZoom();
     let rafId = 0;
 
     const onMouseMove = (e: MouseEvent) => {
       if (!resizingRef.current) return;
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
-        const delta = e.clientX - startX;
+        const delta = (e.clientX - startX) / zoom;
         const newWidth = Math.max(
           PANEL_MIN,
           Math.min(PANEL_MAX, side === 'left' ? startWidth + delta : startWidth - delta),
@@ -320,13 +325,17 @@ export function TerminalPage() {
     const startY = e.clientY;
     const startHeight = todoHeightRef.current;
     const max = Math.max(TODO_MIN, Math.round(panelHeight * TODO_MAX_RATIO));
+    // clientY는 zoom 바깥의 뷰포트 픽셀, panelHeight/startHeight는 zoom 안쪽의
+    // 레이아웃 픽셀이다. 섞어 더하면 큰 화면에서 조금만 끌어도 상한(70%)에
+    // 처박혀 아래 탭(애니메이션·동반 셸)이 찌그러진다.
+    const zoom = currentZoom();
     handle.setPointerCapture(e.pointerId);
     let rafId = 0;
     let latestHeight = startHeight;
 
     const onMove = (ev: PointerEvent) => {
       cancelAnimationFrame(rafId);
-      latestHeight = Math.max(TODO_MIN, Math.min(max, startHeight + (ev.clientY - startY)));
+      latestHeight = Math.max(TODO_MIN, Math.min(max, startHeight + (ev.clientY - startY) / zoom));
       rafId = requestAnimationFrame(() => {
         setTodoHeight(latestHeight);
       });
