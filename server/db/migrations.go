@@ -144,6 +144,14 @@ func Migrate(db *sql.DB) error {
 		// or another device resumes with the same choices.
 		"ALTER TABLE agents ADD COLUMN native_model TEXT DEFAULT ''",
 		"ALTER TABLE agents ADD COLUMN native_mode TEXT DEFAULT ''",
+		// Effort는 사고 깊이와 토큰 소비량을 함께 정한다. 빈 값은 "아직 고른 적 없음"이고,
+		// 그때 서버가 high를 넘긴다 — CLI 기본값(xhigh)을 그대로 두면 라우팅 같은 가벼운
+		// 작업까지 최상위 설정으로 돌아 토큰이 필요 이상으로 나간다.
+		"ALTER TABLE agents ADD COLUMN native_effort TEXT DEFAULT ''",
+		// Session options that are set once and left alone (extra directories, spend
+		// cap, auto-compaction window, fallback model). One JSON blob rather than a
+		// column each: the next knob then costs a struct field, not a migration.
+		"ALTER TABLE agents ADD COLUMN native_options TEXT DEFAULT ''",
 	} {
 		db.Exec(stmt)
 	}

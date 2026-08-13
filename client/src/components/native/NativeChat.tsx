@@ -4,9 +4,13 @@ import { agentDeckWS } from '../../lib/ws';
 import { api } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 import {
-  IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconDevices, IconHand, IconPaperclip,
-  IconPlanMap, IconPlus, IconSpinner, IconUpload, IconWarning, type IconProps,
+  IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconDevices, IconGauge, IconHand,
+  IconPaperclip, IconPlanMap, IconPlus, IconSliders, IconSpinner, IconUpload, IconWarning,
+  type IconProps,
 } from '../icons';
+import {
+  EMPTY_OPTIONS, hasSessionOptions, parseSessionOptions, SessionOptionsSheet, type SessionOptions,
+} from './SessionOptionsSheet';
 import { writeClipboard } from '../../lib/clipboard';
 import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
@@ -51,6 +55,19 @@ const MODELS: { id: string; label: string; desc: string }[] = [
   { id: 'claude-sonnet-5', label: 'Sonnet 5', desc: '균형 · 빠르고 똑똑' },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', desc: '가장 빠름 · 가벼운 작업' },
 ];
+
+// Effort는 사고 깊이와 토큰 소비량을 함께 정한다 — 모델 다음으로 비용에 크게 영향을 주는
+// 설정이다. 서버가 기본값 high를 못박으므로 여기에 'Auto' 항목은 없다: CLI 기본값(xhigh)은
+// 가장 비싼 설정이라 "고르지 않음"이 곧 "최대로 쓰는 중"이 되어버린다.
+// Claude 전용 — Codex에는 대응하는 개념이 없다.
+const EFFORTS: { id: string; label: string; desc: string }[] = [
+  { id: 'low', label: 'Low', desc: '짧고 범위가 분명한 작업 · 가장 저렴' },
+  { id: 'medium', label: 'Medium', desc: '비용 절감 · 일상 작업에 충분' },
+  { id: 'high', label: 'High', desc: '기본값 · 품질과 비용의 균형' },
+  { id: 'xhigh', label: 'XHigh', desc: '어려운 코딩·에이전트 작업 권장' },
+  { id: 'max', label: 'Max', desc: '비용보다 정확도 · 과사고 주의' },
+];
+const DEFAULT_EFFORT = 'high';
 
 const CODEX_MODELS: typeof MODELS = [
   { id: '', label: 'Auto', desc: 'Codex 기본 모델' },
@@ -113,7 +130,19 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     return driver === 'codex' && !CODEX_MODELS.some((choice) => choice.id === saved) ? '' : saved;
   });
   const [modeId, setModeId] = useState(() => localStorage.getItem(`pcd:mode:${agentId}`) || '');
-  const [menu, setMenu] = useState<null | 'add' | 'model' | 'mode'>(null);
+  // An unknown saved value (a hand-edited key, or a level a future CLI drops) folds to
+  // the default rather than being sent on — the server would reject it anyway, and a
+  // stale slug must never be able to fail the session start.
+  const [effortId, setEffortId] = useState(() => {
+    const saved = localStorage.getItem(`pcd:effort:${agentId}`) || '';
+    return EFFORTS.some((e) => e.id === saved) ? saved : DEFAULT_EFFORT;
+  });
+  const [menu, setMenu] = useState<null | 'add' | 'model' | 'mode' | 'effort'>(null);
+  // Session options live on the server, not in localStorage: they describe the agent
+  // and are re-validated at every launch, so the client only ever mirrors them.
+  const [options, setOptions] = useState<SessionOptions>(EMPTY_OPTIONS);
+  const [optionsDropped, setOptionsDropped] = useState<string[]>([]);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   // `/plugin` is intercepted here (the CLI refuses it over the stream), opening this
   // panel. A prefilled query lets "/plugin foo" jump straight to a search.
   const [plugins, setPlugins] = useState<null | { query: string }>(null);
@@ -125,6 +154,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   modelIdRef.current = modelId;
   const modeIdRef = useRef(modeId);
   modeIdRef.current = modeId;
+  const effortIdRef = useRef(effortId);
+  effortIdRef.current = effortId;
 
   const pickModel = useCallback((id: string) => {
     setMenu(null);
@@ -143,6 +174,16 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     agentDeckWS.send('native:setMode', { agentId, mode: id });
   }, [agentId]);
 
+  // Unlike the permission mode, effort has no live switch — it's a spawn flag, so the
+  // server restarts the process on the same conversation, exactly like a model change.
+  const pickEffort = useCallback((id: string) => {
+    setMenu(null);
+    if (id === effortIdRef.current) return;
+    setEffortId(id);
+    try { localStorage.setItem(`pcd:effort:${agentId}`, id); } catch { /* ignore */ }
+    agentDeckWS.send('native:setEffort', { agentId, effort: id });
+  }, [agentId]);
+
   // Shift+Tab cycles the permission mode, like the Claude Code TUI.
   const cycleMode = useCallback(() => {
     const i = MODES.findIndex((m) => m.id === modeIdRef.current);
@@ -152,6 +193,10 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const models = driver === 'codex' ? CODEX_MODELS : MODELS;
   const modelLabel = models.find((m) => m.id === modelId)?.label ?? modelId ?? 'Auto';
   const currentMode = MODES.find((m) => m.id === modeId) ?? MODES[0];
+  // Codex has no effort concept, so the control is hidden there rather than shown
+  // inert — a setting that silently does nothing is worse than no setting.
+  const showEffort = driver !== 'codex';
+  const currentEffort = EFFORTS.find((e) => e.id === effortId) ?? EFFORTS[2];
 
   // A missing CLI is recoverable from inside the deck. Open a real PTY because
   // both installers and OAuth login are interactive (especially on WSL/SSH where
@@ -309,6 +354,18 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         setModeId(p.mode);
         try { localStorage.setItem(`pcd:mode:${agentId}`, p.mode); } catch { /* ignore */ }
       }
+      // "" means the session has no effort setting at all (Codex) — leave the local
+      // choice alone rather than overwriting it with a blank that isn't a real level.
+      if (typeof p.effort === 'string' && p.effort !== '' && p.effort !== effortIdRef.current) {
+        setEffortId(p.effort);
+        try { localStorage.setItem(`pcd:effort:${agentId}`, p.effort); } catch { /* ignore */ }
+      }
+      if (p.options) setOptions(parseSessionOptions(p.options));
+    });
+    const offOptions = agentDeckWS.on('native:options', (p: any) => {
+      if (p.agentId !== agentId) return;
+      setOptions(parseSessionOptions(p.options));
+      setOptionsDropped(Array.isArray(p.dropped) ? p.dropped : []);
     });
     const offApproval = agentDeckWS.on('native:approval', (p: any) => {
       if (p.agentId !== agentId) return;
@@ -335,13 +392,13 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       setEvicted(true);
     });
 
-    const open = () => agentDeckWS.send('native:open', { agentId, driver, cwd, model: modelIdRef.current, mode: modeIdRef.current });
+    const open = () => agentDeckWS.send('native:open', { agentId, driver, cwd, model: modelIdRef.current, mode: modeIdRef.current, effort: effortIdRef.current });
     open();
     // Re-open after a reconnect — but NOT while evicted, or a background socket blip
     // would silently steal the session back from the device you moved to.
     const offOpen = agentDeckWS.on('open', () => { if (!evictedRef.current) open(); });
 
-    return () => { offEvent(); offHistory(); offApproval(); offState(); offError(); offEvicted(); offOpen(); };
+    return () => { offEvent(); offHistory(); offOptions(); offApproval(); offState(); offError(); offEvicted(); offOpen(); };
   }, [agentId, cwd, model, driver]);
 
   // Reclaim the session on this device: re-open (which evicts whoever took it) and
@@ -349,7 +406,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const reclaim = useCallback(() => {
     setEvicted(false);
     evictedRef.current = false;
-    agentDeckWS.send('native:open', { agentId, driver, cwd, model: modelIdRef.current, mode: modeIdRef.current });
+    agentDeckWS.send('native:open', { agentId, driver, cwd, model: modelIdRef.current, mode: modeIdRef.current, effort: effortIdRef.current });
   }, [agentId, cwd, driver]);
 
   // Stick to the bottom unless the user scrolled up to read something.
@@ -567,6 +624,32 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
           </div>
         )}
 
+        {/* Effort menu. Changing it restarts the process (it's a spawn flag), so the
+            footer says so — the conversation survives, an in-flight turn does not. */}
+        {menu === 'effort' && (
+          <div className="absolute bottom-14 right-2 z-20 w-72 max-w-[calc(100vw-1rem)] bg-deck-raised border border-deck-border rounded-lg shadow-xl overflow-hidden">
+            <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim">
+              Effort · 사고 깊이와 토큰 사용량
+            </div>
+            {EFFORTS.map((e) => (
+              <button
+                key={e.id}
+                onClick={() => pickEffort(e.id)}
+                className={`w-full text-left px-3 py-2 hover:bg-deck-bg/60 flex items-start gap-2 ${e.id === effortId ? 'bg-deck-bg/40' : ''}`}
+              >
+                <span className={`mt-0.5 shrink-0 w-3.5 ${e.id === effortId ? 'text-deck-accent' : 'text-transparent'}`}><IconCheck size={14} /></span>
+                <span className="min-w-0">
+                  <span className={`block text-sm ${e.id === effortId ? 'text-deck-accent' : 'text-deck-text'}`}>{e.label}</span>
+                  <span className="block text-xs text-deck-text-dim leading-snug">{e.desc}</span>
+                </span>
+              </button>
+            ))}
+            <div className="px-3 py-2 border-t border-deck-border text-[11px] text-deck-text-dim leading-snug">
+              바꾸면 세션이 재시작됩니다. 대화는 이어지지만 진행 중인 작업은 중단됩니다.
+            </div>
+          </div>
+        )}
+
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-2 pt-2">
             {attachments.map((a, i) => (
@@ -763,6 +846,32 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
               <currentMode.icon size={13} />
               {currentMode.label}
             </button>
+            {showEffort && (
+              <button
+                onClick={() => { setMenu(null); setOptionsOpen(true); }}
+                className="shrink-0 w-8 h-8 rounded-lg bg-deck-surface border border-deck-border text-deck-text-dim flex items-center justify-center relative"
+                title="세션 옵션 — 추가 경로 · 예산 · 자동 압축 · 폴백 모델"
+              >
+                <IconSliders size={15} />
+                {/* A dot only when something is actually configured: the control is
+                    otherwise indistinguishable from an unused one at a glance. */}
+                {hasSessionOptions(options) && (
+                  <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-deck-accent" />
+                )}
+              </button>
+            )}
+            {showEffort && (
+              <button
+                onClick={() => setMenu(menu === 'effort' ? null : 'effort')}
+                className={`shrink-0 h-8 px-2.5 rounded-full bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1.5 ${
+                  menu === 'effort' ? 'ring-1 ring-deck-accent' : ''
+                }`}
+                title="Effort 전환 — 사고 깊이와 토큰 사용량"
+              >
+                <IconGauge size={13} />
+                {currentEffort.label}
+              </button>
+            )}
             <div className="flex-1" />
             {/* Sending mid-turn is allowed. Measured against the real CLI: a message
                 written to stdin while a turn is in flight neither interrupts nor
@@ -797,6 +906,15 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
           agentId={agentId}
           initialQuery={plugins.query}
           onClose={() => setPlugins(null)}
+        />
+      )}
+
+      {optionsOpen && (
+        <SessionOptionsSheet
+          agentId={agentId}
+          current={options}
+          dropped={optionsDropped}
+          onClose={() => { setOptionsOpen(false); setOptionsDropped([]); }}
         />
       )}
     </div>
@@ -836,6 +954,18 @@ function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) 
   }
 
   if (item.kind === 'assistant') {
+    // A sub-agent's own words, forwarded by --forward-subagent-text. Indented behind a
+    // rule and dimmed so it reads as work happening underneath the answer rather than
+    // as the answer: the main thread stays the loudest voice on screen even while
+    // several sub-agents are talking.
+    if (item.subagent) {
+      return (
+        <div className="pl-3 border-l-2 border-deck-border/70 my-1">
+          <div className="text-[10px] uppercase tracking-wide text-deck-muted mb-0.5">sub-agent</div>
+          <div className="text-deck-text-dim text-[13px]"><AssistantText text={item.text} /></div>
+        </div>
+      );
+    }
     return <AssistantText text={item.text} />;
   }
 

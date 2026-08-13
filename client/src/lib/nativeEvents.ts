@@ -66,7 +66,9 @@ export interface AskQuestion {
 export type ChatItem =
   | { kind: 'session'; id: string; model?: string; cwd?: string; version?: string; bridgeOk: boolean }
   | { kind: 'user'; id: string; text: string }
-  | { kind: 'assistant'; id: string; text: string; streaming?: boolean }
+  // `subagent` marks text a sub-agent (Task) produced rather than the main thread —
+  // forwarded by --forward-subagent-text and rendered as an aside, not as the answer.
+  | { kind: 'assistant'; id: string; text: string; streaming?: boolean; subagent?: boolean }
   | {
       kind: 'tool';
       id: string; // the tool_use id — the key the result arrives under
@@ -160,13 +162,17 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
       const subagent = !!ev.parent_tool_use_id;
       for (const b of ev.message.content) {
         if (b.type === 'text' && b.text?.trim()) {
-          if (streamAt >= 0 && items[streamAt]?.kind === 'assistant') {
+          // The streaming bubble belongs to the MAIN thread. Sub-agent text arrives on
+          // the same stream (--forward-subagent-text) but is a different speaker, so it
+          // must never settle that bubble — doing so would overwrite the main answer
+          // mid-sentence with a sub-agent's aside.
+          if (!subagent && streamAt >= 0 && items[streamAt]?.kind === 'assistant') {
             // Same text we just streamed — settle the bubble, don't duplicate it.
             const cur = items[streamAt] as Extract<ChatItem, { kind: 'assistant' }>;
             items[streamAt] = { ...cur, text: b.text, streaming: false };
             streamAt = -1;
           } else {
-            items.push({ kind: 'assistant', id: `${items.length}`, text: b.text });
+            items.push({ kind: 'assistant', id: `${items.length}`, text: b.text, subagent });
           }
         } else if (b.type === 'tool_use' && b.id && b.name === 'AskUserQuestion') {
           // Claude asking US something. Headless mode can't actually prompt — the
@@ -183,8 +189,11 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
           }
           items.push({ kind: 'tool', id: b.id, name: 'AskUserQuestion', input: {}, status: 'pending', subagent });
         } else if (b.type === 'tool_use' && b.id) {
-          // A tool call ends the text bubble that preceded it.
-          streamAt = -1;
+          // A tool call ends the text bubble that preceded it — but only the main
+          // thread's own call does. A sub-agent's tool call has nothing to do with the
+          // bubble still streaming above it, and clearing the marker there would make
+          // the main answer arrive as a duplicate instead of settling in place.
+          if (!subagent) streamAt = -1;
           toolIndex.set(b.id, items.length);
           items.push({
             kind: 'tool',

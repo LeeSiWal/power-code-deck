@@ -639,7 +639,7 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 			h.pushSvc.SetActiveDevice(payload.AgentID, c.deviceID)
 		}
 		if !h.native.Running(payload.AgentID) {
-			if err := h.native.Start(payload.AgentID, payload.Driver, payload.Cwd, payload.Model, payload.Resume, payload.Mode); err != nil {
+			if err := h.native.Start(payload.AgentID, payload.Driver, payload.Cwd, payload.Model, payload.Resume, payload.Mode, payload.Effort); err != nil {
 				log.Printf("native: start %s failed: %v", payload.AgentID, err)
 				c.sendEvent(EventNativeError, NativeErrorPayload{
 					AgentID: payload.AgentID,
@@ -684,6 +684,40 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 			c.sendEvent(EventNativeError, NativeErrorPayload{
 				AgentID: payload.AgentID,
 				Message: "모델 전환 실패: " + err.Error(),
+			})
+		}
+
+	case EventNativeSetOptions:
+		var payload NativeSetOptionsPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
+			return
+		}
+		dropped, err := h.native.SetOptions(payload.AgentID, services.NativeOptions{
+			AddDirs:       payload.Options.AddDirs,
+			MaxBudgetUSD:  payload.Options.MaxBudgetUSD,
+			Autocompact:   payload.Options.Autocompact,
+			FallbackModel: payload.Options.FallbackModel,
+		})
+		// Report the stored result either way. A restart that failed still leaves the
+		// options saved, so the deck must show what it will launch with next time
+		// rather than the values the user typed.
+		h.broadcastNativeOptions(payload.AgentID, dropped)
+		if err != nil {
+			c.sendEvent(EventNativeError, NativeErrorPayload{
+				AgentID: payload.AgentID,
+				Message: "세션 옵션 적용 실패: " + err.Error(),
+			})
+		}
+
+	case EventNativeSetEffort:
+		var payload NativeSetEffortPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || h.native == nil {
+			return
+		}
+		if err := h.native.SetEffort(payload.AgentID, payload.Effort); err != nil {
+			c.sendEvent(EventNativeError, NativeErrorPayload{
+				AgentID: payload.AgentID,
+				Message: "Effort 전환 실패: " + err.Error(),
 			})
 		}
 
@@ -960,6 +994,32 @@ func (h *Hub) handleTerminalAttach(c *Client, payload TerminalAttachPayload) {
 	}
 }
 
+// broadcastNativeOptions tells every device watching this agent which session options
+// are now in force. Sent to all watchers rather than just the one that changed them,
+// so a second device doesn't keep showing the settings it last saw.
+func (h *Hub) broadcastNativeOptions(agentID string, dropped []string) {
+	if h.native == nil {
+		return
+	}
+	h.BroadcastToAgent(agentID, EventNativeOptions, NativeOptionsPayload{
+		AgentID: agentID,
+		Options: toWireOptions(h.native.Options(agentID)),
+		Dropped: dropped,
+	})
+}
+
+// toWireOptions converts the service's options to the wire shape. Kept explicit rather
+// than reusing the service struct so the WS contract can't drift by accident when a
+// field is added on the service side.
+func toWireOptions(o services.NativeOptions) NativeSessionOptions {
+	return NativeSessionOptions{
+		AddDirs:       o.AddDirs,
+		MaxBudgetUSD:  o.MaxBudgetUSD,
+		Autocompact:   o.Autocompact,
+		FallbackModel: o.FallbackModel,
+	}
+}
+
 func (h *Hub) BroadcastToAgent(agentID string, event string, payload interface{}) {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -1045,10 +1105,11 @@ func (h *Hub) sendNativeHistory(c *Client, agentID string) {
 	for _, ev := range evs {
 		raw = append(raw, ev.Raw)
 	}
-	model, mode := h.native.Config(agentID)
+	model, mode, effort := h.native.Config(agentID)
 	c.sendEvent(EventNativeHistory, NativeHistoryPayload{
 		AgentID: agentID, Events: raw, Running: h.native.Running(agentID),
-		Model: model, Mode: mode,
+		Model: model, Mode: mode, Effort: effort,
+		Options: toWireOptions(h.native.Options(agentID)),
 	})
 
 	pending := h.native.Pending(agentID)

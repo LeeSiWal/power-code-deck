@@ -90,12 +90,19 @@ type NativeService struct {
 	// resumeIDFor supplies the last known conversation id for an agent.
 	resumeIDFor func(agentID string) string
 
-	// saveConfig / loadConfig persist the chosen model + permission mode per agent,
-	// so a restart or another device resumes with the same choices rather than
+	// saveConfig / loadConfig persist the chosen model + permission mode + effort per
+	// agent, so a restart or another device resumes with the same choices rather than
 	// snapping back to defaults. Injected for the same reason as the resume id: this
 	// service owns processes, not rows.
-	saveConfig func(agentID, model, mode string)
-	loadConfig func(agentID string) (model, mode string)
+	saveConfig func(agentID, model, mode, effort string)
+	loadConfig func(agentID string) (model, mode, effort string)
+
+	// saveOptions / loadOptions persist the set-once session options. Unlike the
+	// config above, these are never passed in by an opening client — they belong to
+	// the agent, so the launch path reads them straight from storage and a client
+	// that knows nothing about them can still open the session correctly.
+	saveOptions func(agentID string, opts NativeOptions)
+	loadOptions func(agentID string) NativeOptions
 }
 
 type nativeSession struct {
@@ -103,8 +110,10 @@ type nativeSession struct {
 	driver NativeDriver
 	kind   string // claude | codex
 	cwd    string
-	model  string // remembered so a mode switch keeps the model, and vice-versa
-	mode   string // permission mode: "" | acceptEdits | plan | bypassPermissions
+	model  string        // remembered so a mode switch keeps the model, and vice-versa
+	mode   string        // permission mode: "" | acceptEdits | plan | bypassPermissions
+	effort string        // low | medium | high | xhigh | max — fixed for the process's lifetime
+	opts   NativeOptions // set-once session options, also fixed for the process's lifetime
 	// history keeps the events already emitted, so a device that connects late (or
 	// reconnects from another device) can render the conversation so far. This is
 	// the native track's answer to terminal replay — and it needs no serializer,
@@ -161,23 +170,75 @@ func (s *NativeService) SetApprovalRules(store *ApprovalRuleStore) {
 	s.mu.Unlock()
 }
 
-// SetConfigPersistence wires where a session's model + permission mode are stored.
-func (s *NativeService) SetConfigPersistence(save func(agentID, model, mode string), load func(agentID string) (string, string)) {
+// SetConfigPersistence wires where a session's model + permission mode + effort are stored.
+func (s *NativeService) SetConfigPersistence(save func(agentID, model, mode, effort string), load func(agentID string) (string, string, string)) {
 	s.mu.Lock()
 	s.saveConfig = save
 	s.loadConfig = load
 	s.mu.Unlock()
 }
 
-// Config returns a running session's current model + permission mode, so a client
-// opening the page can display the choices the session is actually using (which may
-// have been set on another device) rather than its own last local guess.
-func (s *NativeService) Config(sessionID string) (model, mode string) {
+// SetOptionsPersistence wires where a session's set-once options are stored.
+func (s *NativeService) SetOptionsPersistence(save func(string, NativeOptions), load func(string) NativeOptions) {
+	s.mu.Lock()
+	s.saveOptions = save
+	s.loadOptions = load
+	s.mu.Unlock()
+}
+
+// Options returns a running session's options, falling back to what's persisted so a
+// cold open still shows the configured values.
+func (s *NativeService) Options(sessionID string) NativeOptions {
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	load := s.loadOptions
+	s.mu.RUnlock()
+	if sess != nil {
+		return sess.opts
+	}
+	if load != nil {
+		return load(sessionID)
+	}
+	return NativeOptions{}
+}
+
+// SetOptions persists new session options and restarts the session so they take
+// effect — every one of them is a spawn flag. Returns whatever Normalize dropped, so
+// the caller can tell the user which value didn't survive instead of silently eating it.
+//
+// The options are stored even when the session isn't running: configuring an agent
+// before opening it must work, and the launch path reads storage anyway.
+func (s *NativeService) SetOptions(sessionID string, opts NativeOptions) ([]string, error) {
+	clean, dropped := opts.Normalize()
+
+	s.mu.RLock()
+	save := s.saveOptions
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if save != nil {
+		save(sessionID, clean)
+	}
+	if sess == nil {
+		return dropped, nil // not running: it'll pick these up on the next open
+	}
+	if sess.kind == "codex" {
+		return dropped, fmt.Errorf("codex sessions have no session options")
+	}
+	s.mu.RLock()
+	model, mode, effort := sess.model, sess.mode, sess.effort
+	s.mu.RUnlock()
+	return dropped, s.restart(sessionID, model, mode, effort)
+}
+
+// Config returns a running session's current model + permission mode + effort, so a
+// client opening the page can display the choices the session is actually using (which
+// may have been set on another device) rather than its own last local guess.
+func (s *NativeService) Config(sessionID string) (model, mode, effort string) {
 	s.mu.RLock()
 	sess := s.sessions[sessionID]
 	s.mu.RUnlock()
 	if sess != nil {
-		return sess.model, sess.mode
+		return sess.model, sess.mode, sess.effort
 	}
 	// Not running: fall back to what's persisted, so a cold open still shows the
 	// remembered choices.
@@ -187,7 +248,7 @@ func (s *NativeService) Config(sessionID string) (model, mode string) {
 	if load != nil {
 		return load(sessionID)
 	}
-	return "", ""
+	return "", "", ""
 }
 
 // SetHandlers wires the hub's fan-out. Called once at startup.
@@ -263,16 +324,16 @@ func (s *NativeService) autoDecision(req PermissionRequest) (PermissionDecision,
 // Start launches a native Claude or Codex session for an agent. Idempotent:
 // starting one that already runs is a no-op, so a second device opening the page
 // doesn't spawn a second agent.
-func (s *NativeService) Start(sessionID, kind, cwd, model, resumeID, mode string) error {
-	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, true)
+func (s *NativeService) Start(sessionID, kind, cwd, model, resumeID, mode, effort string) error {
+	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, effort, true)
 }
 
 // startSession is the shared launch path. fromDB distinguishes a fresh open (where
-// the caller's model/mode are only hints and the session's saved choices win) from
-// a restart (where the caller passes the exact model/mode to use, so the DB must
+// the caller's model/mode/effort are only hints and the session's saved choices win)
+// from a restart (where the caller passes the exact values to use, so the DB must
 // not override them — e.g. switching model must keep the current default mode, not
 // resurrect an old persisted one).
-func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode string, fromDB bool) error {
+func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode, effort string, fromDB bool) error {
 	s.mu.Lock()
 	if _, ok := s.sessions[sessionID]; ok {
 		s.mu.Unlock()
@@ -292,20 +353,23 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		}
 	}
 
-	// On a fresh open the session's remembered model + mode win over the client's
-	// local hint, so every device resumes with the same choices. (A restart passes
-	// exact values and skips this.)
+	// On a fresh open the session's remembered model + mode + effort win over the
+	// client's local hint, so every device resumes with the same choices. (A restart
+	// passes exact values and skips this.)
 	if fromDB {
 		s.mu.RLock()
 		load := s.loadConfig
 		s.mu.RUnlock()
 		if load != nil {
-			savedModel, savedMode := load(sessionID)
+			savedModel, savedMode, savedEffort := load(sessionID)
 			if savedModel != "" {
 				model = savedModel
 			}
 			if savedMode != "" {
 				mode = savedMode
+			}
+			if savedEffort != "" {
+				effort = savedEffort
 			}
 		}
 	}
@@ -314,6 +378,27 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		kind = "claude"
 	}
 	cliMode := cliPermissionMode(mode)
+	// Codex has no effort equivalent, so its sessions report "" and the client hides the
+	// control rather than offering a setting that would do nothing.
+	if kind == "codex" {
+		effort = ""
+	} else {
+		effort = normalizeEffort(effort)
+	}
+	// Options always come from storage, never from the opening client: they describe the
+	// agent, not this particular open, so a device that has never heard of them can't
+	// blank them out by opening the session. Re-normalized on every launch because the
+	// world moves — an --add-dir path valid when it was saved may be gone now, and a
+	// stale path must not be what stops the session from starting.
+	var opts NativeOptions
+	if kind != "codex" {
+		s.mu.RLock()
+		loadOpts := s.loadOptions
+		s.mu.RUnlock()
+		if loadOpts != nil {
+			opts, _ = loadOpts(sessionID).Normalize()
+		}
+	}
 	var d NativeDriver
 	var token string
 	var err error
@@ -331,6 +416,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		}
 		d = NewClaudeDriver(ClaudeConfig{
 			SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: cliMode,
+			Effort: effort, Options: opts,
 			ResumeID: resumeID, ApproveURL: s.baseURL + "/internal/native/approve",
 			ApproveToken: token, SelfPath: s.selfBin,
 		})
@@ -342,6 +428,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		if resumeID != "" && kind == "claude" {
 			d = NewClaudeDriver(ClaudeConfig{
 				SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: cliMode,
+				Effort: effort, Options: opts,
 				ApproveURL: s.baseURL + "/internal/native/approve", ApproveToken: token,
 				SelfPath: s.selfBin,
 			})
@@ -355,7 +442,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		}
 	}
 
-	sess := &nativeSession{id: sessionID, driver: d, kind: kind, cwd: cwd, model: model, mode: mode}
+	sess := &nativeSession{id: sessionID, driver: d, kind: kind, cwd: cwd, model: model, mode: mode, effort: effort, opts: opts}
 	// A resumed session's PRIOR conversation is not re-emitted as events by
 	// `claude --resume` — it just continues. So seed history from the transcript on
 	// disk, or the chat opens blank until the next reply. (Only when we actually
@@ -375,7 +462,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	// Remember the choices this session actually launched with, so the next open —
 	// on this device or another — resumes with them.
 	if save != nil {
-		save(sessionID, model, mode)
+		save(sessionID, model, mode, effort)
 	}
 
 	go s.pump(sess)
@@ -452,7 +539,7 @@ func (s *NativeService) pump(sess *nativeSession) {
 // (resume), new model + permission mode — so a model or mode switch loses nothing.
 // The new system/init flows to watchers as a fresh banner. Shared by SetModel and
 // SetMode; each keeps the OTHER setting from the session it's replacing.
-func (s *NativeService) restart(sessionID, model, mode string) error {
+func (s *NativeService) restart(sessionID, model, mode, effort string) error {
 	s.mu.Lock()
 	old := s.sessions[sessionID]
 	if old != nil {
@@ -466,19 +553,44 @@ func (s *NativeService) restart(sessionID, model, mode string) error {
 	cwd := old.cwd
 	kind := old.kind
 	old.driver.Stop() // its pump exits; the pump guard keeps it from evicting the new one
-	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, false)
+	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, effort, false)
 }
 
-// SetModel switches model, keeping the current permission mode.
+// SetModel switches model, keeping the current permission mode and effort.
 func (s *NativeService) SetModel(sessionID, model string) error {
 	s.mu.RLock()
 	sess := s.sessions[sessionID]
 	s.mu.RUnlock()
-	mode := ""
+	mode, effort := "", ""
 	if sess != nil {
-		mode = sess.mode
+		mode, effort = sess.mode, sess.effort
 	}
-	return s.restart(sessionID, model, mode)
+	return s.restart(sessionID, model, mode, effort)
+}
+
+// SetEffort switches the effort level, keeping the model and permission mode.
+//
+// Unlike the permission mode, effort cannot be steered in place: it is a spawn flag,
+// with no control_request to change it on a live session. So this restarts the process
+// — the conversation survives via --resume, the in-flight turn does not. Callers should
+// treat it like SetModel and avoid offering it mid-turn.
+func (s *NativeService) SetEffort(sessionID, effort string) error {
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if sess == nil {
+		return fmt.Errorf("native session %s is not running", sessionID)
+	}
+	if sess.kind == "codex" {
+		return fmt.Errorf("codex sessions have no effort setting")
+	}
+	s.mu.RLock()
+	model, mode, current := sess.model, sess.mode, sess.effort
+	s.mu.RUnlock()
+	if normalizeEffort(effort) == current {
+		return nil // nothing to restart for
+	}
+	return s.restart(sessionID, model, mode, effort)
 }
 
 // cliPermissionMode maps OUR mode vocabulary to what the Claude CLI is told.
@@ -524,7 +636,7 @@ func (s *NativeService) SetMode(sessionID, mode string) error {
 	// both "default" to the CLI and differ only in our policy.
 	if cliPermissionMode(mode) != cliPermissionMode(current) {
 		if err := sess.driver.SetPermissionMode(cliPermissionMode(mode)); err != nil {
-			return s.restart(sessionID, model, mode)
+			return s.restart(sessionID, model, mode, sess.effort)
 		}
 	}
 	s.applyMode(sess, mode)
@@ -543,12 +655,12 @@ func (s *NativeService) applyMode(sess *nativeSession, mode string) {
 		pol.mode = mode
 		s.policies[sess.id] = pol
 	}
-	model := sess.model
+	model, effort := sess.model, sess.effort
 	save := s.saveConfig
 	s.mu.Unlock()
 
 	if save != nil {
-		save(sess.id, model, mode)
+		save(sess.id, model, mode, effort)
 	}
 }
 

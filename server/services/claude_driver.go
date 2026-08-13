@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -32,6 +33,16 @@ type ClaudeConfig struct {
 	// a live session with SetPermissionMode.
 	PermissionMode string
 
+	// Effort is the CLI's --effort level: low | medium | high | xhigh | max. It sets how
+	// deeply Claude thinks and, with it, how many tokens a turn costs. "" means the deck
+	// hasn't been told a preference, and the driver pins DefaultEffort instead of letting
+	// the CLI default (xhigh) stand — see normalizeEffort.
+	Effort string
+
+	// Options are the per-agent session settings (extra directories, spend cap,
+	// auto-compaction window, fallback model). Already normalized by the caller.
+	Options NativeOptions
+
 	// ResumeID is Claude's own session_id, to continue a past conversation.
 	ResumeID string
 
@@ -45,6 +56,28 @@ type ClaudeConfig struct {
 	// SelfPath is the pcd binary to spawn as the MCP permission server — normally
 	// os.Executable(). It's a field so tests can point at a stub.
 	SelfPath string
+}
+
+// DefaultEffort is what a session runs at until someone chooses otherwise. The CLI's
+// own default is xhigh — the level tuned for the hardest agentic work — which bills
+// every routine turn at the top of the scale. high is the documented minimum for
+// intelligence-sensitive work and the better resting place for a mixed session.
+const DefaultEffort = "high"
+
+// EffortLevels are the values --effort accepts, cheapest first. Exported so the API can
+// hand the client the same list rather than the UI keeping its own copy that drifts.
+var EffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
+
+// normalizeEffort maps anything the client sends onto a level the CLI accepts. An
+// unknown value becomes the default rather than reaching the command line, where it
+// would fail the spawn — a bad dropdown value must not be able to break session start.
+func normalizeEffort(effort string) string {
+	for _, level := range EffortLevels {
+		if effort == level {
+			return effort
+		}
+	}
+	return DefaultEffort
 }
 
 // ClaudeDriver owns the process and its two pipes.
@@ -114,6 +147,36 @@ func (d *ClaudeDriver) buildArgs() []string {
 	)
 	if d.cfg.Model != "" {
 		args = append(args, "--model", d.cfg.Model)
+	}
+	// Always pinned, never omitted: leaving --effort off doesn't mean "no effort", it
+	// means the CLI's own default (xhigh), which is the most expensive level and wrong
+	// for the routine turns that make up most of a session.
+	args = append(args, "--effort", normalizeEffort(d.cfg.Effort))
+	// Sub-agent text arrives tagged with parent_tool_use_id, which the client renders
+	// under the calling Task instead of in the main thread. Always on rather than a
+	// setting: it changes only what the CLI hands us, never what the model does, so it
+	// costs no tokens — and without it the deck's sub-agent panel can only ever show
+	// that a sub-agent ran, not what it found.
+	args = append(args, "--forward-subagent-text")
+	// Extra roots beyond cwd. Passed as one variadic flag — the CLI stops collecting
+	// at the next "--" token, and every path is absolute and vetted by Normalize.
+	if dirs := d.cfg.Options.AddDirs; len(dirs) > 0 {
+		args = append(args, "--add-dir")
+		args = append(args, dirs...)
+	}
+	if budget := d.cfg.Options.MaxBudgetUSD; budget > 0 {
+		args = append(args, "--max-budget-usd", strconv.FormatFloat(budget, 'f', -1, 64))
+	}
+	// Always pinned, like --effort and for the same reason: omitting it isn't "no
+	// compaction policy", it's the CLI's own — which lets context grow to the full 1M
+	// window, so every request in a long session re-reads up to a million tokens.
+	if ac := d.cfg.Options.Autocompact; ac != "" {
+		args = append(args, "--autocompact", ac)
+	} else {
+		args = append(args, "--autocompact", DefaultAutocompact)
+	}
+	if fm := d.cfg.Options.FallbackModel; fm != "" {
+		args = append(args, "--fallback-model", fm)
 	}
 	// Permission mode (Shift+Tab in the TUI): default | acceptEdits | plan |
 	// bypassPermissions. "" leaves the CLI default (our approve bridge gates tools).

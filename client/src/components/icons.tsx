@@ -234,6 +234,21 @@ export function IconBolt({ size, color = 'currentColor', className }: IconProps)
           stroke={color} strokeWidth="1.1" fill="none" strokeLinecap="round" strokeLinejoin="round" />
   </I>;
 }
+// Effort — a gauge: the dial reads how hard the model is being asked to work.
+export function IconGauge({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M2.2 12.2a6.4 6.4 0 1 1 11.6 0" stroke={color} strokeWidth="1.1" fill="none" strokeLinecap="round" />
+    <path d="M8 12.2L11 6.9" stroke={color} strokeWidth="1.3" fill="none" strokeLinecap="round" />
+  </I>;
+}
+// Session options — sliders, the settings that are set once and left alone.
+export function IconSliders({ size, color = 'currentColor', className }: IconProps) {
+  return <I size={size} className={className}>
+    <path d="M2.6 4.6h10.8M2.6 11.4h10.8" stroke={color} strokeWidth="1.1" strokeLinecap="round" />
+    <circle cx="6" cy="4.6" r="1.7" fill="none" stroke={color} strokeWidth="1.1" />
+    <circle cx="10.4" cy="11.4" r="1.7" fill="none" stroke={color} strokeWidth="1.1" />
+  </I>;
+}
 export function IconCheck({ size, color = 'currentColor', className }: IconProps) {
   return <I size={size} className={className}>
     <path d="M3 8.6l3.2 3.2L13 4.9" stroke={color} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
