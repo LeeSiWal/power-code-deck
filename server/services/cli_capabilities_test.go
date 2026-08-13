@@ -97,3 +97,49 @@ func TestSupportedFlagsParsesHelpOutput(t *testing.T) {
 		t.Errorf("probe of a missing binary returned %v, want nil", got)
 	}
 }
+
+// Several installs of one CLI routinely coexist — a stale root-owned one on the
+// service's bare PATH, and the user's own that they actually update. Resolving by PATH
+// order pinned the deck to the stale copy; it must follow the newest instead.
+func TestPickNewestPrefersTheHigherVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stub is POSIX")
+	}
+	dir := t.TempDir()
+	stub := func(name, version string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("#!/bin/sh\necho '"+version+" (Fake CLI)'\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	oldBin := stub("old", "2.1.170")
+	newBin := stub("new", "2.1.229")
+	// Patch-level differences must be compared numerically, not as strings: "2.1.9"
+	// sorts above "2.1.229" alphabetically, which would silently pick the older build.
+	patch := stub("patch", "2.1.9")
+
+	if got := pickNewest([]string{oldBin, newBin}); got != newBin {
+		t.Errorf("pickNewest(old, new) = %s, want %s", got, newBin)
+	}
+	// Order must not decide it — the stale PATH entry comes first in the real caller.
+	if got := pickNewest([]string{newBin, oldBin}); got != newBin {
+		t.Errorf("pickNewest(new, old) = %s, want %s", got, newBin)
+	}
+	if got := pickNewest([]string{patch, newBin}); got != newBin {
+		t.Errorf("string-compared versions: got %s, want %s", got, newBin)
+	}
+
+	// Unparseable versions lose to parseable ones, but a set with nothing comparable
+	// keeps the caller's order rather than resolving to nothing.
+	mute := stub("mute", "")
+	if got := pickNewest([]string{mute, oldBin}); got != oldBin {
+		t.Errorf("a version-less binary beat a versioned one: %s", got)
+	}
+	if got := pickNewest([]string{mute}); got != mute {
+		t.Errorf("pickNewest dropped the only candidate: %q", got)
+	}
+	if got := pickNewest([]string{filepath.Join(dir, "absent")}); got != "" {
+		t.Errorf("pickNewest returned a nonexistent path: %q", got)
+	}
+}

@@ -72,6 +72,95 @@ func supportedFlags(bin string) map[string]bool {
 	return flags
 }
 
+// Several installs of the same CLI routinely coexist: a root-owned system-wide one on
+// the service's PATH, and the user's own under ~/.npm-global or ~/.local. The deck runs
+// as the user, and the user updates their own copy — so resolving strictly by PATH pins
+// the deck to whatever sits in /usr/bin, which is often an old build nobody remembers
+// installing. That is not hypothetical: it held the deck two hundred patch versions
+// behind while every `npm i -g` appeared to succeed, and the features that depended on
+// the newer CLI stayed silently switched off.
+//
+// pickNewest therefore prefers the highest version among the candidates. Anything it
+// cannot parse loses to anything it can, and if nothing parses the caller's own order
+// stands — so this can only ever move the choice forward, never sideways.
+var semver = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
+
+var (
+	verCacheMu sync.Mutex
+	verCache   = map[string][3]int{}
+)
+
+// binaryVersion returns the binary's reported version, or the zero value when it can't
+// be determined. Cached like the flag probe, and keyed the same way so an in-place
+// upgrade is noticed.
+func binaryVersion(bin string) [3]int {
+	key := bin
+	if fi, err := os.Stat(bin); err == nil {
+		key = bin + "|" + fi.ModTime().UTC().Format(time.RFC3339Nano) + "|" + itoa(fi.Size())
+	}
+	verCacheMu.Lock()
+	if v, ok := verCache[key]; ok {
+		verCacheMu.Unlock()
+		return v
+	}
+	verCacheMu.Unlock()
+
+	var v [3]int
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, bin, "--version").CombinedOutput(); err == nil {
+		if m := semver.FindStringSubmatch(string(out)); m != nil {
+			for i := 0; i < 3; i++ {
+				v[i] = atoi(m[i+1])
+			}
+		}
+	}
+
+	verCacheMu.Lock()
+	verCache[key] = v
+	verCacheMu.Unlock()
+	return v
+}
+
+func newer(a, b [3]int) bool {
+	for i := 0; i < 3; i++ {
+		if a[i] != b[i] {
+			return a[i] > b[i]
+		}
+	}
+	return false
+}
+
+// pickNewest chooses the highest-versioned candidate, preserving the caller's order on
+// ties. Candidates that don't exist are skipped.
+func pickNewest(candidates []string) string {
+	best, bestVer := "", [3]int{}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if fi, err := os.Stat(c); err != nil || fi.IsDir() {
+			continue
+		}
+		v := binaryVersion(c)
+		if best == "" || newer(v, bestVer) {
+			best, bestVer = c, v
+		}
+	}
+	return best
+}
+
+func atoi(s string) int {
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return n
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
+}
+
 func itoa(n int64) string {
 	if n == 0 {
 		return "0"
