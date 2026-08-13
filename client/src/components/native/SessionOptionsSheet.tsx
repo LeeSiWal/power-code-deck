@@ -169,7 +169,7 @@ export function SessionOptionsSheet({ agentId, current, dropped, onClose }: Prop
             <label className={label}>자동 압축</label>
             <div className="flex gap-1.5">
               {[
-                { id: 'default', label: '기본' },
+                { id: 'default', label: '기본 (200K)' },
                 { id: 'auto', label: 'Auto' },
                 { id: 'tokens', label: '직접 지정' },
               ].map((o) => (
@@ -194,7 +194,11 @@ export function SessionOptionsSheet({ agentId, current, dropped, onClose }: Prop
                 className={`${field} mt-1.5`}
               />
             )}
-            <span className={hint}>대화가 길어질 때 이전 맥락을 요약할 시점입니다. 직접 지정은 100,000~1,000,000 토큰입니다.</span>
+            <span className={hint}>
+              대화가 길어질 때 이전 맥락을 요약할 시점입니다. 덱은 200K를 기본으로 씁니다 — 지정하지 않으면
+              컨텍스트가 1M까지 자라고, 그동안 매 요청이 그만큼을 다시 읽어 비용이 크게 늘기 때문입니다.
+              직접 지정은 100,000~1,000,000 토큰이며, 예전 동작이 필요하면 1000000으로 올리면 됩니다.
+            </span>
           </div>
 
           <div>

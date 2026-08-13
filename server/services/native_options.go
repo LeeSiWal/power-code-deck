@@ -45,6 +45,17 @@ const (
 	autocompactMaxTokens = 1_000_000
 )
 
+// DefaultAutocompact is the window a session uses until someone chooses otherwise.
+//
+// Left unset, the CLI lets context run to the full 1M window before compacting, and
+// every request in between re-reads the whole conversation. Measured on a real deck
+// session: context reached 999,545 tokens and the session read 866M input tokens in
+// total, ~74% of its cost. Capping at 200K would have cut that roughly in half.
+//
+// 200K is a starting point, not a law — it is expressible in both directions from the
+// settings sheet, and a session that needs the old behaviour can ask for 1000000.
+const DefaultAutocompact = "200000"
+
 // maxAddDirs bounds how much extra filesystem one session can be handed. Well past
 // any real monorepo, low enough that a runaway list can't build an unreadable command.
 const maxAddDirs = 16

@@ -127,10 +127,19 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 // own default alone rather than passing an empty value.
 func TestBuildArgsIncludesOptionsOnlyWhenSet(t *testing.T) {
 	bare := strings.Join(NewClaudeDriver(ClaudeConfig{SessionID: "a1", SelfPath: "/opt/pcd"}).buildArgs(), " ")
-	for _, flag := range []string{"--add-dir", "--max-budget-usd", "--autocompact", "--fallback-model"} {
+	// These three are genuinely opt-in: with nothing configured they must not appear,
+	// or the deck would be inventing extra directories, a spend cap, and a fallback
+	// model nobody asked for.
+	for _, flag := range []string{"--add-dir", "--max-budget-usd", "--fallback-model"} {
 		if strings.Contains(bare, flag) {
 			t.Errorf("unset options still passed %s: %s", flag, bare)
 		}
+	}
+	// Auto-compaction is the exception, for the same reason effort is: leaving it off
+	// means the CLI's own policy (grow to the full 1M window), which is the single
+	// largest cost driver in a long session. Unset must mean the deck's default.
+	if !strings.Contains(bare, "--autocompact "+DefaultAutocompact) {
+		t.Errorf("--autocompact not pinned to the deck default: %s", bare)
 	}
 	// Sub-agent forwarding is not a setting — it is always on, or the deck can never
 	// show what a sub-agent actually did.

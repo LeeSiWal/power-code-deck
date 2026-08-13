@@ -167,8 +167,13 @@ func (d *ClaudeDriver) buildArgs() []string {
 	if budget := d.cfg.Options.MaxBudgetUSD; budget > 0 {
 		args = append(args, "--max-budget-usd", strconv.FormatFloat(budget, 'f', -1, 64))
 	}
+	// Always pinned, like --effort and for the same reason: omitting it isn't "no
+	// compaction policy", it's the CLI's own — which lets context grow to the full 1M
+	// window, so every request in a long session re-reads up to a million tokens.
 	if ac := d.cfg.Options.Autocompact; ac != "" {
 		args = append(args, "--autocompact", ac)
+	} else {
+		args = append(args, "--autocompact", DefaultAutocompact)
 	}
 	if fm := d.cfg.Options.FallbackModel; fm != "" {
 		args = append(args, "--fallback-model", fm)
