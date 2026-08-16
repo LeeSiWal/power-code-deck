@@ -21,6 +21,33 @@ export interface ProviderHealth {
   error?: string;
 }
 
+export type IntelligenceMode = 'CLOUD_ONLY' | 'LOCAL_PREPROCESS_CLOUD' | 'LOCAL_ONLY';
+
+export interface IntelligenceTraceEvent {
+  at: string;
+  stage: string;
+  status: string;
+  details?: Record<string, unknown>;
+}
+
+export interface IntelligenceTrace {
+  id: string;
+  agentId?: string;
+  mode: IntelligenceMode;
+  status: string;
+  provider?: string;
+  model?: string;
+  rawEstimatedTokens: number;
+  optimizedEstimatedTokens: number;
+  localTokens: number;
+  latencyMs: number;
+  reductionPercent: number;
+  errorCode?: string;
+  fallback: boolean;
+  events: IntelligenceTraceEvent[];
+  createdAt: string;
+}
+
 function getToken(): string | null {
   return localStorage.getItem('accessToken');
 }
@@ -310,8 +337,10 @@ export const api = {
     agentId: string; task: string; mode: 'CLOUD_ONLY' | 'LOCAL_PREPROCESS_CLOUD' | 'LOCAL_ONLY';
     provider?: string; operation?: string;
   }) => apiFetch('/intelligence/run', { method: 'POST', body: JSON.stringify(request) }),
-  intelligenceTraces: (limit = 50) => apiFetch(`/intelligence/traces?limit=${limit}`),
-  intelligenceTrace: (id: string) => apiFetch(`/intelligence/traces/${encodeURIComponent(id)}`),
+  intelligenceTraces: (limit = 50) =>
+    apiFetch<IntelligenceTrace[]>(`/intelligence/traces?limit=${limit}`),
+  intelligenceTrace: (id: string) =>
+    apiFetch<IntelligenceTrace>(`/intelligence/traces/${encodeURIComponent(id)}`),
 
   // Notifications
   listNotifications: (agentId?: string) =>

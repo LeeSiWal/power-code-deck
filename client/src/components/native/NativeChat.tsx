@@ -14,6 +14,7 @@ import {
 import { writeClipboard } from '../../lib/clipboard';
 import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
+import { SessionSavingsSummary } from '../intelligence/SessionSavingsSummary';
 
 /**
  * NativeChat — a Claude session rendered from its event stream instead of a
@@ -102,6 +103,7 @@ const MODES: { id: string; label: string; desc: string; icon: React.ComponentTyp
 export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeChatProps) {
   const navigate = useNavigate(); // /clear swaps to a freshly created session
   const [events, setEvents] = useState<StreamEvent[]>([]);
+  const [intelligenceRefreshKey, setIntelligenceRefreshKey] = useState(0);
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
@@ -335,7 +337,9 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   useEffect(() => {
     const offEvent = agentDeckWS.on('native:event', (p: any) => {
       if (p.agentId !== agentId) return;
-      setEvents((prev) => [...prev, p.event as StreamEvent]);
+      const event = p.event as StreamEvent;
+      setEvents((prev) => [...prev, event]);
+      if (event.type === 'result') setIntelligenceRefreshKey((key) => key + 1);
     });
     // History is the native track's replay — no serializer, no ring buffer. The
     // events ARE the state, so reconnecting just means folding them again.
@@ -514,6 +518,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         </div>
       )}
       <div ref={scrollRef} onScroll={onScroll} className="selectable flex-1 overflow-y-auto px-3 py-3 space-y-2">
+        <SessionSavingsSummary agentId={agentId} refreshKey={intelligenceRefreshKey} />
         {items.map((item) => (
           <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} />
         ))}
