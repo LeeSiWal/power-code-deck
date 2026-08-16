@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentDeckWS } from '../../lib/ws';
-import { api } from '../../lib/api';
+import {
+  api, ApiError, type IntelligenceMode, type IntelligenceTrace, type LocalProvider,
+} from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 import {
   IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconDevices, IconGauge, IconHand,
@@ -15,6 +17,10 @@ import { writeClipboard } from '../../lib/clipboard';
 import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
 import { SessionSavingsSummary } from '../intelligence/SessionSavingsSummary';
+import { ExecutionModeControl } from '../intelligence/ExecutionModeControl';
+import {
+  clientCommand, cloudTargetName, routeNativeTask, type LocalOperation,
+} from '../intelligence/executionRouting';
 
 /**
  * NativeChat — a Claude session rendered from its event stream instead of a
@@ -42,6 +48,34 @@ interface NativeChatProps {
   cwd: string;
   model?: string;
   driver?: 'claude' | 'codex';
+}
+
+function savedIntelligenceMode(agentId: string): IntelligenceMode {
+  const value = localStorage.getItem(`pcd:intelligence-mode:${agentId}`);
+  return value === 'LOCAL_PREPROCESS_CLOUD' || value === 'LOCAL_ONLY' ? value : 'CLOUD_ONLY';
+}
+
+function savedLocalOperation(agentId: string): LocalOperation {
+  const value = localStorage.getItem(`pcd:intelligence-operation:${agentId}`);
+  return value === 'summarize' || value === 'explain' || value === 'classify'
+    || value === 'log_analysis' || value === 'repository_question' ? value : 'repository_question';
+}
+
+function traceFromApiError(error: unknown): IntelligenceTrace | undefined {
+  if (!(error instanceof ApiError) || !error.data || typeof error.data !== 'object') return undefined;
+  return (error.data as { trace?: IntelligenceTrace }).trace;
+}
+
+function localErrorLabel(code?: string): string {
+  const labels: Record<string, string> = {
+    LOCAL_PROVIDER_UNREACHABLE: 'Local provider is unreachable.',
+    LOCAL_MODEL_UNAVAILABLE: 'The configured local model is unavailable.',
+    LOCAL_TIMEOUT: 'Local preprocessing timed out.',
+    LOCAL_GENERATION_FAILED: 'Local context generation failed.',
+    CONTEXT_BUILD_FAILED: 'Repository context could not be prepared.',
+    VALIDATION_FAILED: 'Local Intelligence rejected this task.',
+  };
+  return code ? labels[code] || code : 'Local Intelligence request failed.';
 }
 
 // Model choices for the switcher. `id` is passed straight to the CLI's --model;
@@ -104,6 +138,15 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const navigate = useNavigate(); // /clear swaps to a freshly created session
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [intelligenceRefreshKey, setIntelligenceRefreshKey] = useState(0);
+  const [intelligenceMode, setIntelligenceMode] = useState<IntelligenceMode>(() => savedIntelligenceMode(agentId));
+  const [localProviders, setLocalProviders] = useState<LocalProvider[]>([]);
+  const [providersLoading, setProvidersLoading] = useState(true);
+  const [providersError, setProvidersError] = useState(false);
+  const [localProvider, setLocalProvider] = useState(() => localStorage.getItem(`pcd:intelligence-provider:${agentId}`) || '');
+  const [localOperation, setLocalOperation] = useState<LocalOperation>(() => savedLocalOperation(agentId));
+  const [intelligencePreparing, setIntelligencePreparing] = useState(false);
+  const [intelligenceNotice, setIntelligenceNotice] = useState('');
+  const [localOutput, setLocalOutput] = useState('');
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
@@ -158,6 +201,49 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   modeIdRef.current = modeId;
   const effortIdRef = useRef(effortId);
   effortIdRef.current = effortId;
+
+  useEffect(() => {
+    let active = true;
+    setProvidersLoading(true);
+    setProvidersError(false);
+    api.listLocalProviders()
+      .then((providers) => {
+        if (!active) return;
+        const enabled = providers.filter((provider) => provider.enabled);
+        setLocalProviders(enabled);
+        setLocalProvider((current) => {
+          if (enabled.some((provider) => provider.name === current)) return current;
+          if (enabled.length === 1) {
+            try { localStorage.setItem(`pcd:intelligence-provider:${agentId}`, enabled[0].name); } catch { /* ignore */ }
+            return enabled[0].name;
+          }
+          return '';
+        });
+      })
+      .catch(() => {
+        if (active) setProvidersError(true);
+      })
+      .finally(() => {
+        if (active) setProvidersLoading(false);
+      });
+    return () => { active = false; };
+  }, [agentId]);
+
+  const pickIntelligenceMode = useCallback((next: IntelligenceMode) => {
+    setIntelligenceMode(next);
+    setIntelligenceNotice('');
+    try { localStorage.setItem(`pcd:intelligence-mode:${agentId}`, next); } catch { /* ignore */ }
+  }, [agentId]);
+
+  const pickLocalProvider = useCallback((next: string) => {
+    setLocalProvider(next);
+    try { localStorage.setItem(`pcd:intelligence-provider:${agentId}`, next); } catch { /* ignore */ }
+  }, [agentId]);
+
+  const pickLocalOperation = useCallback((next: LocalOperation) => {
+    setLocalOperation(next);
+    try { localStorage.setItem(`pcd:intelligence-operation:${agentId}`, next); } catch { /* ignore */ }
+  }, [agentId]);
 
   const pickModel = useCallback((id: string) => {
     setMenu(null);
@@ -425,17 +511,21 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   }, []);
 
-  const sendText = useCallback((text: string) => {
-    if (!text.trim()) return;
-    setError('');
-    agentDeckWS.send('native:input', { agentId, text });
+  const markJustSent = useCallback(() => {
     // Show motion at once — don't wait for the server to echo the turn back. A
     // safety timeout drops the flag if no real turn ever materialises (e.g. a line
     // the CLI answers without a turn), so the indicator can't get stuck on.
     setJustSent(true);
     if (sentTimer.current) clearTimeout(sentTimer.current);
     sentTimer.current = window.setTimeout(() => setJustSent(false), 8000);
-  }, [agentId]);
+  }, []);
+
+  const sendText = useCallback((text: string) => {
+    if (!text.trim()) return;
+    setError('');
+    agentDeckWS.send('native:input', { agentId, text });
+    markJustSent();
+  }, [agentId, markJustSent]);
 
   const interrupt = useCallback(() => {
     agentDeckWS.send('native:interrupt', { agentId });
@@ -444,11 +534,13 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const send = useCallback(async () => {
     const text = draft.trim();
     if (!text && !attachments.length) return;
+    if (intelligencePreparing) return;
+    const command = !attachments.length ? clientCommand(text) : null;
     // /clear starts a genuinely new session instead of being forwarded. Sent to the
     // CLI it drops the context but leaves the transcript on screen, so the chat looks
     // intact while Claude has forgotten every word of it — the worst kind of wrong
     // screen. A fresh session clears both at once.
-    if (text === '/clear' && !attachments.length) {
+    if (command === 'clear') {
       setDraft('');
       setHistIdx(null);
       try {
@@ -463,7 +555,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     // it. `/plugin install name@marketplace` runs the install directly; anything else
     // (`/plugin`, `/plugins`, `/plugin foo`) opens the management panel, prefilling a
     // search with whatever followed the command.
-    if (/^\/plugins?(\s|$)/.test(text) && !attachments.length) {
+    if (command === 'plugin') {
       setDraft('');
       setHistIdx(null);
       const rest = text.replace(/^\/plugins?\s*/, '').trim();
@@ -481,12 +573,29 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       }
       return;
     }
+    const isNativeCommand = command === 'native';
     // Attachments ride along as paths inside the project — Claude opens them with
     // its Read tool. Sent as part of the same user turn.
     const msg = attachments.length
       ? (text ? text + '\n\n' : '') + '첨부 파일 (Read 도구로 확인해줘):\n' + attachments.map((a) => a.path).join('\n')
       : text;
-    sendText(msg);
+    const hasAttachments = attachments.length > 0;
+    if (intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && busy && !hasAttachments && !isNativeCommand) {
+      setError('Wait for the current cloud turn to finish before starting another Hybrid run.');
+      return;
+    }
+    if (intelligenceMode !== 'CLOUD_ONLY' && !hasAttachments && !isNativeCommand) {
+      if (providersLoading) {
+        setError('Local Intelligence providers are still loading.');
+        return;
+      }
+      if (!localProvider || !localProviders.some((provider) => provider.name === localProvider)) {
+        setError('No Local Intelligence provider selected. Open Settings or choose an enabled provider.');
+        return;
+      }
+    }
+
+    const originalAttachments = attachments;
     setAttachments([]);
     setHistIdx(null); // sending ends history browsing; the next ↑ starts from the newest
     // No local echo: the server records the user turn the moment it's sent
@@ -494,7 +603,64 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     // survives a reconnect. A local copy would print twice, and — being invisible to
     // the server — would vanish whenever history replaced our events.
     setDraft('');
-  }, [draft, attachments, sendText]);
+    setError('');
+    setIntelligenceNotice('');
+    setLocalOutput('');
+
+    const usesIntelligence = intelligenceMode !== 'CLOUD_ONLY' && !hasAttachments && !isNativeCommand;
+    if (usesIntelligence) setIntelligencePreparing(true);
+    try {
+      const routed = await routeNativeTask({
+        agentId,
+        driver,
+        task: msg,
+        mode: intelligenceMode,
+        provider: localProvider,
+        operation: localOperation,
+        hasAttachments,
+        isNativeCommand,
+      }, {
+        sendNative: sendText,
+        runIntelligence: api.runIntelligence,
+      });
+
+      if (routed.path === 'cloud') {
+        if (routed.attachmentFallback) {
+          setIntelligenceNotice('Attachments use Cloud Only. Local optimization was not used.');
+        } else if (routed.commandBypass) {
+          setIntelligenceNotice('Commands use the direct native path. Local optimization was not used.');
+        }
+        return;
+      }
+
+      setIntelligenceRefreshKey((key) => key + 1);
+      if (routed.path === 'local') {
+        setLocalOutput(routed.result.contextPack || 'Local task completed without a returned context result.');
+        setIntelligenceNotice('Local result ready. No cloud execution was used.');
+        return;
+      }
+
+      markJustSent();
+      if (routed.result.trace.fallback) {
+        setIntelligenceNotice(
+          `Local optimization unavailable. ${localErrorLabel(routed.result.trace.errorCode)} Continuing with ${cloudTargetName(driver)}.`,
+        );
+      } else {
+        setIntelligenceNotice(`Optimized context sent to ${cloudTargetName(driver)}.`);
+      }
+    } catch (err) {
+      const failedTrace = traceFromApiError(err);
+      if (failedTrace) setIntelligenceRefreshKey((key) => key + 1);
+      setError(`${localErrorLabel(failedTrace?.errorCode)} The task was not sent.`);
+      setDraft(text);
+      setAttachments(originalAttachments);
+    } finally {
+      setIntelligencePreparing(false);
+    }
+  }, [
+    agentId, attachments, busy, draft, driver, intelligenceMode, intelligencePreparing,
+    localOperation, localProvider, localProviders, markJustSent, navigate, providersLoading, sendText,
+  ]);
 
   const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string, remember?: boolean) => {
     agentDeckWS.send('native:decide', { agentId, id, behavior, message, remember });
@@ -518,7 +684,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         </div>
       )}
       <div ref={scrollRef} onScroll={onScroll} className="selectable flex-1 overflow-y-auto px-3 py-3 space-y-2">
-        <SessionSavingsSummary agentId={agentId} refreshKey={intelligenceRefreshKey} />
+        <SessionSavingsSummary agentId={agentId} refreshKey={intelligenceRefreshKey} driver={driver} />
         {items.map((item) => (
           <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} />
         ))}
@@ -711,7 +877,13 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         {/* Immediate "agent is working" feedback, right above the composer. Appears
             the moment you send (justSent) and stays through the turn (busy), so the
             input never looks like it swallowed your message with no response. */}
-        {working && (
+        {intelligencePreparing && (
+          <div className="mx-2 mt-2 flex items-center gap-2 overflow-hidden rounded-lg border border-deck-accent/20 bg-deck-accent/10 px-3 py-1.5 text-xs text-deck-accent-light">
+            <IconSpinner size={13} className="animate-spin shrink-0" />
+            <span className="min-w-0 truncate">Preparing local context… {localProvider} → {intelligenceMode === 'LOCAL_ONLY' ? 'Local result' : cloudTargetName(driver)}</span>
+          </div>
+        )}
+        {!intelligencePreparing && working && (
           <div className="mx-2 mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-deck-accent/10 border border-deck-accent/20 text-deck-accent-light text-xs overflow-hidden">
             <IconSpinner size={13} className="animate-spin shrink-0" />
             <span className="shrink-0">에이전트가 작업 중…</span>
@@ -721,8 +893,42 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
           </div>
         )}
 
+        {intelligenceNotice && (
+          <div className={`mx-2 mt-2 flex items-start justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${
+            intelligenceNotice.startsWith('Local optimization unavailable')
+              ? 'border-deck-warning/30 bg-deck-warning/5 text-deck-warning'
+              : 'border-deck-border bg-deck-surface text-deck-text-dim'
+          }`}>
+            <span className="min-w-0 leading-relaxed">{intelligenceNotice}</span>
+            <button onClick={() => setIntelligenceNotice('')} className="min-h-6 shrink-0 px-1 opacity-70" aria-label="Dismiss Intelligence status">×</button>
+          </div>
+        )}
+
+        {localOutput && (
+          <div className="mx-2 mt-2 rounded-lg border border-deck-success/25 bg-deck-success/5 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-deck-success">Local result</span>
+              <button onClick={() => setLocalOutput('')} className="min-h-7 px-1 text-deck-text-dim" aria-label="Dismiss local result">×</button>
+            </div>
+            <pre className="selectable mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-deck-text">{localOutput}</pre>
+          </div>
+        )}
+
         <div className="p-2 space-y-2">
           <input ref={fileRef} type="file" multiple className="hidden" onChange={onFilePick} />
+          <ExecutionModeControl
+            mode={intelligenceMode}
+            onModeChange={pickIntelligenceMode}
+            providers={localProviders}
+            providersLoading={providersLoading}
+            providersError={providersError}
+            provider={localProvider}
+            onProviderChange={pickLocalProvider}
+            operation={localOperation}
+            onOperationChange={pickLocalOperation}
+            driver={driver}
+            onOpenSettings={() => navigate('/settings')}
+          />
           <textarea
             ref={taRef}
             value={draft}
@@ -819,7 +1025,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
               }
             }}
             rows={1}
-            placeholder="Claude에게 메시지…"
+            placeholder={`${cloudTargetName(driver)}에게 메시지…`}
             style={{ maxHeight: 160 }}
             className="w-full resize-none overflow-y-hidden bg-deck-surface border border-deck-border rounded-lg px-3 py-2 text-sm text-deck-text outline-none focus:border-deck-accent"
           />
@@ -896,9 +1102,15 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
             )}
             <button
               onClick={send}
-              disabled={!draft.trim() && !attachments.length}
+              disabled={intelligencePreparing || (!draft.trim() && !attachments.length) || (
+                intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && busy && !attachments.length
+                && clientCommand(draft.trim()) === null
+              )}
               className="shrink-0 px-4 h-8 rounded-lg bg-deck-accent text-white text-sm font-medium disabled:opacity-40"
-              title={busy ? '현재 답변이 끝나면 이어서 처리됩니다' : undefined}
+              title={intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && busy && !attachments.length
+                && clientCommand(draft.trim()) === null
+                ? '현재 cloud turn이 끝난 뒤 Hybrid를 실행할 수 있습니다'
+                : busy ? '현재 답변이 끝나면 이어서 처리됩니다' : undefined}
             >
               {busy ? '이어서' : '보내기'}
             </button>

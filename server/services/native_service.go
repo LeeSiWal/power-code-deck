@@ -702,20 +702,28 @@ func (s *NativeService) emit(sess *nativeSession, ev *StreamEvent) {
 
 // Send delivers a user turn to a running session.
 func (s *NativeService) Send(sessionID, text string) error {
+	return s.SendWithDisplayText(sessionID, text, text)
+}
+
+// SendWithDisplayText lets a middleware layer enrich what the native driver sees
+// without leaking that transport prompt into chat history. Local Intelligence uses
+// this for its advisory context pack: Codex/Claude receive the optimized prompt,
+// while the user still sees the task they actually typed.
+func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText string) error {
 	s.mu.RLock()
 	sess := s.sessions[sessionID]
 	s.mu.RUnlock()
 	if sess == nil {
 		return fmt.Errorf("native session %s is not running", sessionID)
 	}
-	if err := sess.driver.Send(text); err != nil {
+	if err := sess.driver.Send(driverText); err != nil {
 		return err
 	}
 	// Record the user turn in history NOW — at its real position, before the reply
 	// arrives — instead of relying on the CLI to echo it back (that echo can land
 	// after the assistant's response, flipping the order). This is also what keeps
 	// the user's half of the conversation across a reconnect.
-	s.emit(sess, nativeTextEvent("user", text))
+	s.emit(sess, nativeTextEvent("user", displayText))
 	return nil
 }
 

@@ -9,6 +9,7 @@ import {
   savedEstimatedTokens,
   savingsState,
 } from './savings';
+import { cloudTargetName, type NativeDriverName } from './executionRouting';
 
 function sessionOutcome(trace: IntelligenceTrace): string {
   const state = savingsState(trace);
@@ -19,7 +20,9 @@ function sessionOutcome(trace: IntelligenceTrace): string {
   return 'Savings unavailable';
 }
 
-export function SessionSavingsSummary({ agentId, refreshKey }: { agentId: string; refreshKey: number }) {
+export function SessionSavingsSummary({
+  agentId, refreshKey, driver,
+}: { agentId: string; refreshKey: number; driver: NativeDriverName }) {
   const [trace, setTrace] = useState<IntelligenceTrace | null>(null);
   const [detail, setDetail] = useState<IntelligenceTrace | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -74,8 +77,13 @@ export function SessionSavingsSummary({ agentId, refreshKey }: { agentId: string
             <span className="truncate text-[11px] text-deck-accent-light">{sessionOutcome(trace)}</span>
           </span>
           <span className="mt-0.5 flex min-w-0 items-center gap-2">
+            {trace.provider && (
+              <span className="min-w-0 truncate text-[10px] text-deck-text-dim">
+                {trace.provider} → {trace.mode === 'LOCAL_ONLY' ? 'Local result' : cloudTargetName(driver)}
+              </span>
+            )}
             {saved !== null && (
-              <span className="truncate text-[10px] text-deck-text-dim">
+              <span className="shrink-0 text-[10px] text-deck-text-dim">
                 {formatEstimatedTokens(trace.rawEstimatedTokens)} → {formatEstimatedTokens(trace.optimizedEstimatedTokens)} est. context
               </span>
             )}

@@ -191,6 +191,61 @@ func TestCloudOnlyPreservesPromptExactly(t *testing.T) {
 	}
 }
 
+func TestNativeSendWithDisplayTextRoutesOnceAndPreservesUserTask(t *testing.T) {
+	_, driver, _ := intelligenceRunFixture(t)
+	native := NewNativeService("http://127.0.0.1:0")
+	native.sessions["a1"] = &nativeSession{id: "a1", kind: "claude", driver: driver}
+
+	if err := native.SendWithDisplayText("a1", "optimized transport prompt", "original user task"); err != nil {
+		t.Fatal(err)
+	}
+	if len(driver.sent) != 1 || driver.sent[0] != "optimized transport prompt" {
+		t.Fatalf("driver received %q, want one optimized prompt", driver.sent)
+	}
+	history := native.History("a1")
+	if len(history) != 1 || history[0].Message == nil || len(history[0].Message.Content) != 1 || history[0].Message.Content[0].Text != "original user task" {
+		t.Fatalf("chat history did not preserve the original task: %#v", history)
+	}
+}
+
+func TestHybridRoutesOptimizedPromptOnceAndDisplaysOriginalTask(t *testing.T) {
+	svc, driver, dir := intelligenceRunFixture(t)
+	largeSource := "package main\n" + strings.Repeat("// repository context for hybrid preprocessing\n", 1000) + "func main() {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(largeSource), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.providers.Upsert(LocalProvider{
+		Name: "local", Type: "ollama", BaseURL: "http://local.test", Model: "test-model", TimeoutMS: 1000, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pack := "TASK x FILES main.go SYMBOLS main CALL FLOW main LIKELY CHANGE POINTS none TESTS none UNCERTAINTIES none"
+	svc.providers.httpClient = func(time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			body := `{"response":"` + pack + `","prompt_eval_count":100,"eval_count":25}`
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+		})}
+	}
+
+	const task = "explain the repository entry point"
+	result, err := svc.Run(context.Background(), IntelligenceRunRequest{
+		AgentID: "a1", Task: task, Mode: ModeLocalPreprocessCloud, Provider: "local",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Dispatched || result.Trace.Fallback || result.Trace.OptimizedTokens >= result.Trace.RawTokens {
+		t.Fatalf("hybrid preprocessing was not validated: %#v", result.Trace)
+	}
+	if len(driver.sent) != 1 || !strings.Contains(driver.sent[0], pack) || !strings.Contains(driver.sent[0], task) {
+		t.Fatalf("driver did not receive exactly one optimized advisory prompt: %q", driver.sent)
+	}
+	history := svc.native.History("a1")
+	if len(history) != 1 || history[0].Message == nil || history[0].Message.Content[0].Text != task {
+		t.Fatalf("hybrid chat history exposed the transport prompt: %#v", history)
+	}
+}
+
 func TestHybridLocalFailureRecordsFallbackAndContinuesCloud(t *testing.T) {
 	svc, driver, _ := intelligenceRunFixture(t)
 	result, err := svc.Run(context.Background(), IntelligenceRunRequest{

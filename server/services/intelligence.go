@@ -585,7 +585,7 @@ func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunReques
 		return result, fmt.Errorf("agent not found")
 	}
 	if req.Mode == ModeCloudOnly {
-		return s.dispatchCloud(result, req.Task, false)
+		return s.dispatchCloud(result, req.Task, req.Task, false)
 	}
 	if req.Mode == ModeLocalOnly && !localOnlyAllowed(req.Operation) {
 		t.Status, t.ErrorCode = "FAILED", ErrValidation
@@ -638,7 +638,7 @@ func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunReques
 		return result, nil
 	}
 	cloudPrompt := "PowerCodeDeck generated the following LOCAL context pack. Treat it as advisory, verify it against the repository, and inspect additional files whenever needed.\n\n" + pack + "\n\nUSER TASK\n" + req.Task
-	return s.dispatchCloud(result, cloudPrompt, false)
+	return s.dispatchCloud(result, cloudPrompt, req.Task, false)
 }
 
 func localOnlyAllowed(op string) bool {
@@ -680,14 +680,14 @@ func (s *IntelligenceService) localFailure(result IntelligenceRunResult, req Int
 	if req.Mode == ModeLocalPreprocessCloud {
 		t.Fallback = true
 		addTrace(t, "fallback", "CLOUD_ONLY", map[string]any{"reason": code})
-		return s.dispatchCloud(result, req.Task, true)
+		return s.dispatchCloud(result, req.Task, req.Task, true)
 	}
 	t.Status = "FAILED"
 	s.saveTrace(*t)
 	return result, err
 }
 
-func (s *IntelligenceService) dispatchCloud(result IntelligenceRunResult, prompt string, fallback bool) (IntelligenceRunResult, error) {
+func (s *IntelligenceService) dispatchCloud(result IntelligenceRunResult, prompt, displayTask string, fallback bool) (IntelligenceRunResult, error) {
 	t := &result.Trace
 	addTrace(t, "cloud_execution", "STARTED", map[string]any{"driver": "codex_or_claude_native"})
 	if s.native == nil {
@@ -703,7 +703,7 @@ func (s *IntelligenceService) dispatchCloud(result IntelligenceRunResult, prompt
 	s.mu.Lock()
 	s.pending[t.AgentID] = t.ID
 	s.mu.Unlock()
-	if err := s.native.Send(t.AgentID, prompt); err != nil {
+	if err := s.native.SendWithDisplayText(t.AgentID, prompt, displayTask); err != nil {
 		s.mu.Lock()
 		if s.pending[t.AgentID] == t.ID {
 			delete(s.pending, t.AgentID)

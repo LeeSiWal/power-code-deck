@@ -48,6 +48,20 @@ export interface IntelligenceTrace {
   createdAt: string;
 }
 
+export interface IntelligenceRunResult {
+  trace: IntelligenceTrace;
+  contextPack?: string;
+  files?: string[];
+  cloudDispatched: boolean;
+}
+
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly data?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 function getToken(): string | null {
   return localStorage.getItem('accessToken');
 }
@@ -108,7 +122,7 @@ async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promi
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || res.statusText);
+    throw new ApiError(err.error || res.statusText, res.status, err);
   }
 
   if (res.status === 204) return undefined as T;
@@ -334,9 +348,9 @@ export const api = {
   localProviderHealth: (name: string) =>
     apiFetch<ProviderHealth>(`/intelligence/providers/${encodeURIComponent(name)}/health`, { method: 'POST' }),
   runIntelligence: (request: {
-    agentId: string; task: string; mode: 'CLOUD_ONLY' | 'LOCAL_PREPROCESS_CLOUD' | 'LOCAL_ONLY';
+    agentId: string; task: string; mode: IntelligenceMode;
     provider?: string; operation?: string;
-  }) => apiFetch('/intelligence/run', { method: 'POST', body: JSON.stringify(request) }),
+  }) => apiFetch<IntelligenceRunResult>('/intelligence/run', { method: 'POST', body: JSON.stringify(request) }),
   intelligenceTraces: (limit = 50) =>
     apiFetch<IntelligenceTrace[]>(`/intelligence/traces?limit=${limit}`),
   intelligenceTrace: (id: string) =>
