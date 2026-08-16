@@ -1,0 +1,225 @@
+package services
+
+import (
+	"context"
+	"database/sql"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+func intelligenceTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(`CREATE TABLE local_ai_providers (
+		name TEXT PRIMARY KEY,type TEXT,base_url TEXT,model TEXT,timeout_ms INTEGER,
+		enabled BOOLEAN,updated_at TEXT DEFAULT (datetime('now')))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func intelligenceRunTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db := intelligenceTestDB(t)
+	_, err := db.Exec(`CREATE TABLE agents (
+		id TEXT PRIMARY KEY,preset TEXT,name TEXT,tmux_session TEXT,working_dir TEXT,
+		command TEXT,args TEXT,status TEXT,color_hue INTEGER,color_name TEXT,
+		created_at TEXT,updated_at TEXT);
+	CREATE TABLE intelligence_traces (
+		id TEXT PRIMARY KEY,agent_id TEXT,mode TEXT,status TEXT,provider TEXT,model TEXT,
+		raw_tokens INTEGER,optimized_tokens INTEGER,local_tokens INTEGER,latency_ms INTEGER,
+		error_code TEXT,fallback BOOLEAN,events_json TEXT,created_at TEXT,updated_at TEXT)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+type intelligenceFakeDriver struct {
+	sent   []string
+	events chan *StreamEvent
+}
+
+func (d *intelligenceFakeDriver) Start() error                   { return nil }
+func (d *intelligenceFakeDriver) Events() <-chan *StreamEvent    { return d.events }
+func (d *intelligenceFakeDriver) Send(s string) error            { d.sent = append(d.sent, s); return nil }
+func (d *intelligenceFakeDriver) Interrupt() error               { return nil }
+func (d *intelligenceFakeDriver) ConversationID() string         { return "fake" }
+func (d *intelligenceFakeDriver) Stop()                          {}
+func (d *intelligenceFakeDriver) SetPermissionMode(string) error { return nil }
+
+func intelligenceRunFixture(t *testing.T) (*IntelligenceService, *intelligenceFakeDriver, string) {
+	t.Helper()
+	dir := t.TempDir()
+	cmd := exec.Command("git", "-C", dir, "init")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "-C", dir, "add", ".")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, out)
+	}
+	db := intelligenceRunTestDB(t)
+	_, err := db.Exec(`INSERT INTO agents VALUES('a1','codex-cli','n','pcd-a1',?,'codex','[]','running',220,'blue','','')`, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents := NewAgentService(db, nil)
+	driver := &intelligenceFakeDriver{events: make(chan *StreamEvent)}
+	native := NewNativeService("http://127.0.0.1:0")
+	native.sessions["a1"] = &nativeSession{id: "a1", kind: "codex", cwd: dir, driver: driver}
+	registry := NewProviderRegistry(db)
+	return NewIntelligenceService(db, registry, agents, native), driver, dir
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestProviderHealthProvesAllOllamaStages(t *testing.T) {
+	r := NewProviderRegistry(intelligenceTestDB(t))
+	if _, err := r.Upsert(LocalProvider{Name: "remote", Type: "ollama", BaseURL: "http://100.64.0.8:11434", Model: "qwen-coder", TimeoutMS: 1000, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	r.dial = func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go b.Close()
+		return a, nil
+	}
+	r.httpClient = func(time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body := `{"models":[{"name":"qwen-coder:latest"}]}`
+			if strings.HasSuffix(req.URL.Path, "/api/generate") {
+				body = `{"response":"OK","prompt_eval_count":4,"eval_count":1}`
+			}
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+		})}
+	}
+	h := r.Health(context.Background(), "remote")
+	if !h.Reachable || !h.APIHealthy || !h.ModelAvailable || !h.GenerationTest {
+		t.Fatalf("health stages were not independently proven: %#v", h)
+	}
+}
+
+func TestProviderHealthDistinguishesMissingModel(t *testing.T) {
+	r := NewProviderRegistry(intelligenceTestDB(t))
+	_, _ = r.Upsert(LocalProvider{Name: "remote", Type: "ollama", BaseURL: "http://host:11434", Model: "missing", TimeoutMS: 1000, Enabled: true})
+	r.dial = func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go b.Close()
+		return a, nil
+	}
+	r.httpClient = func(time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"models":[{"name":"other:latest"}]}`)), Header: make(http.Header)}, nil
+		})}
+	}
+	h := r.Health(context.Background(), "remote")
+	if !h.Reachable || !h.APIHealthy || h.ModelAvailable || h.GenerationTest || h.ErrorCode != ErrModelUnavailable {
+		t.Fatalf("missing model was flattened into the wrong state: %#v", h)
+	}
+}
+
+func TestBuildCandidateContextUsesRealGitRepositoryData(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("init")
+	run("config", "user.email", "test@example.invalid")
+	run("config", "user.name", "PCD Test")
+	if err := os.WriteFile(filepath.Join(dir, "token_service.go"), []byte("package token\n\nfunc RefreshToken() string { return \"fresh\" }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "token_service_test.go"), []byte("package token\n\nfunc TestRefreshToken() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "add token service")
+
+	c, err := BuildCandidateContext(context.Background(), dir, "fix refresh token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.EstimatedTokens <= 0 || !strings.Contains(c.Text, "RefreshToken") || len(c.Files) == 0 {
+		t.Fatalf("candidate context did not come from repository content: %#v", c)
+	}
+}
+
+func TestEstimatedTokenMeasurementAndPackValidation(t *testing.T) {
+	if got := EstimateTokens("12345"); got != 2 {
+		t.Fatalf("EstimateTokens = %d, want 2", got)
+	}
+	pack := "TASK\nx\nFILES\na\nSYMBOLS\nb\nCALL FLOW\nc\nLIKELY CHANGE POINTS\nd\nTESTS\ne\nUNCERTAINTIES\nf"
+	if !validContextPack(pack) {
+		t.Fatal("valid structured pack rejected")
+	}
+	if validContextPack("TASK only") {
+		t.Fatal("unstructured pack accepted")
+	}
+}
+
+func TestCloudOnlyPreservesPromptExactly(t *testing.T) {
+	svc, driver, _ := intelligenceRunFixture(t)
+	result, err := svc.Run(context.Background(), IntelligenceRunRequest{AgentID: "a1", Task: "original task", Mode: ModeCloudOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Dispatched || len(driver.sent) != 1 || driver.sent[0] != "original task" {
+		t.Fatalf("CLOUD_ONLY changed the baseline prompt: %#v sent=%q", result, driver.sent)
+	}
+}
+
+func TestHybridLocalFailureRecordsFallbackAndContinuesCloud(t *testing.T) {
+	svc, driver, _ := intelligenceRunFixture(t)
+	result, err := svc.Run(context.Background(), IntelligenceRunRequest{
+		AgentID: "a1", Task: "explain main", Mode: ModeLocalPreprocessCloud, Provider: "missing-provider",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Dispatched || !result.Trace.Fallback || result.Trace.ErrorCode != ErrProviderUnreachable {
+		t.Fatalf("fallback was hidden or cloud did not continue: %#v", result.Trace)
+	}
+	if len(driver.sent) != 1 || driver.sent[0] != "explain main" {
+		t.Fatalf("fallback did not preserve the original cloud task: %q", driver.sent)
+	}
+}
+
+// Opt-in evidence run against a real checkout. It intentionally stops before
+// local inference; a remote provider must supply the optimized half honestly.
+func TestLiveRepositoryCandidateMeasurement(t *testing.T) {
+	dir := os.Getenv("PCD_POC_REPO")
+	if dir == "" {
+		t.Skip("set PCD_POC_REPO to measure a real repository")
+	}
+	c, err := BuildCandidateContext(context.Background(), dir, "audit Codex execution and build the Local Intelligence context reduction POC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("repository=%s candidateFiles=%d rawBytes=%d rawEstimatedTokens=%d", dir, len(c.Files), c.Bytes, c.EstimatedTokens)
+	if c.EstimatedTokens == 0 || len(c.Files) == 0 {
+		t.Fatal("real repository produced no candidate context")
+	}
+}

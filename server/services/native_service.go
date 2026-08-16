@@ -82,6 +82,7 @@ type NativeService struct {
 	// onEvent/onApproval are set by the hub at wiring time.
 	onEvent    func(sessionID string, ev *StreamEvent)
 	onApproval func(PermissionRequest)
+	observers  []func(sessionID string, ev *StreamEvent)
 
 	// onSessionID records Claude's own conversation id when a session announces it,
 	// so a later open can --resume instead of starting from nothing. Injected
@@ -281,6 +282,18 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 			fn(req)
 		}
 	})
+}
+
+// AddEventObserver adds a read-only observer without replacing the Hub fan-out.
+// Local Intelligence uses this to turn a dispatched trace into CLOUD_COMPLETED
+// when the native driver emits its real turn boundary.
+func (s *NativeService) AddEventObserver(fn func(string, *StreamEvent)) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	s.observers = append(s.observers, fn)
+	s.mu.Unlock()
 }
 
 // autoDecision applies the auto-approval policy for the request's session.
@@ -677,9 +690,13 @@ func (s *NativeService) emit(sess *nativeSession, ev *StreamEvent) {
 
 	s.mu.RLock()
 	fn := s.onEvent
+	observers := append([]func(string, *StreamEvent){}, s.observers...)
 	s.mu.RUnlock()
 	if fn != nil {
 		fn(sess.id, ev)
+	}
+	for _, observe := range observers {
+		observe(sess.id, ev)
 	}
 }
 

@@ -182,5 +182,37 @@ func Migrate(db *sql.DB) error {
 		UNIQUE(working_dir, tool_name, target)
 	)`)
 
+	// Local Intelligence POC. Provider addresses are runtime data because the model
+	// commonly runs on another LAN/Tailscale machine. Traces deliberately contain
+	// measurements and state transitions only — never prompts, context, credentials,
+	// or provider response bodies.
+	db.Exec(`CREATE TABLE IF NOT EXISTS local_ai_providers (
+		name       TEXT PRIMARY KEY,
+		type       TEXT NOT NULL,
+		base_url   TEXT NOT NULL,
+		model      TEXT NOT NULL,
+		timeout_ms INTEGER NOT NULL DEFAULT 30000,
+		enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS intelligence_traces (
+		id               TEXT PRIMARY KEY,
+		agent_id         TEXT NOT NULL DEFAULT '',
+		mode             TEXT NOT NULL,
+		status           TEXT NOT NULL,
+		provider         TEXT NOT NULL DEFAULT '',
+		model            TEXT NOT NULL DEFAULT '',
+		raw_tokens       INTEGER NOT NULL DEFAULT 0,
+		optimized_tokens INTEGER NOT NULL DEFAULT 0,
+		local_tokens     INTEGER NOT NULL DEFAULT 0,
+		latency_ms       INTEGER NOT NULL DEFAULT 0,
+		error_code       TEXT NOT NULL DEFAULT '',
+		fallback         BOOLEAN NOT NULL DEFAULT FALSE,
+		events_json      TEXT NOT NULL DEFAULT '[]',
+		created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+		updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+	)`)
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_intelligence_traces_created ON intelligence_traces(created_at DESC)")
+
 	return nil
 }

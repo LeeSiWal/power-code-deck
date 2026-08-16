@@ -1,5 +1,26 @@
 const API_BASE = '/api';
 
+export interface LocalProvider {
+  name: string;
+  type: string;
+  baseUrl: string;
+  model: string;
+  timeoutMs: number;
+  enabled: boolean;
+  updatedAt?: string;
+}
+
+export interface ProviderHealth {
+  provider: string;
+  reachable: boolean;
+  apiHealthy: boolean;
+  modelAvailable: boolean;
+  generationTest: boolean;
+  latencyMs: number;
+  errorCode?: string;
+  error?: string;
+}
+
 function getToken(): string | null {
   return localStorage.getItem('accessToken');
 }
@@ -273,6 +294,24 @@ export const api = {
   // 규칙 목록은 페이지 로드 시 한 번, 삭제 후 낙관적으로 제거하므로 재로드 없이 동기화된다.
   listApprovalRules: () => apiFetch<any[]>('/approval-rules'),
   deleteApprovalRule: (id: number) => apiFetch(`/approval-rules/${id}`, { method: 'DELETE' }),
+
+  // Local Intelligence POC. Provider settings are server-side runtime data;
+  // changing a remote endpoint never requires rebuilding the app.
+  listLocalProviders: () => apiFetch<LocalProvider[]>('/intelligence/providers'),
+  putLocalProvider: (provider: LocalProvider) =>
+    apiFetch<LocalProvider>(`/intelligence/providers/${encodeURIComponent(provider.name)}`, {
+      method: 'PUT', body: JSON.stringify(provider),
+    }),
+  deleteLocalProvider: (name: string) =>
+    apiFetch(`/intelligence/providers/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  localProviderHealth: (name: string) =>
+    apiFetch<ProviderHealth>(`/intelligence/providers/${encodeURIComponent(name)}/health`, { method: 'POST' }),
+  runIntelligence: (request: {
+    agentId: string; task: string; mode: 'CLOUD_ONLY' | 'LOCAL_PREPROCESS_CLOUD' | 'LOCAL_ONLY';
+    provider?: string; operation?: string;
+  }) => apiFetch('/intelligence/run', { method: 'POST', body: JSON.stringify(request) }),
+  intelligenceTraces: (limit = 50) => apiFetch(`/intelligence/traces?limit=${limit}`),
+  intelligenceTrace: (id: string) => apiFetch(`/intelligence/traces/${encodeURIComponent(id)}`),
 
   // Notifications
   listNotifications: (agentId?: string) =>

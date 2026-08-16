@@ -1,9 +1,17 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
+	"time"
 )
+
+type testWriteCloser struct{ io.Writer }
+
+func (testWriteCloser) Close() error { return nil }
 
 func TestCodexThreadParamsMapNativeModes(t *testing.T) {
 	tests := []struct {
@@ -23,6 +31,24 @@ func TestCodexThreadParamsMapNativeModes(t *testing.T) {
 		if p["threadId"] != "thread-1" {
 			t.Fatalf("resume id missing for mode %q", tt.mode)
 		}
+	}
+}
+
+func TestCodexCallTimesOutAndRemovesPendingRequest(t *testing.T) {
+	var writes bytes.Buffer
+	d := NewCodexDriver(CodexConfig{})
+	d.stdin = testWriteCloser{Writer: &writes}
+	d.rpcTimeout = 15 * time.Millisecond
+
+	_, err := d.call("initialize", map[string]any{})
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected observable timeout, got %v", err)
+	}
+	if len(d.pending) != 0 {
+		t.Fatalf("timed-out request leaked from pending map: %d", len(d.pending))
+	}
+	if !strings.Contains(writes.String(), `"method":"initialize"`) {
+		t.Fatalf("request was not written before timeout: %q", writes.String())
 	}
 }
 

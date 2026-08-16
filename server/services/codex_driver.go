@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
+	"time"
 
 	"powercodedeck/version"
 )
@@ -36,22 +37,29 @@ type codexRPCMessage struct {
 type CodexDriver struct {
 	cfg CodexConfig
 
-	mu       sync.Mutex
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	stopped  bool
-	nextID   int64
-	pending  map[string]chan codexRPCMessage
-	threadID string
-	turnID   string
-	events   chan *StreamEvent
-	done     chan struct{}
+	mu         sync.Mutex
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	stopped    bool
+	nextID     int64
+	pending    map[string]chan codexRPCMessage
+	threadID   string
+	turnID     string
+	events     chan *StreamEvent
+	done       chan struct{}
+	exitDone   chan struct{}
+	rpcTimeout time.Duration
+	exitErr    error
 }
+
+const defaultCodexRPCTimeout = 30 * time.Second
 
 func NewCodexDriver(cfg CodexConfig) *CodexDriver {
 	return &CodexDriver{
 		cfg: cfg, pending: make(map[string]chan codexRPCMessage),
 		events: make(chan *StreamEvent, 128), done: make(chan struct{}),
+		exitDone: make(chan struct{}),
+		rpcTimeout: defaultCodexRPCTimeout,
 	}
 }
 
@@ -85,6 +93,7 @@ func (d *CodexDriver) Start() error {
 	d.cmd, d.stdin = cmd, stdin
 	d.mu.Unlock()
 	go d.readPump(stdout)
+	go d.waitProcess(cmd)
 
 	if _, err := d.call("initialize", map[string]any{
 		"clientInfo":   map[string]any{"name": version.AppName, "version": version.Version},
@@ -243,14 +252,41 @@ func (d *CodexDriver) call(method string, params any) (json.RawMessage, error) {
 		d.mu.Unlock()
 		return nil, err
 	}
-	msg, ok := <-ch
-	if !ok {
-		return nil, fmt.Errorf("codex app-server exited")
+	timeout := d.rpcTimeout
+	if timeout <= 0 {
+		timeout = defaultCodexRPCTimeout
 	}
-	if len(msg.Error) > 0 && string(msg.Error) != "null" {
-		return nil, fmt.Errorf("%s", msg.Error)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case msg, ok := <-ch:
+		if !ok {
+			select {
+			case <-d.exitDone:
+			default:
+			}
+			d.mu.Lock()
+			exitErr := d.exitErr
+			d.mu.Unlock()
+			if exitErr != nil {
+				return nil, fmt.Errorf("codex app-server exited: %w", exitErr)
+			}
+			return nil, fmt.Errorf("codex app-server exited")
+		}
+		if len(msg.Error) > 0 && string(msg.Error) != "null" {
+			return nil, fmt.Errorf("%s", msg.Error)
+		}
+		return msg.Result, nil
+	case <-timer.C:
+		// Remove only our own still-pending call. A response racing the timer may
+		// already have removed it in readPump, which is harmless.
+		d.mu.Lock()
+		if pending := d.pending[id]; pending == ch {
+			delete(d.pending, id)
+		}
+		d.mu.Unlock()
+		return nil, fmt.Errorf("codex app-server %s timed out after %s", method, timeout)
 	}
-	return msg.Result, nil
 }
 
 func (d *CodexDriver) notify(method string, params any) error {
@@ -304,11 +340,15 @@ func (d *CodexDriver) readPump(stdout io.ReadCloser) {
 		close(ch)
 		delete(d.pending, id)
 	}
-	cmd := d.cmd
 	d.mu.Unlock()
-	if cmd != nil {
-		_ = cmd.Wait()
-	}
+}
+
+func (d *CodexDriver) waitProcess(cmd *exec.Cmd) {
+	err := cmd.Wait()
+	d.mu.Lock()
+	d.exitErr = err
+	d.mu.Unlock()
+	close(d.exitDone)
 }
 
 func (d *CodexDriver) handleRequest(msg codexRPCMessage) {

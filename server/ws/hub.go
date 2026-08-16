@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -638,8 +639,18 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		if h.pushSvc != nil {
 			h.pushSvc.SetActiveDevice(payload.AgentID, c.deviceID)
 		}
+		driver, cwd, err := h.nativeLaunchIdentity(payload.AgentID)
+		if err != nil {
+			log.Printf("native: reject open %s: %v", payload.AgentID, err)
+			c.sendEvent(EventNativeError, NativeErrorPayload{AgentID: payload.AgentID, Message: "세션 정보를 확인하지 못했습니다: " + err.Error()})
+			c.sendEvent(EventNativeState, NativeStatePayload{AgentID: payload.AgentID, Running: false})
+			return
+		}
 		if !h.native.Running(payload.AgentID) {
-			if err := h.native.Start(payload.AgentID, payload.Driver, payload.Cwd, payload.Model, payload.Resume, payload.Mode, payload.Effort); err != nil {
+			// Repository identity, driver kind and resume identity are server-owned.
+			// Model/mode/effort remain client hints only; NativeService replaces them
+			// with persisted values when present.
+			if err := h.native.Start(payload.AgentID, driver, cwd, payload.Model, "", payload.Mode, payload.Effort); err != nil {
 				log.Printf("native: start %s failed: %v", payload.AgentID, err)
 				c.sendEvent(EventNativeError, NativeErrorPayload{
 					AgentID: payload.AgentID,
@@ -841,6 +852,32 @@ func (h *Hub) handleMessage(c *Client, msg WSMessage) {
 		// one that iOS left stuck in the OPEN state.
 		c.sendEvent(EventPong, nil)
 	}
+}
+
+// nativeLaunchIdentity resolves all context-bearing launch metadata from the
+// durable agent row. A WebSocket payload is transport input, not authority: using
+// its cwd/driver/resume fields could attach an agent id to another repository.
+func (h *Hub) nativeLaunchIdentity(agentID string) (driver, cwd string, err error) {
+	if h.agentSvc == nil {
+		return "", "", fmt.Errorf("agent service unavailable")
+	}
+	agent, err := h.agentSvc.Get(agentID)
+	if err != nil {
+		return "", "", fmt.Errorf("agent not found")
+	}
+	cwd, err = services.ResolveWorkingDir(agent.WorkingDir)
+	if err != nil {
+		return "", "", err
+	}
+	switch {
+	case agent.Preset == "codex-cli" || agent.Command == "codex":
+		driver = "codex"
+	case agent.Preset == "claude", agent.Preset == "claude-code", agent.Command == "claude":
+		driver = "claude"
+	default:
+		return "", "", fmt.Errorf("agent is not native-capable")
+	}
+	return driver, cwd, nil
 }
 
 func shellSessionID(agentID string) string { return "shell:" + agentID }
