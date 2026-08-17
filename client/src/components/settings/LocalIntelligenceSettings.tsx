@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type LocalProvider, type ProviderHealth } from '../../lib/api';
 
 const emptyProvider: LocalProvider = {
-  name: 'Mac Studio', type: 'ollama', baseUrl: '', model: '', timeoutMs: 30000, enabled: true,
+  name: 'Mac Studio', type: 'ollama', baseUrl: '', model: '', timeoutMs: 180000, enabled: true,
 };
 
 export function LocalIntelligenceSettings() {
@@ -70,6 +70,7 @@ export function LocalIntelligenceSettings() {
       </label>
       <label className="block text-xs text-deck-text-dim">Timeout (ms)
         <input className={field} type="number" value={form.timeoutMs} onChange={(e) => setForm({ ...form, timeoutMs: Number(e.target.value) })} />
+        <span className="mt-1 block text-[10px] text-deck-text-faint">Large local models may need 120000–300000 ms for cold start and context generation.</span>
       </label>
       <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} /> Enabled</label>
 

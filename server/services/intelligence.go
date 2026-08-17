@@ -30,6 +30,12 @@ const (
 	ModeLocalPreprocessCloud = "LOCAL_PREPROCESS_CLOUD"
 	ModeLocalOnly            = "LOCAL_ONLY"
 
+	defaultProviderTimeoutMS = 180000
+	ollamaContextTokens      = 65536
+	ollamaKeepAlive          = "30m"
+	healthProbeTokens        = 32
+	contextPackTokens        = 1000
+
 	ErrProviderUnreachable = "LOCAL_PROVIDER_UNREACHABLE"
 	ErrModelUnavailable    = "LOCAL_MODEL_UNAVAILABLE"
 	ErrLocalTimeout        = "LOCAL_TIMEOUT"
@@ -98,7 +104,7 @@ func validateProvider(p LocalProvider) (LocalProvider, error) {
 		return p, fmt.Errorf("credentials in baseUrl are not allowed")
 	}
 	if p.TimeoutMS == 0 {
-		p.TimeoutMS = 30000
+		p.TimeoutMS = defaultProviderTimeoutMS
 	}
 	if p.TimeoutMS < 100 || p.TimeoutMS > 300000 {
 		return p, fmt.Errorf("timeoutMs must be between 100 and 300000")
@@ -212,7 +218,7 @@ func (r *ProviderRegistry) Health(ctx context.Context, name string) (h ProviderH
 		h.ErrorCode, h.Error = ErrModelUnavailable, "configured model is not installed"
 		return h
 	}
-	if _, _, err := r.ollamaGenerate(ctx, p, "Reply with OK only.", 2); err != nil {
+	if _, _, err := r.ollamaGenerate(ctx, p, "Reply with OK only.", healthProbeTokens); err != nil {
 		h.ErrorCode, h.Error = classifyLocalError(err), conciseError(err)
 		return h
 	}
@@ -263,7 +269,10 @@ type ollamaGenerateResponse struct {
 func (r *ProviderRegistry) ollamaGenerate(ctx context.Context, p LocalProvider, prompt string, maxTokens int) (string, int, error) {
 	body, _ := json.Marshal(map[string]any{
 		"model": p.Model, "prompt": prompt, "stream": false,
-		"options": map[string]any{"num_predict": maxTokens, "temperature": 0},
+		"keep_alive": ollamaKeepAlive,
+		"options": map[string]any{
+			"num_ctx": ollamaContextTokens, "num_predict": maxTokens, "temperature": 0,
+		},
 	})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, p.BaseURL+"/api/generate", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -333,7 +342,9 @@ type CandidateContext struct {
 const (
 	maxCandidateFiles = 24
 	maxFileBytes      = 24 * 1024
-	maxContextBytes   = 256 * 1024
+	// Leave room inside the 64k Ollama window for instructions, tokenizer
+	// variance, and the generated context pack itself.
+	maxContextBytes = 192 * 1024
 )
 
 // EstimateTokens is explicitly an estimate: Unicode code points / 4, rounded
@@ -611,7 +622,7 @@ func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunReques
 	addTrace(t, "local_request", "STARTED", map[string]any{"provider": p.Name, "model": p.Model})
 	prompt := contextPackPrompt(req.Task, candidate.Text)
 	started := time.Now()
-	pack, localTokens, err := s.providers.ollamaGenerate(ctx, p, prompt, 1800)
+	pack, localTokens, err := s.providers.ollamaGenerate(ctx, p, prompt, contextPackTokens)
 	t.LatencyMS = time.Since(started).Milliseconds()
 	if err != nil {
 		return s.localFailure(result, req, classifyLocalError(err), err)

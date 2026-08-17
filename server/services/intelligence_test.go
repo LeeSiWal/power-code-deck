@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -94,6 +95,53 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestProviderDefaultsToLongGenerationTimeout(t *testing.T) {
+	p, err := validateProvider(LocalProvider{
+		Name: "local", Type: "ollama", BaseURL: "http://local.test", Model: "coder", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TimeoutMS != 180000 {
+		t.Fatalf("default timeout = %d, want 180000", p.TimeoutMS)
+	}
+}
+
+func TestOllamaGenerateBoundsContextAndKeepsModelWarm(t *testing.T) {
+	r := NewProviderRegistry(intelligenceTestDB(t))
+	var payload struct {
+		Stream    bool   `json:"stream"`
+		KeepAlive string `json:"keep_alive"`
+		Options   struct {
+			NumCtx     int `json:"num_ctx"`
+			NumPredict int `json:"num_predict"`
+		} `json:"options"`
+	}
+	r.httpClient = func(timeout time.Duration) *http.Client {
+		if timeout != 2*time.Second {
+			t.Fatalf("HTTP timeout = %s, want 2s", timeout)
+		}
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"response":"OK","prompt_eval_count":4,"eval_count":1}`)), Header: make(http.Header)}, nil
+		})}
+	}
+	response, _, err := r.ollamaGenerate(context.Background(), LocalProvider{
+		BaseURL: "http://local.test", Model: "coder", TimeoutMS: 2000,
+	}, "probe", 777)
+	if err != nil || response != "OK" {
+		t.Fatalf("generation = %q, %v", response, err)
+	}
+	if payload.Stream || payload.KeepAlive != "30m" {
+		t.Fatalf("unexpected transport options: %#v", payload)
+	}
+	if payload.Options.NumCtx != 65536 || payload.Options.NumPredict != 777 {
+		t.Fatalf("unexpected generation options: %#v", payload.Options)
+	}
+}
+
 func TestProviderHealthProvesAllOllamaStages(t *testing.T) {
 	r := NewProviderRegistry(intelligenceTestDB(t))
 	if _, err := r.Upsert(LocalProvider{Name: "remote", Type: "ollama", BaseURL: "http://100.64.0.8:11434", Model: "qwen-coder", TimeoutMS: 1000, Enabled: true}); err != nil {
@@ -170,6 +218,9 @@ func TestBuildCandidateContextUsesRealGitRepositoryData(t *testing.T) {
 func TestEstimatedTokenMeasurementAndPackValidation(t *testing.T) {
 	if got := EstimateTokens("12345"); got != 2 {
 		t.Fatalf("EstimateTokens = %d, want 2", got)
+	}
+	if EstimateTokens(strings.Repeat("x", maxContextBytes))+contextPackTokens >= ollamaContextTokens {
+		t.Fatal("candidate context leaves no room for instructions and generated output")
 	}
 	pack := "TASK\nx\nFILES\na\nSYMBOLS\nb\nCALL FLOW\nc\nLIKELY CHANGE POINTS\nd\nTESTS\ne\nUNCERTAINTIES\nf"
 	if !validContextPack(pack) {

@@ -1,6 +1,9 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"errors"
+)
 
 const schema = `
 CREATE TABLE IF NOT EXISTS agents (
@@ -191,10 +194,13 @@ func Migrate(db *sql.DB) error {
 		type       TEXT NOT NULL,
 		base_url   TEXT NOT NULL,
 		model      TEXT NOT NULL,
-		timeout_ms INTEGER NOT NULL DEFAULT 30000,
+		timeout_ms INTEGER NOT NULL DEFAULT 180000,
 		enabled    BOOLEAN NOT NULL DEFAULT TRUE,
 		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 	)`)
+	if err := migrateLocalProviderTimeout(db); err != nil {
+		return err
+	}
 	db.Exec(`CREATE TABLE IF NOT EXISTS intelligence_traces (
 		id               TEXT PRIMARY KEY,
 		agent_id         TEXT NOT NULL DEFAULT '',
@@ -215,4 +221,33 @@ func Migrate(db *sql.DB) error {
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_intelligence_traces_created ON intelligence_traces(created_at DESC)")
 
 	return nil
+}
+
+// The original Local Intelligence POC used 30 seconds for both a network check
+// and an entire non-streaming Ollama generation. That is too short for a cold
+// 30B model and a repository-sized prompt. Upgrade only the old default once;
+// after the marker is written, an explicit user choice of 30000 is preserved.
+func migrateLocalProviderTimeout(db *sql.DB) error {
+	const marker = "local_intelligence_timeout_v2"
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var value string
+	err = tx.QueryRow("SELECT value FROM app_config WHERE key=?", marker).Scan(&value)
+	if err == nil {
+		return tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if _, err := tx.Exec("UPDATE local_ai_providers SET timeout_ms=180000 WHERE timeout_ms=30000"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("INSERT INTO app_config(key,value) VALUES(?,?)", marker, "180000"); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
