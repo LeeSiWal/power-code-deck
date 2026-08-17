@@ -5,6 +5,8 @@ import {
   formatEstimatedTokens,
   formatLatency,
   formatReduction,
+  cloudFailureCode,
+  localFailureCode,
   savedEstimatedTokens,
   savingsState,
 } from './savings';
@@ -22,12 +24,15 @@ export function SavingsSummary({ trace }: { trace: IntelligenceTrace }) {
   const state = savingsState(trace);
 
   if (state === 'fallback') {
+    const localError = localFailureCode(trace);
+    const cloudError = cloudFailureCode(trace);
     return (
       <div className="rounded-lg border border-deck-warning/30 bg-deck-warning/5 p-3">
-        <div className="text-xs font-medium text-deck-warning">Local optimization unavailable</div>
+        <div className="text-xs font-medium text-deck-warning">{cloudError ? 'Cloud fallback failed' : 'Local optimization unavailable'}</div>
         <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-          <span className="text-deck-text-dim">Fallback</span><span>Cloud only</span>
-          <span className="text-deck-text-dim">Reason</span><span className="break-all font-mono text-[11px]">{trace.errorCode || 'Unknown'}</span>
+          <span className="text-deck-text-dim">Local reason</span><span className="break-all font-mono text-[11px]">{localError || 'Unknown'}</span>
+          <span className="text-deck-text-dim">Cloud fallback</span><span>{cloudError ? 'Failed' : 'Started'}</span>
+          {cloudError && <><span className="text-deck-text-dim">Cloud error</span><span className="break-all font-mono text-[11px]">{cloudError}</span></>}
         </div>
         <div className="mt-2"><TraceStatus trace={trace} /></div>
       </div>
@@ -45,10 +50,11 @@ export function SavingsSummary({ trace }: { trace: IntelligenceTrace }) {
   }
 
   if (state === 'unavailable') {
+    const cloudError = cloudFailureCode(trace);
     return (
       <div className="rounded-lg border border-deck-border bg-deck-bg/40 p-3">
-        <div className="text-xs font-medium">Savings unavailable</div>
-        <div className="mt-1 text-xs text-deck-text-dim">No validated reduction</div>
+        <div className="text-xs font-medium">{cloudError === 'NATIVE_SESSION_NOT_READY' ? 'Native session not ready' : 'Savings unavailable'}</div>
+        <div className="mt-1 text-xs text-deck-text-dim">{cloudError || 'No validated reduction'}</div>
         <div className="mt-2"><TraceStatus trace={trace} /></div>
       </div>
     );

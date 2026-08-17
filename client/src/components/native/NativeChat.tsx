@@ -21,6 +21,7 @@ import { ExecutionModeControl } from '../intelligence/ExecutionModeControl';
 import {
   clientCommand, cloudTargetName, routeNativeTask, type LocalOperation,
 } from '../intelligence/executionRouting';
+import { cloudFailureCode, localFailureCode } from '../intelligence/savings';
 
 /**
  * NativeChat — a Claude session rendered from its event stream instead of a
@@ -73,6 +74,8 @@ function localErrorLabel(code?: string): string {
     LOCAL_TIMEOUT: 'Local preprocessing timed out.',
     LOCAL_GENERATION_FAILED: 'Local context generation failed.',
     CONTEXT_BUILD_FAILED: 'Repository context could not be prepared.',
+    CLOUD_EXECUTION_FAILED: 'Cloud fallback could not start.',
+    NATIVE_SESSION_NOT_READY: 'The native cloud session is not ready.',
     VALIDATION_FAILED: 'Local Intelligence rejected this task.',
   };
   return code ? labels[code] || code : 'Local Intelligence request failed.';
@@ -584,6 +587,10 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       setError('Wait for the current cloud turn to finish before starting another Hybrid run.');
       return;
     }
+    if (intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && !running && !hasAttachments && !isNativeCommand) {
+      setError(`Wait for the ${cloudTargetName(driver)} session to be ready before starting a Hybrid run.`);
+      return;
+    }
     if (intelligenceMode !== 'CLOUD_ONLY' && !hasAttachments && !isNativeCommand) {
       if (providersLoading) {
         setError('Local Intelligence providers are still loading.');
@@ -651,7 +658,11 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     } catch (err) {
       const failedTrace = traceFromApiError(err);
       if (failedTrace) setIntelligenceRefreshKey((key) => key + 1);
-      setError(`${localErrorLabel(failedTrace?.errorCode)} The task was not sent.`);
+      const localCode = failedTrace ? localFailureCode(failedTrace) : undefined;
+      const cloudCode = failedTrace ? cloudFailureCode(failedTrace) : undefined;
+      setError(localCode && cloudCode
+        ? `${localErrorLabel(localCode)} ${localErrorLabel(cloudCode)} The task was not sent.`
+        : `${localErrorLabel(localCode || cloudCode || failedTrace?.errorCode)} The task was not sent.`);
       setDraft(text);
       setAttachments(originalAttachments);
     } finally {
@@ -659,7 +670,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     }
   }, [
     agentId, attachments, busy, draft, driver, intelligenceMode, intelligencePreparing,
-    localOperation, localProvider, localProviders, markJustSent, navigate, providersLoading, sendText,
+    localOperation, localProvider, localProviders, markJustSent, navigate, providersLoading, running, sendText,
   ]);
 
   const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string, remember?: boolean) => {
@@ -1103,11 +1114,14 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
             <button
               onClick={send}
               disabled={intelligencePreparing || (!draft.trim() && !attachments.length) || (
-                intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && busy && !attachments.length
+                intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && (busy || !running) && !attachments.length
                 && clientCommand(draft.trim()) === null
               )}
               className="shrink-0 px-4 h-8 rounded-lg bg-deck-accent text-white text-sm font-medium disabled:opacity-40"
-              title={intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && busy && !attachments.length
+              title={intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && !running && !attachments.length
+                && clientCommand(draft.trim()) === null
+                ? `${cloudTargetName(driver)} 세션이 준비된 뒤 Hybrid를 실행할 수 있습니다`
+                : intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && busy && !attachments.length
                 && clientCommand(draft.trim()) === null
                 ? '현재 cloud turn이 끝난 뒤 Hybrid를 실행할 수 있습니다'
                 : busy ? '현재 답변이 끝나면 이어서 처리됩니다' : undefined}

@@ -29,6 +29,28 @@ export function savingsState(trace: IntelligenceTrace): SavingsState {
   return trace.mode === 'LOCAL_PREPROCESS_CLOUD' ? 'validated' : 'unavailable';
 }
 
+function eventErrorCode(trace: IntelligenceTrace, stage: string): string | undefined {
+  const event = trace.events.find((item) => item.stage === stage && item.status === 'FAILED');
+  const code = event?.details?.errorCode;
+  return typeof code === 'string' && code ? code : undefined;
+}
+
+export function localFailureCode(trace: IntelligenceTrace): string | undefined {
+  const local = eventErrorCode(trace, 'local_processing');
+  if (local) return local;
+  const fallback = trace.events.find((item) => item.stage === 'fallback')?.details?.reason;
+  return typeof fallback === 'string' && fallback ? fallback : undefined;
+}
+
+export function cloudFailureCode(trace: IntelligenceTrace): string | undefined {
+  const cloud = eventErrorCode(trace, 'cloud_execution');
+  if (cloud) return cloud;
+  if (trace.errorCode === 'CLOUD_EXECUTION_FAILED' || trace.errorCode === 'NATIVE_SESSION_NOT_READY') {
+    return trace.errorCode;
+  }
+  return undefined;
+}
+
 export function savedEstimatedTokens(trace: IntelligenceTrace): number | null {
   if (!hasValidReduction(trace) || trace.fallback || trace.mode === 'CLOUD_ONLY') return null;
   return trace.rawEstimatedTokens - trace.optimizedEstimatedTokens;

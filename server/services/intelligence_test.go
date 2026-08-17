@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -52,13 +53,17 @@ func intelligenceRunTestDB(t *testing.T) *sql.DB {
 }
 
 type intelligenceFakeDriver struct {
-	sent   []string
-	events chan *StreamEvent
+	sent    []string
+	events  chan *StreamEvent
+	sendErr error
 }
 
-func (d *intelligenceFakeDriver) Start() error                   { return nil }
-func (d *intelligenceFakeDriver) Events() <-chan *StreamEvent    { return d.events }
-func (d *intelligenceFakeDriver) Send(s string) error            { d.sent = append(d.sent, s); return nil }
+func (d *intelligenceFakeDriver) Start() error                { return nil }
+func (d *intelligenceFakeDriver) Events() <-chan *StreamEvent { return d.events }
+func (d *intelligenceFakeDriver) Send(s string) error {
+	d.sent = append(d.sent, s)
+	return d.sendErr
+}
 func (d *intelligenceFakeDriver) Interrupt() error               { return nil }
 func (d *intelligenceFakeDriver) ConversationID() string         { return "fake" }
 func (d *intelligenceFakeDriver) Stop()                          {}
@@ -210,8 +215,47 @@ func TestBuildCandidateContextUsesRealGitRepositoryData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.EstimatedTokens <= 0 || !strings.Contains(c.Text, "RefreshToken") || len(c.Files) == 0 {
+	if c.Source != "git" || c.EstimatedTokens <= 0 || !strings.Contains(c.Text, "RefreshToken") || len(c.Files) == 0 {
 		t.Fatalf("candidate context did not come from repository content: %#v", c)
+	}
+}
+
+func TestBuildCandidateContextFallsBackToSafeFilesystemScan(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("package.json", `{"name":"meetjul"}`)
+	write("src/app/main.ts", "export function MeetjulMain() { return 'safe source' }\n")
+	write("node_modules/dependency/index.js", "DO_NOT_INCLUDE_DEPENDENCY")
+	write(".env", "SECRET_TOKEN=do-not-include")
+	write("credentials.json", `{"token":"do-not-include"}`)
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("DO_NOT_FOLLOW_SYMLINK"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "linked.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := BuildCandidateContext(context.Background(), dir, "explain MeetjulMain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Source != "filesystem" || !strings.Contains(c.Text, "MeetjulMain") || !strings.Contains(c.Text, "package.json") {
+		t.Fatalf("filesystem context missing project source: %#v\n%s", c, c.Text)
+	}
+	for _, forbidden := range []string{"DO_NOT_INCLUDE_DEPENDENCY", "SECRET_TOKEN", "do-not-include", "DO_NOT_FOLLOW_SYMLINK"} {
+		if strings.Contains(c.Text, forbidden) {
+			t.Fatalf("unsafe filesystem content was included: %s", forbidden)
+		}
 	}
 }
 
@@ -239,6 +283,23 @@ func TestCloudOnlyPreservesPromptExactly(t *testing.T) {
 	}
 	if !result.Dispatched || len(driver.sent) != 1 || driver.sent[0] != "original task" {
 		t.Fatalf("CLOUD_ONLY changed the baseline prompt: %#v sent=%q", result, driver.sent)
+	}
+}
+
+func TestHybridRejectsBeforeLocalWorkWhenNativeSessionIsNotReady(t *testing.T) {
+	svc, driver, _ := intelligenceRunFixture(t)
+	delete(svc.native.sessions, "a1")
+	result, err := svc.Run(context.Background(), IntelligenceRunRequest{
+		AgentID: "a1", Task: "explain main", Mode: ModeLocalPreprocessCloud, Provider: "missing",
+	})
+	if err == nil || result.Trace.ErrorCode != ErrNativeSession || result.Trace.Fallback {
+		t.Fatalf("native readiness failure was not explicit: result=%#v err=%v", result.Trace, err)
+	}
+	if len(driver.sent) != 0 {
+		t.Fatalf("task was sent without a native session: %q", driver.sent)
+	}
+	if len(result.Trace.Events) < 2 || result.Trace.Events[1].Stage != "cloud_execution" || result.Trace.Events[1].Details["errorCode"] != ErrNativeSession {
+		t.Fatalf("native readiness trace is incomplete: %#v", result.Trace.Events)
 	}
 }
 
@@ -310,6 +371,29 @@ func TestHybridLocalFailureRecordsFallbackAndContinuesCloud(t *testing.T) {
 	}
 	if len(driver.sent) != 1 || driver.sent[0] != "explain main" {
 		t.Fatalf("fallback did not preserve the original cloud task: %q", driver.sent)
+	}
+}
+
+func TestHybridPreservesLocalAndCloudFallbackErrors(t *testing.T) {
+	svc, driver, _ := intelligenceRunFixture(t)
+	driver.sendErr = errors.New("native driver unavailable")
+	result, err := svc.Run(context.Background(), IntelligenceRunRequest{
+		AgentID: "a1", Task: "explain main", Mode: ModeLocalPreprocessCloud, Provider: "missing-provider",
+	})
+	if err == nil || !result.Trace.Fallback || result.Trace.ErrorCode != ErrCloudExecution {
+		t.Fatalf("cloud fallback failure was not recorded: result=%#v err=%v", result.Trace, err)
+	}
+	var localCode, cloudCode any
+	for _, event := range result.Trace.Events {
+		if event.Stage == "local_processing" {
+			localCode = event.Details["errorCode"]
+		}
+		if event.Stage == "cloud_execution" && event.Status == "FAILED" {
+			cloudCode = event.Details["errorCode"]
+		}
+	}
+	if localCode != ErrProviderUnreachable || cloudCode != ErrCloudExecution {
+		t.Fatalf("local/cloud errors were not preserved: local=%v cloud=%v events=%#v", localCode, cloudCode, result.Trace.Events)
 	}
 }
 

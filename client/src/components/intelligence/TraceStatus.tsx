@@ -1,4 +1,5 @@
 import type { IntelligenceTrace } from '../../lib/api';
+import { cloudFailureCode } from './savings';
 
 const STATUS: Record<string, { symbol: string; label: string; tone: string }> = {
   SUCCESS: { symbol: '✓', label: 'Completed locally', tone: 'text-deck-success' },
@@ -16,7 +17,10 @@ export function traceStatusInfo(status: string) {
 }
 
 export function TraceStatus({ trace, compact = false }: { trace: IntelligenceTrace; compact?: boolean }) {
-  const info = traceStatusInfo(trace.status);
+  const cloudError = cloudFailureCode(trace);
+  const info = trace.status === 'FAILED' && cloudError
+    ? { symbol: '×', label: cloudError === 'NATIVE_SESSION_NOT_READY' ? 'Native session not ready' : trace.fallback ? 'Cloud fallback failed' : 'Cloud execution failed', tone: 'text-deck-danger' }
+    : traceStatusInfo(trace.status);
   return (
     <span className={`inline-flex min-w-0 items-center gap-1.5 ${info.tone} ${compact ? 'text-[11px]' : 'text-xs'}`}>
       <span aria-hidden="true" className="shrink-0 font-semibold">{info.symbol}</span>

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -42,6 +43,7 @@ const (
 	ErrGenerationFailed    = "LOCAL_GENERATION_FAILED"
 	ErrContextBuild        = "CONTEXT_BUILD_FAILED"
 	ErrCloudExecution      = "CLOUD_EXECUTION_FAILED"
+	ErrNativeSession       = "NATIVE_SESSION_NOT_READY"
 	ErrValidation          = "VALIDATION_FAILED"
 )
 
@@ -337,11 +339,14 @@ type CandidateContext struct {
 	Files           []string `json:"files"`
 	EstimatedTokens int      `json:"estimatedTokens"`
 	Bytes           int      `json:"bytes"`
+	Source          string   `json:"source"`
 }
 
 const (
-	maxCandidateFiles = 24
-	maxFileBytes      = 24 * 1024
+	maxCandidateFiles  = 24
+	maxFileBytes       = 24 * 1024
+	maxFilesystemFiles = 5000
+	maxFilesystemDepth = 12
 	// Leave room inside the 64k Ollama window for instructions, tokenizer
 	// variance, and the generated context pack itself.
 	maxContextBytes = 192 * 1024
@@ -367,10 +372,20 @@ func BuildCandidateContext(ctx context.Context, cwd, task string) (CandidateCont
 	diffStat, _ := repoCommand(ctx, cwd, "diff", "--stat", "--")
 	logSummary, _ := repoCommand(ctx, cwd, "log", "-8", "--oneline", "--decorate=no")
 	tracked, err := repoCommand(ctx, cwd, "ls-files")
+	source := "git"
 	if err != nil {
-		return CandidateContext{}, fmt.Errorf("git ls-files: %w", err)
+		paths, walkErr := filesystemProjectFiles(ctx, cwd)
+		if walkErr != nil {
+			return CandidateContext{}, fmt.Errorf("filesystem scan: %w", walkErr)
+		}
+		tracked = strings.Join(paths, "\n")
+		status, diffStat, logSummary = "", "", ""
+		source = "filesystem"
 	}
-	recent, _ := repoCommand(ctx, cwd, "log", "-8", "--name-only", "--pretty=format:")
+	recent := ""
+	if source == "git" {
+		recent, _ = repoCommand(ctx, cwd, "log", "-8", "--name-only", "--pretty=format:")
+	}
 
 	changed := parseStatusPaths(status)
 	keywords := taskKeywords(task)
@@ -413,8 +428,13 @@ func BuildCandidateContext(ctx context.Context, cwd, task string) (CandidateCont
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "REPOSITORY: %s\nTASK TERMS: %s\n\nGIT STATUS\n%s\n\nDIFF STAT\n%s\n\nRECENT COMMITS\n%s\n",
-		filepath.Base(cwd), strings.Join(keywords, ", "), status, diffStat, logSummary)
+	fmt.Fprintf(&b, "REPOSITORY: %s\nCONTEXT SOURCE: %s\nTASK TERMS: %s\n",
+		filepath.Base(cwd), strings.ToUpper(source), strings.Join(keywords, ", "))
+	if source == "git" {
+		fmt.Fprintf(&b, "\nGIT STATUS\n%s\n\nDIFF STAT\n%s\n\nRECENT COMMITS\n%s\n", status, diffStat, logSummary)
+	} else {
+		b.WriteString("\nGit metadata unavailable; using a bounded filesystem scan.\n")
+	}
 	files := make([]string, 0, len(paths))
 	for _, candidate := range paths {
 		if b.Len() >= maxContextBytes {
@@ -437,7 +457,75 @@ func BuildCandidateContext(ctx context.Context, cwd, task string) (CandidateCont
 		files = append(files, candidate.path)
 	}
 	text := b.String()
-	return CandidateContext{Text: text, Files: files, EstimatedTokens: EstimateTokens(text), Bytes: len(text)}, nil
+	return CandidateContext{Text: text, Files: files, EstimatedTokens: EstimateTokens(text), Bytes: len(text), Source: source}, nil
+}
+
+var intelligenceSkipDirs = map[string]bool{
+	"node_modules": true, "dist": true, "build": true, "out": true, "coverage": true,
+	".next": true, ".cache": true, ".output": true, ".turbo": true, ".git": true,
+	"vendor": true, "target": true, "__pycache__": true, ".venv": true, "venv": true,
+}
+
+var intelligenceSkipFiles = map[string]bool{
+	"package-lock.json": true, "pnpm-lock.yaml": true, "yarn.lock": true,
+	"credentials.json": true, "service-account.json": true,
+}
+
+// filesystemProjectFiles is the non-Git fallback. It deliberately does not follow
+// symlinks and excludes dependency/build trees, hidden paths, lockfiles, and common
+// credential formats so an untracked project cannot accidentally send local secrets
+// or generated noise to the configured inference provider.
+func filesystemProjectFiles(ctx context.Context, cwd string) ([]string, error) {
+	rootDepth := strings.Count(filepath.Clean(cwd), string(filepath.Separator))
+	paths := make([]string, 0, maxCandidateFiles)
+	err := filepath.WalkDir(cwd, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if path == cwd {
+			return nil
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			if intelligenceSkipDirs[name] || strings.HasPrefix(name, ".") {
+				return fs.SkipDir
+			}
+			depth := strings.Count(filepath.Clean(path), string(filepath.Separator)) - rootDepth
+			if depth > maxFilesystemDepth {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 || strings.HasPrefix(name, ".") || unsafeIntelligenceFile(name) {
+			return nil
+		}
+		rel, err := filepath.Rel(cwd, path)
+		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil
+		}
+		paths = append(paths, filepath.ToSlash(rel))
+		if len(paths) >= maxFilesystemFiles {
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return paths, err
+}
+
+func unsafeIntelligenceFile(name string) bool {
+	lower := strings.ToLower(name)
+	if intelligenceSkipFiles[lower] {
+		return true
+	}
+	switch strings.ToLower(filepath.Ext(lower)) {
+	case ".pem", ".key", ".p12", ".pfx", ".keystore", ".jks":
+		return true
+	default:
+		return false
+	}
 }
 
 func repoCommand(ctx context.Context, cwd string, args ...string) (string, error) {
@@ -598,6 +686,14 @@ func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunReques
 	if req.Mode == ModeCloudOnly {
 		return s.dispatchCloud(result, req.Task, req.Task, false)
 	}
+	if req.Mode == ModeLocalPreprocessCloud && (s.native == nil || !s.native.Running(req.AgentID)) {
+		t.Status, t.ErrorCode = "FAILED", ErrNativeSession
+		addTrace(t, "cloud_execution", "FAILED", map[string]any{
+			"errorCode": ErrNativeSession, "reason": "native session is not ready",
+		})
+		s.saveTrace(*t)
+		return result, fmt.Errorf("native session is not ready")
+	}
 	if req.Mode == ModeLocalOnly && !localOnlyAllowed(req.Operation) {
 		t.Status, t.ErrorCode = "FAILED", ErrValidation
 		addTrace(t, "validation", "FAILED", map[string]any{"reason": "LOCAL_ONLY operation is not allow-listed"})
@@ -612,7 +708,9 @@ func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunReques
 	}
 	t.RawTokens = candidate.EstimatedTokens
 	result.Files = candidate.Files
-	addTrace(t, "repository_scan", "OK", map[string]any{"candidateFiles": len(candidate.Files), "rawEstimatedTokens": t.RawTokens})
+	addTrace(t, "repository_scan", "OK", map[string]any{
+		"candidateFiles": len(candidate.Files), "rawEstimatedTokens": t.RawTokens, "source": candidate.Source,
+	})
 
 	p, err := s.providers.Get(req.Provider)
 	if err != nil || !p.Enabled {
@@ -703,7 +801,9 @@ func (s *IntelligenceService) dispatchCloud(result IntelligenceRunResult, prompt
 	addTrace(t, "cloud_execution", "STARTED", map[string]any{"driver": "codex_or_claude_native"})
 	if s.native == nil {
 		t.Status, t.ErrorCode = "FAILED", ErrCloudExecution
-		addTrace(t, "cloud_execution", "FAILED", map[string]any{"reason": "native service unavailable"})
+		addTrace(t, "cloud_execution", "FAILED", map[string]any{
+			"errorCode": ErrCloudExecution, "reason": "native service unavailable",
+		})
 		s.saveTrace(*t)
 		return result, fmt.Errorf("native service unavailable")
 	}
@@ -721,7 +821,9 @@ func (s *IntelligenceService) dispatchCloud(result IntelligenceRunResult, prompt
 		}
 		s.mu.Unlock()
 		t.Status, t.ErrorCode = "FAILED", ErrCloudExecution
-		addTrace(t, "cloud_execution", "FAILED", map[string]any{"reason": conciseError(err)})
+		addTrace(t, "cloud_execution", "FAILED", map[string]any{
+			"errorCode": ErrCloudExecution, "reason": conciseError(err),
+		})
 		s.saveTrace(*t)
 		return result, err
 	}

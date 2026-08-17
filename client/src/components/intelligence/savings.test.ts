@@ -1,9 +1,11 @@
 import type { IntelligenceTrace } from '../../lib/api';
 import {
   aggregateSavings,
+  cloudFailureCode,
   formatEstimatedTokens,
   formatReduction,
   hasValidReduction,
+  localFailureCode,
   savedEstimatedTokens,
   savingsState,
 } from './savings';
@@ -34,6 +36,19 @@ equal(formatEstimatedTokens(832), '832', 'small token format');
 equal(formatEstimatedTokens(8_400), '8.4k', 'thousand token format');
 equal(formatEstimatedTokens(1_200_000), '1.2M', 'million token format');
 equal(formatReduction(84.76), '84.8%', 'reduction format');
+
+const doubleFailure = trace({
+  status: 'FAILED', fallback: true, errorCode: 'CLOUD_EXECUTION_FAILED',
+  events: [
+    { at: '2026-08-16T00:00:01Z', stage: 'local_processing', status: 'FAILED', details: { errorCode: 'CONTEXT_BUILD_FAILED' } },
+    { at: '2026-08-16T00:00:02Z', stage: 'cloud_execution', status: 'FAILED', details: { errorCode: 'CLOUD_EXECUTION_FAILED' } },
+  ],
+});
+equal(localFailureCode(doubleFailure), 'CONTEXT_BUILD_FAILED', 'local failure remains visible');
+equal(cloudFailureCode(doubleFailure), 'CLOUD_EXECUTION_FAILED', 'cloud fallback failure remains visible');
+equal(cloudFailureCode(trace({
+  status: 'FAILED', fallback: false, errorCode: 'NATIVE_SESSION_NOT_READY', events: [],
+})), 'NATIVE_SESSION_NOT_READY', 'native readiness is a cloud-side failure');
 
 const aggregate = aggregateSavings([
   trace(),

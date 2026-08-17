@@ -2,7 +2,10 @@ import type { IntelligenceTrace, IntelligenceTraceEvent } from '../../lib/api';
 import { IconClose } from '../icons';
 import { SavingsSummary } from './SavingsSummary';
 import { TraceStatus } from './TraceStatus';
-import { formatCreatedAt, formatEstimatedTokens, formatLatency, formatMode, formatReduction } from './savings';
+import {
+  cloudFailureCode, formatCreatedAt, formatEstimatedTokens, formatLatency, formatMode,
+  formatReduction, localFailureCode,
+} from './savings';
 
 const STAGE_LABELS: Record<string, string> = {
   task_received: 'Task received',
@@ -19,11 +22,12 @@ const STAGE_LABELS: Record<string, string> = {
 
 const SAFE_DETAIL_KEYS: Record<string, string[]> = {
   task_received: ['mode'],
-  repository_scan: ['candidateFiles', 'rawEstimatedTokens'],
+  repository_scan: ['source', 'candidateFiles', 'rawEstimatedTokens'],
   local_request: ['provider', 'model'],
   local_response: ['latencyMs', 'localTokens'],
   context_measurement: ['rawEstimatedTokens', 'optimizedEstimatedTokens', 'reductionPercent'],
-  cloud_execution: ['driver', 'nativeTurnBoundary'],
+  local_processing: ['errorCode', 'reason'],
+  cloud_execution: ['driver', 'nativeTurnBoundary', 'errorCode', 'reason'],
   fallback: ['reason'],
   result: ['cloudExecution'],
 };
@@ -33,6 +37,7 @@ function detailLabel(key: string): string {
     candidateFiles: 'Candidate files', rawEstimatedTokens: 'Raw', optimizedEstimatedTokens: 'Optimized',
     reductionPercent: 'Reduction', latencyMs: 'Latency', localTokens: 'Local output',
     nativeTurnBoundary: 'Turn completed', cloudExecution: 'Cloud execution',
+    errorCode: 'Error code', source: 'Source', reason: 'Reason',
   };
   return labels[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase());
 }
@@ -84,6 +89,8 @@ function EventRow({ event }: { event: IntelligenceTraceEvent }) {
 }
 
 export function TraceDetail({ trace, onClose }: { trace: IntelligenceTrace; onClose: () => void }) {
+  const localError = localFailureCode(trace);
+  const cloudError = cloudFailureCode(trace);
   return (
     <section className="mt-3 rounded-xl border border-deck-border bg-deck-raised p-3" aria-label={`Trace ${trace.id}`}>
       <div className="flex items-start justify-between gap-3">
@@ -108,7 +115,9 @@ export function TraceDetail({ trace, onClose }: { trace: IntelligenceTrace; onCl
         <div><dt className="text-[10px] text-deck-text-faint">Raw context</dt><dd>{trace.rawEstimatedTokens > 0 ? `${formatEstimatedTokens(trace.rawEstimatedTokens)} est.` : '—'}</dd></div>
         <div><dt className="text-[10px] text-deck-text-faint">Optimized</dt><dd>{trace.optimizedEstimatedTokens > 0 ? `${formatEstimatedTokens(trace.optimizedEstimatedTokens)} est.` : '—'}</dd></div>
         <div><dt className="text-[10px] text-deck-text-faint">Reduction</dt><dd>{trace.reductionPercent > 0 ? formatReduction(trace.reductionPercent) : '—'}</dd></div>
-        {trace.errorCode && <div><dt className="text-[10px] text-deck-text-faint">Error code</dt><dd className="break-all font-mono text-[10px] text-deck-danger">{trace.errorCode}</dd></div>}
+        {localError && <div><dt className="text-[10px] text-deck-text-faint">Local error</dt><dd className="break-all font-mono text-[10px] text-deck-danger">{localError}</dd></div>}
+        {cloudError && <div><dt className="text-[10px] text-deck-text-faint">Cloud error</dt><dd className="break-all font-mono text-[10px] text-deck-danger">{cloudError}</dd></div>}
+        {trace.errorCode && !localError && !cloudError && <div><dt className="text-[10px] text-deck-text-faint">Error code</dt><dd className="break-all font-mono text-[10px] text-deck-danger">{trace.errorCode}</dd></div>}
       </dl>
 
       <div className="mt-4 border-t border-deck-border pt-3">
