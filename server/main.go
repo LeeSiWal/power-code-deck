@@ -122,6 +122,13 @@ func main() {
 	providerRegistry := services.NewProviderRegistry(database)
 	intelligenceSvc := services.NewIntelligenceService(database, providerRegistry, agentSvc, nativeSvc)
 
+	// Local Intelligence runs are jobs, not request handlers: they outlive the HTTP
+	// call that started them, so their progress has to reach the client some other
+	// way. Same wiring as the Control Room below — one emitter, hub.BroadcastAll.
+	intelligenceSvc.SetEmitter(func(r services.IntelligenceRunResult) {
+		hub.BroadcastAll(ws.EventIntelligenceTrace, ws.IntelligenceTracePayload(r))
+	})
+
 	// Control Room (v0.3.0): the multi-session overview aggregator. It projects
 	// existing state (agents + activity + pending approvals + notifications) into
 	// per-session summaries and pushes changed ones as coalesced agent:summaries
@@ -281,6 +288,7 @@ func main() {
 	api.HandleFunc("/intelligence/run", handlers.RunIntelligence(intelligenceSvc)).Methods("POST")
 	api.HandleFunc("/intelligence/traces", handlers.ListIntelligenceTraces(intelligenceSvc)).Methods("GET")
 	api.HandleFunc("/intelligence/traces/{id}", handlers.GetIntelligenceTrace(intelligenceSvc)).Methods("GET")
+	api.HandleFunc("/intelligence/traces/{id}/cancel", handlers.CancelIntelligenceRun(intelligenceSvc)).Methods("POST")
 
 	// Control Room (v0.3.0) — initial snapshot of the overview + global approval queue.
 	// Live deltas arrive over the WebSocket (agent:summaries, approval:resolved).

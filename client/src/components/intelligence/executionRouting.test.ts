@@ -1,4 +1,4 @@
-import type { IntelligenceRunResult, IntelligenceTrace } from '../../lib/api';
+import type { IntelligenceStartResult, IntelligenceTrace } from '../../lib/api';
 import { clientCommand, routeNativeTask, type NativeDriverName } from './executionRouting';
 
 function trace(overrides: Partial<IntelligenceTrace> = {}): IntelligenceTrace {
@@ -17,7 +17,9 @@ function equal(actual: unknown, expected: unknown, label: string) {
 async function verifyDriver(driver: NativeDriverName) {
   let nativeCalls = 0;
   let intelligenceCalls = 0;
-  const result: IntelligenceRunResult = { trace: trace(), cloudDispatched: true };
+  // POST /intelligence/run answers 202 with a RUNNING trace and nothing else —
+  // the outcome arrives later on the intelligence:trace event.
+  const result: IntelligenceStartResult = { trace: trace({ status: 'RUNNING' }) };
   const dependencies = {
     sendNative: () => { nativeCalls += 1; },
     runIntelligence: async () => { intelligenceCalls += 1; return result; },
@@ -42,19 +44,16 @@ async function run() {
 
   let nativeCalls = 0;
   let intelligenceCalls = 0;
-  const fallback: IntelligenceRunResult = {
-    trace: trace({ fallback: true, status: 'FALLBACK_CLOUD_DISPATCHED', errorCode: 'LOCAL_PROVIDER_UNREACHABLE' }),
-    cloudDispatched: true,
-  };
+  const fallback: IntelligenceStartResult = { trace: trace({ status: 'RUNNING' }) };
   const fallbackResult = await routeNativeTask({
     agentId: 'a1', driver: 'claude', task: 'fallback task', mode: 'LOCAL_PREPROCESS_CLOUD', provider: 'offline',
   }, {
     sendNative: () => { nativeCalls += 1; },
     runIntelligence: async () => { intelligenceCalls += 1; return fallback; },
   });
-  equal(fallbackResult.path, 'hybrid', 'fallback remains the intelligence route');
-  equal(nativeCalls, 0, 'fallback never sends a second client-side cloud task');
-  equal(intelligenceCalls, 1, 'fallback calls backend exactly once');
+  equal(fallbackResult.path, 'hybrid', 'a hybrid run stays on the intelligence route');
+  equal(nativeCalls, 0, 'the client never sends a second cloud task of its own');
+  equal(intelligenceCalls, 1, 'the backend is asked exactly once');
 
   equal(clientCommand('/clear'), 'clear', '/clear is intercepted');
   equal(clientCommand('/plugin'), 'plugin', '/plugin is intercepted');

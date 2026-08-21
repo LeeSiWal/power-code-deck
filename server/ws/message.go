@@ -58,6 +58,11 @@ const (
 	// another device) so its card can be removed everywhere, not just where it was
 	// decided.
 	EventApprovalResolved = "approval:resolved"
+	// EventIntelligenceTrace carries one Local Intelligence trace transition. It
+	// goes to every client for the same reason agent:summaries does: a run belongs
+	// to an agent, but the trace list in Settings is read from outside any agent
+	// screen. The payload carries agentId, so receivers filter.
+	EventIntelligenceTrace = "intelligence:trace"
 	// EventNativeDecideResult replies to the client that submitted a decision:
 	// "accepted" if this client's tap resolved it, "already_resolved" if another
 	// device beat it (one-shot CAS, so the loser is told, not silently ignored).
@@ -182,6 +187,14 @@ type AgentStatusPayload struct {
 type AgentSummariesPayload struct {
 	Summaries []services.AgentSummary `json:"summaries"`
 }
+
+// IntelligenceTracePayload is one Local Intelligence transition. Progress
+// emissions carry only Trace; the emission that closes a run also carries the
+// parts that are deliberately never written to the database — the generated
+// context pack and the files it was built from. That is the only chance a client
+// gets to see them, which is why LOCAL_ONLY output rides this event rather than
+// an HTTP response.
+type IntelligenceTracePayload = services.IntelligenceRunResult
 
 // ApprovalResolvedPayload is broadcast to all clients when an approval is answered.
 type ApprovalResolvedPayload struct {

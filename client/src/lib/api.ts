@@ -90,11 +90,44 @@ export interface IntelligenceTrace {
   cloudUsageKnown?: boolean;
 }
 
+// What POST /intelligence/run answers with: the run was accepted, here is the id
+// to watch. Nothing else can be known yet — local inference takes 38-59 seconds
+// when it succeeds, and the request no longer waits for it.
+export interface IntelligenceStartResult {
+  trace: IntelligenceTrace;
+}
+
+// What arrives on the `intelligence:trace` socket event. Progress updates carry
+// only the trace; the update that ends a run also carries the pieces that are
+// never stored server-side — the generated context pack and the files it was
+// built from. LOCAL_ONLY output exists nowhere else, so this event is the only
+// place it can be read.
 export interface IntelligenceRunResult {
   trace: IntelligenceTrace;
   contextPack?: string;
   files?: string[];
-  cloudDispatched: boolean;
+  cloudDispatched?: boolean;
+}
+
+// Statuses a trace never leaves. Used to keep a late update from dragging a
+// finished run back into "running".
+const TERMINAL_TRACE_STATUS = new Set([
+  'SUCCESS', 'FAILED', 'CLOUD_COMPLETED', 'CLOUD_COMPLETED_WITH_FALLBACK',
+]);
+
+export function isTraceTerminal(trace: IntelligenceTrace): boolean {
+  return TERMINAL_TRACE_STATUS.has(trace.status);
+}
+
+export function isTraceRunning(trace: IntelligenceTrace): boolean {
+  return !isTraceTerminal(trace);
+}
+
+// The LOCAL phase only: true while the local model still has the task. Once the
+// run is dispatched to the cloud the trace is still open (it closes when the cloud
+// turn ends), but the local wait — the part a composer blocks on — is over.
+export function isLocalPhaseRunning(trace: IntelligenceTrace): boolean {
+  return trace.status === 'RUNNING' || trace.status === 'STARTED';
 }
 
 export class ApiError extends Error {
@@ -388,7 +421,11 @@ export const api = {
   runIntelligence: (request: {
     agentId: string; task: string; mode: IntelligenceMode;
     provider?: string; operation?: string;
-  }) => apiFetch<IntelligenceRunResult>('/intelligence/run', { method: 'POST', body: JSON.stringify(request) }),
+  }) => apiFetch<IntelligenceStartResult>('/intelligence/run', { method: 'POST', body: JSON.stringify(request) }),
+  // Stops a run someone no longer wants. 404 means it already finished — the
+  // caller treats that as success, because the goal (not running) is met.
+  cancelIntelligence: (id: string) =>
+    apiFetch<void>(`/intelligence/traces/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   intelligenceTraces: (limit = 50) =>
     apiFetch<IntelligenceTrace[]>(`/intelligence/traces?limit=${limit}`),
   intelligenceTrace: (id: string) =>

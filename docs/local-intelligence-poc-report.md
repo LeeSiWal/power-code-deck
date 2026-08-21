@@ -55,6 +55,15 @@ The POC is additive; existing chat input is not intercepted.
 - Health sequence: TCP reachability → `/api/tags` → configured model match → real `/api/generate` → measured latency.
 - Deterministic repository candidate builder using `git status`, `git diff --stat`, `git log`, `git ls-files`, task/path terms and bounded file reads.
 - Required context-pack sections: TASK, FILES, SYMBOLS, CALL FLOW, LIKELY CHANGE POINTS, TESTS and UNCERTAINTIES.
+- **Execution model: a background job, not a request handler.** `POST /api/intelligence/run` validates
+  synchronously (bad input is still a `400` inside the request), then answers `202 Accepted` with a
+  `RUNNING` trace and runs on a context of the server's own. The HTTP request context is deliberately
+  never handed to the service. Progress is broadcast on the `intelligence:trace` WebSocket event —
+  every persisted transition, plus a closing emission that carries the generated context pack and file
+  list, which are never written to the database. `POST /api/intelligence/traces/{id}/cancel` stops a run
+  (`204`; `404` once it has finished); a cancelled run ends `LOCAL_REQUEST_CANCELED` and is the one
+  failure that does **not** fall back to the cloud — nobody should be billed for a turn they just
+  stopped. A local *timeout* still falls back, because nobody asked for that one to end.
 - Execution modes through `POST /api/intelligence/run`:
   - `CLOUD_ONLY`: sends the original task unchanged to the existing native session.
   - `LOCAL_PREPROCESS_CLOUD`: builds context, calls Ollama, validates reduction, then sends an advisory pack plus the original task. Codex may inspect any additional file.
@@ -70,10 +79,13 @@ GET    /api/intelligence/providers
 PUT    /api/intelligence/providers/{name}
 DELETE /api/intelligence/providers/{name}
 POST   /api/intelligence/providers/{name}/health
-POST   /api/intelligence/run
+POST   /api/intelligence/run                    → 202 + RUNNING trace
 GET    /api/intelligence/traces
 GET    /api/intelligence/traces/{id}
+POST   /api/intelligence/traces/{id}/cancel     → 204 / 404
 ```
+
+WebSocket (server → client): `intelligence:trace`
 
 ## 6. Remote provider validation
 
@@ -171,8 +183,14 @@ The initial `pnpm build` attempt was blocked by host pnpm 11 requiring Node ≥2
 - A native result proves turn completion, not that tests passed or the requested code change is semantically correct.
 - Traces allow baseline/hybrid comparison but do not yet capture Codex's hidden internal context/token usage or post-turn changed-file snapshots.
 - Only Ollama is implemented. OpenAI-compatible, MLX and vLLM are future provider additions.
-- Context collection requires a Git repository and is capped at 24 files, 24 KiB per file and 256 KiB total.
+- Context collection requires a Git repository and is capped at 24 files, 12 KiB per file and 64 KiB total.
+  The budget was cut from 256 KiB so a 30B local model can finish inside common reverse-proxy deadlines.
 - The eager PTY/native double-runtime remains to be addressed separately.
+- Local latency itself is unchanged: 38-59 seconds on a successful run. Moving the run off the request
+  removes the failure it caused, not the wait. Verified end-to-end against the real binary: a run whose
+  HTTP client disconnects immediately still completes (`SUCCESS`, 6,018 ms local latency, 3,944 → 28
+  estimated tokens), an explicit cancel ends it as `LOCAL_REQUEST_CANCELED` with no cloud dispatch, and
+  an unreachable provider still ends as `LOCAL_PROVIDER_UNREACHABLE`.
 
 ## 12. Next recommended milestone
 

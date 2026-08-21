@@ -665,12 +665,18 @@ type IntelligenceService struct {
 	hybridTimeout time.Duration
 	mu            sync.Mutex
 	pending       map[string]string // agent id -> trace id awaiting a native result event
+	// running holds the cancel func of every job started by Start, keyed by trace
+	// id. It is what makes cancellation a decision (a user pressing stop) instead
+	// of an accident (a browser closing a socket).
+	running map[string]context.CancelFunc
+	emitter func(IntelligenceRunResult)
 }
 
 func NewIntelligenceService(db *sql.DB, providers *ProviderRegistry, agents *AgentService, native *NativeService) *IntelligenceService {
 	s := &IntelligenceService{
 		db: db, providers: providers, agents: agents, native: native,
 		hybridTimeout: defaultHybridTimeout, pending: make(map[string]string),
+		running: make(map[string]context.CancelFunc),
 	}
 	if native != nil {
 		native.AddEventObserver(s.observeNativeEvent)
@@ -689,25 +695,158 @@ func addTrace(t *IntelligenceTrace, stage, status string, details map[string]any
 	t.Events = append(t.Events, TraceEvent{At: time.Now().UTC().Format(time.RFC3339Nano), Stage: stage, Status: status, Details: details})
 }
 
-func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunRequest) (IntelligenceRunResult, error) {
+// runRejection is a refusal the caller can act on: bad input, a missing agent, a
+// session that is not up yet. These are decided before any work starts, which is
+// what lets Start answer them inside the request while everything else runs on.
+type runRejection struct {
+	code    string
+	stage   string
+	details map[string]any
+	err     error
+}
+
+// validateRun normalizes the request and applies every check that must be answered
+// synchronously. Start and Run share it so a background job can never accept what
+// the synchronous path would have refused.
+func (s *IntelligenceService) validateRun(req IntelligenceRunRequest) (IntelligenceRunRequest, *runRejection) {
 	req.Task = strings.TrimSpace(req.Task)
 	if req.Mode == "" {
 		req.Mode = ModeCloudOnly
 	}
-	result := IntelligenceRunResult{Trace: newTrace(req)}
-	t := &result.Trace
-	addTrace(t, "task_received", "OK", map[string]any{"mode": req.Mode})
 	if req.Task == "" || req.AgentID == "" {
-		t.Status, t.ErrorCode = "FAILED", ErrValidation
-		addTrace(t, "validation", "FAILED", map[string]any{"reason": "agentId and task are required"})
-		s.saveTrace(*t)
-		return result, fmt.Errorf("agentId and task are required")
+		return req, &runRejection{
+			code: ErrValidation, stage: "validation",
+			details: map[string]any{"reason": "agentId and task are required"},
+			err:     fmt.Errorf("agentId and task are required"),
+		}
 	}
 	if req.Mode != ModeCloudOnly && req.Mode != ModeLocalPreprocessCloud && req.Mode != ModeLocalOnly {
-		t.Status, t.ErrorCode = "FAILED", ErrValidation
-		s.saveTrace(*t)
-		return result, fmt.Errorf("unsupported execution mode")
+		return req, &runRejection{code: ErrValidation, err: fmt.Errorf("unsupported execution mode")}
 	}
+	if _, err := s.agents.Get(req.AgentID); err != nil {
+		return req, &runRejection{code: ErrValidation, err: fmt.Errorf("agent not found")}
+	}
+	if req.Mode == ModeLocalPreprocessCloud && (s.native == nil || !s.native.Running(req.AgentID)) {
+		return req, &runRejection{
+			code: ErrNativeSession, stage: "cloud_execution",
+			details: map[string]any{"errorCode": ErrNativeSession, "reason": "native session is not ready"},
+			err:     fmt.Errorf("native session is not ready"),
+		}
+	}
+	if req.Mode == ModeLocalOnly && !localOnlyAllowed(req.Operation) {
+		return req, &runRejection{
+			code: ErrValidation, stage: "validation",
+			details: map[string]any{"reason": "LOCAL_ONLY operation is not allow-listed"},
+			err:     fmt.Errorf("LOCAL_ONLY is limited to summarize, explain, classify, log_analysis, or repository_question"),
+		}
+	}
+	return req, nil
+}
+
+func (s *IntelligenceService) rejectedTrace(req IntelligenceRunRequest, rej *runRejection) IntelligenceTrace {
+	t := acceptedTrace(req)
+	t.Status, t.ErrorCode = "FAILED", rej.code
+	if rej.stage != "" {
+		addTrace(&t, rej.stage, "FAILED", rej.details)
+	}
+	s.saveTrace(t)
+	return t
+}
+
+func acceptedTrace(req IntelligenceRunRequest) IntelligenceTrace {
+	t := newTrace(req)
+	addTrace(&t, "task_received", "OK", map[string]any{"mode": req.Mode})
+	return t
+}
+
+// Start validates inside the caller's request and then runs the job on a context
+// of our own. The request context is deliberately absent from this signature:
+// local inference takes 38-59 seconds when it succeeds, so any browser reload,
+// phone screen lock, or reverse-proxy read timeout used to abort work that was
+// nearly done — five production traces died exactly that way, at ~125s, with
+// "Post ...: context canceled".
+//
+// The returned trace is RUNNING. Progress arrives over the WS emitter; the caller
+// does not wait for it.
+func (s *IntelligenceService) Start(req IntelligenceRunRequest) (IntelligenceTrace, error) {
+	req, rej := s.validateRun(req)
+	if rej != nil {
+		return s.rejectedTrace(req, rej), rej.err
+	}
+	t := acceptedTrace(req)
+	t.Status = "RUNNING"
+	addTrace(&t, "accepted", "RUNNING", map[string]any{"execution": "background_job"})
+	s.saveTrace(t)
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.running[t.ID] = cancel
+	s.mu.Unlock()
+
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			delete(s.running, t.ID)
+			s.mu.Unlock()
+			cancel()
+		}()
+		result, _ := s.run(runCtx, req, t)
+		// Re-read before the terminal emission: a fast driver can complete the cloud
+		// turn (and write CLOUD_COMPLETED) while run is still returning, and shipping
+		// our older copy would look like the trace went backwards.
+		if fresh, err := s.Trace(result.Trace.ID); err == nil {
+			result.Trace = fresh
+		}
+		s.emit(result)
+	}()
+	return t, nil
+}
+
+// Cancel stops a job started by Start. Returns false when the trace is unknown or
+// already finished — there is nothing to stop, and saying so is more useful than
+// pretending it worked.
+func (s *IntelligenceService) Cancel(traceID string) bool {
+	s.mu.Lock()
+	cancel, ok := s.running[traceID]
+	s.mu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
+}
+
+// SetEmitter installs the broadcast hook. Wired to the WS hub in main.go, nil in
+// tests and synchronous callers.
+func (s *IntelligenceService) SetEmitter(fn func(IntelligenceRunResult)) {
+	s.mu.Lock()
+	s.emitter = fn
+	s.mu.Unlock()
+}
+
+func (s *IntelligenceService) emit(r IntelligenceRunResult) {
+	s.mu.Lock()
+	fn := s.emitter
+	s.mu.Unlock()
+	if fn != nil {
+		fn(r)
+	}
+}
+
+// Run executes a request to completion on the caller's context. Start is the entry
+// point for HTTP callers; Run stays for synchronous callers and for tests, which
+// need a run whose end they can simply wait for.
+func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunRequest) (IntelligenceRunResult, error) {
+	req, rej := s.validateRun(req)
+	if rej != nil {
+		return IntelligenceRunResult{Trace: s.rejectedTrace(req, rej)}, rej.err
+	}
+	return s.run(ctx, req, acceptedTrace(req))
+}
+
+func (s *IntelligenceService) run(ctx context.Context, req IntelligenceRunRequest, seed IntelligenceTrace) (IntelligenceRunResult, error) {
+	result := IntelligenceRunResult{Trace: seed}
+	t := &result.Trace
 	agent, err := s.agents.Get(req.AgentID)
 	if err != nil {
 		t.Status, t.ErrorCode = "FAILED", ErrValidation
@@ -717,25 +856,11 @@ func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunReques
 	if req.Mode == ModeCloudOnly {
 		return s.dispatchCloud(result, req.Task, req.Task, false)
 	}
-	if req.Mode == ModeLocalPreprocessCloud && (s.native == nil || !s.native.Running(req.AgentID)) {
-		t.Status, t.ErrorCode = "FAILED", ErrNativeSession
-		addTrace(t, "cloud_execution", "FAILED", map[string]any{
-			"errorCode": ErrNativeSession, "reason": "native session is not ready",
-		})
-		s.saveTrace(*t)
-		return result, fmt.Errorf("native session is not ready")
-	}
-	if req.Mode == ModeLocalOnly && !localOnlyAllowed(req.Operation) {
-		t.Status, t.ErrorCode = "FAILED", ErrValidation
-		addTrace(t, "validation", "FAILED", map[string]any{"reason": "LOCAL_ONLY operation is not allow-listed"})
-		s.saveTrace(*t)
-		return result, fmt.Errorf("LOCAL_ONLY is limited to summarize, explain, classify, log_analysis, or repository_question")
-	}
 
 	addTrace(t, "repository_scan", "STARTED", nil)
 	candidate, err := BuildCandidateContext(ctx, agent.WorkingDir, req.Task)
 	if err != nil {
-		return s.localFailure(result, req, ErrContextBuild, err)
+		return s.localFailure(ctx, result, req, ErrContextBuild, err)
 	}
 	t.RawTokens = candidate.EstimatedTokens
 	result.Files = candidate.Files
@@ -746,7 +871,7 @@ func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunReques
 
 	p, err := s.providers.Get(req.Provider)
 	if err != nil || !p.Enabled {
-		return s.localFailure(result, req, ErrProviderUnreachable, fmt.Errorf("provider is missing or disabled"))
+		return s.localFailure(ctx, result, req, ErrProviderUnreachable, fmt.Errorf("provider is missing or disabled"))
 	}
 	t.Provider, t.Model = p.Name, p.Model
 	requestTimeout := providerTimeout(p)
@@ -764,21 +889,25 @@ func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunReques
 	addTrace(t, "local_request", "STARTED", map[string]any{
 		"provider": p.Name, "model": p.Model, "timeoutMs": requestTimeout.Milliseconds(),
 	})
+	// Persist once here, not only at the end: this is the stage a background job
+	// spends its whole life in, and until it is written down a reconnecting client
+	// (or a cancel button) has no idea which provider it is waiting on.
+	s.saveTrace(*t)
 	prompt := contextPackPrompt(req.Task, candidate.Text)
 	started := time.Now()
 	pack, localTokens, err := s.providers.ollamaGenerate(generationCtx, p, prompt, contextPackTokens)
 	t.LatencyMS = time.Since(started).Milliseconds()
 	if err != nil {
-		return s.localFailure(result, req, classifyLocalError(err), err)
+		return s.localFailure(ctx, result, req, classifyLocalError(err), err)
 	}
 	t.LocalTokens = localTokens
 	addTrace(t, "local_response", "OK", map[string]any{"latencyMs": t.LatencyMS, "localTokens": localTokens})
 	if !validContextPack(pack) {
-		return s.localFailure(result, req, ErrValidation, fmt.Errorf("local response did not contain the required context-pack sections"))
+		return s.localFailure(ctx, result, req, ErrValidation, fmt.Errorf("local response did not contain the required context-pack sections"))
 	}
 	t.OptimizedTokens = EstimateTokens(pack)
 	if t.RawTokens <= 0 || t.OptimizedTokens >= t.RawTokens {
-		return s.localFailure(result, req, ErrValidation, fmt.Errorf("context pack did not reduce estimated context"))
+		return s.localFailure(ctx, result, req, ErrValidation, fmt.Errorf("context pack did not reduce estimated context"))
 	}
 	t.Reduction = float64(t.RawTokens-t.OptimizedTokens) * 100 / float64(t.RawTokens)
 	result.ContextPack = pack
@@ -828,11 +957,18 @@ func validContextPack(pack string) bool {
 	return true
 }
 
-func (s *IntelligenceService) localFailure(result IntelligenceRunResult, req IntelligenceRunRequest, code string, err error) (IntelligenceRunResult, error) {
+func (s *IntelligenceService) localFailure(ctx context.Context, result IntelligenceRunResult, req IntelligenceRunRequest, code string, err error) (IntelligenceRunResult, error) {
 	t := &result.Trace
+	// A cancelled run context means a person pressed stop. Whatever stage noticed
+	// first, that is the reason — and a stopped run must not go on to spend a cloud
+	// turn on the user's behalf. A local TIMEOUT is a different thing entirely and
+	// still falls back: nobody asked for that one to end.
+	if errors.Is(ctx.Err(), context.Canceled) {
+		code = ErrRequestCanceled
+	}
 	t.ErrorCode = code
 	addTrace(t, "local_processing", "FAILED", map[string]any{"errorCode": code, "reason": conciseError(err)})
-	if req.Mode == ModeLocalPreprocessCloud {
+	if req.Mode == ModeLocalPreprocessCloud && code != ErrRequestCanceled {
 		t.Fallback = true
 		addTrace(t, "fallback", "CLOUD_ONLY", map[string]any{"reason": code})
 		return s.dispatchCloud(result, req.Task, req.Task, true)
@@ -942,6 +1078,11 @@ func (s *IntelligenceService) saveTrace(t IntelligenceTrace) {
 		t.Provider, t.Model, t.RawTokens, t.OptimizedTokens, t.LocalTokens, t.LatencyMS,
 		t.ErrorCode, t.Fallback, string(events), t.CreatedAt,
 		t.CloudCostUSD, t.CloudInputTokens, t.CloudOutputTokens, t.CloudCacheReadTokens, t.CloudUsageKnown)
+	// The single persistence point is also the single broadcast point: every state
+	// transition already passes through here, so no path can forget to announce
+	// itself. Extras that are never stored (the context pack) ride the terminal
+	// emission from Start instead.
+	s.emit(IntelligenceRunResult{Trace: t})
 }
 
 func (s *IntelligenceService) Traces(limit int) ([]IntelligenceTrace, error) {

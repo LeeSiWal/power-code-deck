@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentDeckWS } from '../../lib/ws';
 import {
-  api, ApiError, type IntelligenceMode, type IntelligenceTrace, type LocalProvider,
+  api, ApiError, isLocalPhaseRunning, type IntelligenceMode, type IntelligenceTrace,
+  type LocalProvider,
 } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 import {
@@ -14,7 +15,7 @@ import {
   EMPTY_OPTIONS, hasSessionOptions, parseSessionOptions, SessionOptionsSheet, type SessionOptions,
 } from './SessionOptionsSheet';
 import { writeClipboard } from '../../lib/clipboard';
-import type { ActivityTodo } from '../../stores/appStore';
+import { useAppStore, type ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
 import { SessionSavingsSummary } from '../intelligence/SessionSavingsSummary';
 import { ExecutionModeControl } from '../intelligence/ExecutionModeControl';
@@ -72,7 +73,7 @@ function localErrorLabel(code?: string): string {
     LOCAL_PROVIDER_UNREACHABLE: 'Local provider is unreachable.',
     LOCAL_MODEL_UNAVAILABLE: 'The configured local model is unavailable.',
     LOCAL_TIMEOUT: 'Local preprocessing timed out.',
-    LOCAL_REQUEST_CANCELED: 'Local preprocessing connection was canceled.',
+    LOCAL_REQUEST_CANCELED: 'Local preprocessing was stopped.',
     LOCAL_GENERATION_FAILED: 'Local context generation failed.',
     CONTEXT_BUILD_FAILED: 'Repository context could not be prepared.',
     CLOUD_EXECUTION_FAILED: 'Cloud fallback could not start.',
@@ -148,7 +149,16 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const [providersError, setProvidersError] = useState(false);
   const [localProvider, setLocalProvider] = useState(() => localStorage.getItem(`pcd:intelligence-provider:${agentId}`) || '');
   const [localOperation, setLocalOperation] = useState<LocalOperation>(() => savedLocalOperation(agentId));
-  const [intelligencePreparing, setIntelligencePreparing] = useState(false);
+  // The id of the Local Intelligence run this chat is waiting on, or null. A run is
+  // a server-side job: it survives this component, this tab, and this device, so
+  // what we hold is a subscription key rather than the run itself.
+  const [activeTraceId, setActiveTraceId] = useState<string | null>(null);
+  // Covers the gap between pressing send and the 202 coming back with a trace id.
+  const [intelligenceStarting, setIntelligenceStarting] = useState(false);
+  // The turn to put back in the composer if the run fails. The draft is cleared at
+  // send time (the server owns the echo), and the failure now arrives seconds later
+  // over the socket, so the text has to be parked somewhere until then.
+  const restoreOnFailure = useRef<{ text: string; attachments: { name: string; path: string }[] } | null>(null);
   const [intelligenceNotice, setIntelligenceNotice] = useState('');
   const [localOutput, setLocalOutput] = useState('');
   const [pending, setPending] = useState<PendingApproval[]>([]);
@@ -535,6 +545,76 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     agentDeckWS.send('native:interrupt', { agentId });
   }, [agentId]);
 
+  // The run we are watching, pushed here by the socket (useWebSocket → appStore).
+  const activeRun = useAppStore((s) => (activeTraceId ? s.intelligenceRuns.get(activeTraceId) : undefined));
+  // "Preparing" covers only the local phase: from pressing send until the local
+  // model hands off. Once the task is dispatched to the cloud, the ordinary
+  // "agent is working" indicator owns the screen, even though the trace stays open
+  // until the cloud turn closes it.
+  const intelligencePreparing = intelligenceStarting
+    || (!!activeTraceId && (!activeRun || isLocalPhaseRunning(activeRun.trace)));
+
+  const failRun = useCallback((trace: IntelligenceTrace) => {
+    const localCode = localFailureCode(trace);
+    const cloudCode = cloudFailureCode(trace);
+    setError(localCode && cloudCode
+      ? `${localErrorLabel(localCode)} ${localErrorLabel(cloudCode)} The task was not sent.`
+      : `${localErrorLabel(localCode || cloudCode || trace.errorCode)} The task was not sent.`);
+    // Give the turn back. Only if the composer is still empty — the user has had
+    // seconds to start typing something else, and overwriting that would be worse
+    // than losing the original.
+    const restore = restoreOnFailure.current;
+    restoreOnFailure.current = null;
+    if (!restore) return;
+    setDraft((current) => current || restore.text);
+    setAttachments((current) => (current.length ? current : restore.attachments));
+  }, []);
+
+  // The outcome of a run arrives here, not from the call that started it. Anything
+  // that used to follow `await runIntelligence(...)` lives in this effect now —
+  // which is also why closing the tab mid-run no longer loses the result.
+  useEffect(() => {
+    if (!activeTraceId || !activeRun) return;
+    const { trace } = activeRun;
+    if (isLocalPhaseRunning(trace)) return;
+
+    setActiveTraceId(null);
+    setIntelligenceRefreshKey((key) => key + 1);
+
+    if (trace.mode === 'LOCAL_ONLY') {
+      if (trace.status !== 'SUCCESS') {
+        failRun(trace);
+        return;
+      }
+      // The pack is never stored server-side, so this event is the only place it
+      // exists. If it is missing, say so rather than showing an empty panel.
+      setLocalOutput(activeRun.contextPack || 'Local task completed without a returned context result.');
+      setIntelligenceNotice('Local result ready. No cloud execution was used.');
+      restoreOnFailure.current = null;
+      return;
+    }
+    if (trace.status === 'FAILED') {
+      failRun(trace);
+      return;
+    }
+    markJustSent();
+    setIntelligenceNotice(trace.fallback
+      ? `Local optimization unavailable. ${localErrorLabel(localFailureCode(trace))} Continuing with ${cloudTargetName(driver)}.`
+      : `Optimized context sent to ${cloudTargetName(driver)}.`);
+    restoreOnFailure.current = null;
+  }, [activeRun, activeTraceId, driver, failRun, markJustSent]);
+
+  // Stopping is a decision now, so it ends the run as a cancellation and never
+  // spends a cloud turn on a fallback (the server enforces that half).
+  const cancelIntelligenceRun = useCallback(async () => {
+    if (!activeTraceId) return;
+    try {
+      await api.cancelIntelligence(activeTraceId);
+    } catch {
+      // 404 means it already finished; the trace event that follows says how.
+    }
+  }, [activeTraceId]);
+
   const send = useCallback(async () => {
     const text = draft.trim();
     if (!text && !attachments.length) return;
@@ -624,7 +704,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     setLocalOutput('');
 
     const usesIntelligence = intelligenceMode !== 'CLOUD_ONLY' && !hasAttachments && !isNativeCommand;
-    if (usesIntelligence) setIntelligencePreparing(true);
+    if (usesIntelligence) setIntelligenceStarting(true);
     try {
       const routed = await routeNativeTask({
         agentId,
@@ -649,37 +729,32 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         return;
       }
 
+      // The run was ACCEPTED, not finished. Everything that used to be read off the
+      // response — the context pack, the fallback notice, the failure — now arrives
+      // on intelligence:trace and is handled by the effect above. This is what lets
+      // the run survive a closed tab, a locked phone, or a proxy read timeout.
       setIntelligenceRefreshKey((key) => key + 1);
-      if (routed.path === 'local') {
-        setLocalOutput(routed.result.contextPack || 'Local task completed without a returned context result.');
-        setIntelligenceNotice('Local result ready. No cloud execution was used.');
-        return;
-      }
-
-      markJustSent();
-      if (routed.result.trace.fallback) {
-        setIntelligenceNotice(
-          `Local optimization unavailable. ${localErrorLabel(routed.result.trace.errorCode)} Continuing with ${cloudTargetName(driver)}.`,
-        );
-      } else {
-        setIntelligenceNotice(`Optimized context sent to ${cloudTargetName(driver)}.`);
-      }
+      restoreOnFailure.current = { text, attachments: originalAttachments };
+      setActiveTraceId(routed.start.trace.id);
     } catch (err) {
+      // Only synchronous refusals land here now: a 400 the server decided inside the
+      // request, or a transport failure that means the run never started at all.
       const failedTrace = traceFromApiError(err);
       if (failedTrace) setIntelligenceRefreshKey((key) => key + 1);
       const localCode = failedTrace ? localFailureCode(failedTrace) : undefined;
       const cloudCode = failedTrace ? cloudFailureCode(failedTrace) : undefined;
       if (!failedTrace) {
-        setError('The Local Intelligence connection was interrupted. Check the trace before retrying; cloud fallback may already be running.');
+        setError('The run could not be started. Nothing was sent — check the connection and retry.');
       } else {
         setError(localCode && cloudCode
           ? `${localErrorLabel(localCode)} ${localErrorLabel(cloudCode)} The task was not sent.`
           : `${localErrorLabel(localCode || cloudCode || failedTrace.errorCode)} The task was not sent.`);
       }
+      restoreOnFailure.current = null;
       setDraft(text);
       setAttachments(originalAttachments);
     } finally {
-      setIntelligencePreparing(false);
+      setIntelligenceStarting(false);
     }
   }, [
     agentId, attachments, busy, draft, driver, intelligenceMode, intelligencePreparing,
@@ -904,7 +979,16 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         {intelligencePreparing && (
           <div className="mx-2 mt-2 flex items-center gap-2 overflow-hidden rounded-lg border border-deck-accent/20 bg-deck-accent/10 px-3 py-1.5 text-xs text-deck-accent-light">
             <IconSpinner size={13} className="animate-spin shrink-0" />
-            <span className="min-w-0 truncate">Preparing local context… {localProvider} → {intelligenceMode === 'LOCAL_ONLY' ? 'Local result' : cloudTargetName(driver)}</span>
+            <span className="min-w-0 flex-1 truncate">Preparing local context… {localProvider} → {intelligenceMode === 'LOCAL_ONLY' ? 'Local result' : cloudTargetName(driver)}</span>
+            {activeTraceId && (
+              <button
+                onClick={() => void cancelIntelligenceRun()}
+                className="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium text-deck-text-dim hover:bg-deck-border/50"
+                title="로컬 전처리를 중단합니다. 클라우드로 넘기지 않습니다"
+              >
+                중단
+              </button>
+            )}
           </div>
         )}
         {!intelligencePreparing && working && (

@@ -1,4 +1,4 @@
-import type { IntelligenceMode, IntelligenceRunResult } from '../../lib/api';
+import type { IntelligenceMode, IntelligenceStartResult } from '../../lib/api';
 
 export type NativeDriverName = 'codex' | 'claude';
 export type LocalOperation = 'summarize' | 'explain' | 'classify' | 'log_analysis' | 'repository_question';
@@ -22,12 +22,14 @@ export interface NativeTaskRouteDependencies {
     mode: IntelligenceMode;
     provider?: string;
     operation?: string;
-  }) => Promise<IntelligenceRunResult>;
+  }) => Promise<IntelligenceStartResult>;
 }
 
+// The intelligence paths return an ACCEPTED run, not a finished one: the outcome
+// arrives later on the intelligence:trace event, keyed by start.trace.id.
 export type NativeTaskRouteResult =
   | { path: 'cloud'; attachmentFallback: boolean; commandBypass: boolean }
-  | { path: 'hybrid' | 'local'; result: IntelligenceRunResult };
+  | { path: 'hybrid' | 'local'; start: IntelligenceStartResult };
 
 export function clientCommand(text: string): 'clear' | 'plugin' | 'native' | null {
   if (text === '/clear') return 'clear';
@@ -49,14 +51,14 @@ export async function routeNativeTask(
   if (!input.provider) throw new Error('LOCAL_PROVIDER_REQUIRED');
   if (input.mode === 'LOCAL_ONLY' && !input.operation) throw new Error('LOCAL_OPERATION_REQUIRED');
 
-  const result = await dependencies.runIntelligence({
+  const start = await dependencies.runIntelligence({
     agentId: input.agentId,
     task: input.task,
     mode: input.mode,
     provider: input.provider,
     operation: input.mode === 'LOCAL_ONLY' ? input.operation : undefined,
   });
-  return { path: input.mode === 'LOCAL_ONLY' ? 'local' : 'hybrid', result };
+  return { path: input.mode === 'LOCAL_ONLY' ? 'local' : 'hybrid', start };
 }
 
 export function cloudTargetName(driver: NativeDriverName): string {

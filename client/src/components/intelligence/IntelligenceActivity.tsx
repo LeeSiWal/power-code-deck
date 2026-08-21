@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type IntelligenceTrace } from '../../lib/api';
+import { useAppStore } from '../../stores/appStore';
 import { IconChevronRight, IconRefresh } from '../icons';
 import { SavingsSummary } from './SavingsSummary';
 import { TraceDetail } from './TraceDetail';
@@ -61,8 +62,20 @@ export function IntelligenceActivity() {
     }
   };
 
-  const aggregate = aggregateSavings(traces);
-  const latest = traces[0];
+  // The REST list is a snapshot; runs keep moving after it. Overlay whatever the
+  // socket has pushed since — including runs that started after this panel loaded,
+  // which is the normal case when a run is kicked off from a chat in another tab.
+  const liveRuns = useAppStore((s) => s.intelligenceRuns);
+  const merged = useMemo(() => {
+    const byId = new Map(traces.map((item) => [item.id, item]));
+    for (const run of liveRuns.values()) byId.set(run.trace.id, run.trace);
+    return [...byId.values()]
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 20);
+  }, [traces, liveRuns]);
+
+  const aggregate = aggregateSavings(merged);
+  const latest = merged[0];
 
   return (
     <div className="card p-3">
@@ -80,14 +93,14 @@ export function IntelligenceActivity() {
         Estimated context tokens measure PowerCodeDeck's pre-cloud context reduction. They do not represent Codex's complete internal token usage or billing.
       </div>
 
-      {loading && traces.length === 0 ? (
+      {loading && merged.length === 0 ? (
         <div className="py-6 text-center text-xs text-deck-text-dim">Loading Local Intelligence data…</div>
       ) : error ? (
         <div className="py-5 text-center">
           <div className="text-xs text-deck-danger">{error}</div>
           <button onClick={() => void load()} className="mt-2 min-h-9 rounded-lg border border-deck-border px-3 text-xs">Retry</button>
         </div>
-      ) : traces.length === 0 ? (
+      ) : merged.length === 0 ? (
         <div className="py-6 text-center">
           <div className="text-xs font-medium">No Local Intelligence runs yet.</div>
           <div className="mt-1 text-xs text-deck-text-dim">Run a Hybrid task to measure context savings.</div>
@@ -120,7 +133,7 @@ export function IntelligenceActivity() {
           <section>
             <div className="mb-1 text-xs font-medium">Recent runs</div>
             <div className="divide-y divide-deck-border/60">
-              {traces.map((trace) => (
+              {merged.map((trace) => (
                 <button key={trace.id} onClick={() => void viewTrace(trace)} className="flex min-h-12 w-full min-w-0 items-center gap-2 py-2 text-left hover:bg-deck-border/20">
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">

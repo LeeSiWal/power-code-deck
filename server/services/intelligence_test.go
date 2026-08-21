@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,15 +58,26 @@ func intelligenceRunTestDB(t *testing.T) *sql.DB {
 }
 
 type intelligenceFakeDriver struct {
+	// mu guards sent: runs are goroutines now, so a test that asserts on what
+	// reached the cloud reads this from a different goroutine than the one writing it.
+	mu      sync.Mutex
 	sent    []string
 	events  chan *StreamEvent
 	sendErr error
 }
 
+func (d *intelligenceFakeDriver) sentTexts() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.sent...)
+}
+
 func (d *intelligenceFakeDriver) Start() error                { return nil }
 func (d *intelligenceFakeDriver) Events() <-chan *StreamEvent { return d.events }
 func (d *intelligenceFakeDriver) Send(s string) error {
+	d.mu.Lock()
 	d.sent = append(d.sent, s)
+	d.mu.Unlock()
 	return d.sendErr
 }
 func (d *intelligenceFakeDriver) Interrupt() error               { return nil }

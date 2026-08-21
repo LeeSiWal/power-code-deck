@@ -49,7 +49,7 @@
 - Produces: `func (s *IntelligenceService) Cancel(traceID string) bool` — 사용자의 명시적 취소
 - Keeps: `Run(ctx, req)` 는 **테스트와 동기 호출자를 위해 남긴다.** `Start`가 `Run`을 고루틴에서 부른다. 기존 테스트 전부가 그대로 산다.
 
-- [ ] **Step 1: 실패하는 테스트 작성**
+- [x] **Step 1: 실패하는 테스트 작성**
 
 `server/services/intelligence_job_test.go`:
 
@@ -76,9 +76,9 @@ func TestStartSurvivesRequestCancellation(t *testing.T) {
 func TestStartRejectsInvalidRequestSynchronously(t *testing.T) { ... }
 ```
 
-- [ ] **Step 2: `Start` 구현.** `Run` 앞머리의 검증 블록(task/agentID 확인, mode 확인, agent 조회, LOCAL_ONLY 허용목록, 네이티브 세션 준비 확인)을 `Start`로 끌어올린다. 통과하면 `RUNNING` 트레이스를 저장하고 `context.WithCancel(context.Background())`로 만든 컨텍스트를 레지스트리에 넣은 뒤 `go s.Run(runCtx, req)`.
-- [ ] **Step 3: 취소 레지스트리.** `s.mu`가 이미 지키는 `pending` 옆에 `running map[string]context.CancelFunc`를 둔다. `Cancel(traceID)`는 그 함수를 부르고, 실행 고루틴은 종료 시 반드시 지운다(`defer`).
-- [ ] **Step 4: 검증.** `CGO_ENABLED=0 go test ./services/ -run 'TestStart|TestHybrid|TestClassify' -v`
+- [x] **Step 2: `Start` 구현.** `Run` 앞머리의 검증 블록(task/agentID 확인, mode 확인, agent 조회, LOCAL_ONLY 허용목록, 네이티브 세션 준비 확인)을 `Start`로 끌어올린다. 통과하면 `RUNNING` 트레이스를 저장하고 `context.WithCancel(context.Background())`로 만든 컨텍스트를 레지스트리에 넣은 뒤 `go s.Run(runCtx, req)`.
+- [x] **Step 3: 취소 레지스트리.** `s.mu`가 이미 지키는 `pending` 옆에 `running map[string]context.CancelFunc`를 둔다. `Cancel(traceID)`는 그 함수를 부르고, 실행 고루틴은 종료 시 반드시 지운다(`defer`).
+- [x] **Step 4: 검증.** `CGO_ENABLED=0 go test ./services/ -run 'TestStart|TestHybrid|TestClassify' -v`
 
 **주의:** `dispatchCloud`는 이미 서버 안에서 `native.SendWithDisplayText`를 부르므로 구조 변경이 아니다. `pending[agentID]` 등록/해제 순서(`intelligence.go:842-857`의 레이스 주석)를 **건드리지 말 것** — 빠른 드라이버가 Send 반환 전에 result를 뱉는 경우를 막는 코드다.
 
@@ -96,9 +96,9 @@ func TestStartRejectsInvalidRequestSynchronously(t *testing.T) { ... }
 - Produces: `type IntelligenceTracePayload struct { Trace services.IntelligenceTrace \`json:"trace"\` }`
 - Produces: `func (s *IntelligenceService) SetEmitter(fn func(IntelligenceTrace))`
 
-- [ ] **Step 1: 이벤트 상수 + 페이로드 추가.** `EventAgentSummaries`(line 56) 옆의 관례를 따른다.
-- [ ] **Step 2: emitter 호출.** `saveTrace`가 **유일한 영속화 지점**이므로 여기 한 곳에서 emitter를 부르면 모든 상태 전이가 자동으로 방송된다. 새 호출부를 만들지 말 것.
-- [ ] **Step 3: 배선.** `main.go`에서 `ControlRoom`의 선례 그대로:
+- [x] **Step 1: 이벤트 상수 + 페이로드 추가.** `EventAgentSummaries`(line 56) 옆의 관례를 따른다.
+- [x] **Step 2: emitter 호출.** `saveTrace`가 **유일한 영속화 지점**이므로 여기 한 곳에서 emitter를 부르면 모든 상태 전이가 자동으로 방송된다. 새 호출부를 만들지 말 것.
+- [x] **Step 3: 배선.** `main.go`에서 `ControlRoom`의 선례 그대로:
 
 ```go
 intelligenceSvc.SetEmitter(func(t services.IntelligenceTrace) {
@@ -108,7 +108,7 @@ intelligenceSvc.SetEmitter(func(t services.IntelligenceTrace) {
 
 `BroadcastAll`인 이유: 트레이스는 에이전트에 묶이지만 설정 화면의 트레이스 목록은 에이전트 화면 밖에서도 열린다. 페이로드에 `agentId`가 이미 있으므로 수신 측이 거른다.
 
-- [ ] **Step 4: 검증.** `CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go test ./ws/ ./services/`
+- [x] **Step 4: 검증.** `CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go test ./ws/ ./services/`
 
 ---
 
@@ -123,10 +123,10 @@ intelligenceSvc.SetEmitter(func(t services.IntelligenceTrace) {
 - `POST /api/intelligence/run` → **202 Accepted** + `{trace}` (`RUNNING` 상태)
 - `POST /api/intelligence/traces/{id}/cancel` → 204 / 404
 
-- [ ] **Step 1: 실패하는 테스트.** 느린 프로바이더에 대고 `POST /run`이 **1초 안에** 202로 돌아오는지. 지금은 추론이 끝날 때까지 붙잡혀 있다.
-- [ ] **Step 2: 핸들러 전환.** `svc.Start(req)`를 부르고, 검증 에러는 400, 성공은 202 + 트레이스. **`r.Context()`를 서비스에 넘기지 않는다** — 이 계획의 핵심 한 줄이다.
-- [ ] **Step 3: cancel 라우트 추가.** `api.HandleFunc("/intelligence/traces/{id}/cancel", …).Methods("POST")`. 인증 미들웨어는 `api` 라우터에 이미 걸려 있다(`main.go:214`).
-- [ ] **Step 4: 검증.** `CGO_ENABLED=0 go test ./handlers/`
+- [x] **Step 1: 실패하는 테스트.** 느린 프로바이더에 대고 `POST /run`이 **1초 안에** 202로 돌아오는지. 지금은 추론이 끝날 때까지 붙잡혀 있다.
+- [x] **Step 2: 핸들러 전환.** `svc.Start(req)`를 부르고, 검증 에러는 400, 성공은 202 + 트레이스. **`r.Context()`를 서비스에 넘기지 않는다** — 이 계획의 핵심 한 줄이다.
+- [x] **Step 3: cancel 라우트 추가.** `api.HandleFunc("/intelligence/traces/{id}/cancel", …).Methods("POST")`. 인증 미들웨어는 `api` 라우터에 이미 걸려 있다(`main.go:214`).
+- [x] **Step 4: 검증.** `CGO_ENABLED=0 go test ./handlers/`
 
 **하위호환:** 202는 `res.ok`이므로 기존 `apiFetch`가 그대로 통과한다. 다만 반환 본문의 의미가 "완료된 결과"에서 "접수된 트레이스"로 바뀌므로 Task 4를 같은 배포에 실어야 한다.
 
@@ -140,23 +140,35 @@ intelligenceSvc.SetEmitter(func(t services.IntelligenceTrace) {
 - Modify: `client/src/components/native/NativeChat.tsx` (실행 호출부)
 - Modify: `client/src/components/intelligence/TraceDetail.tsx`
 
-- [ ] **Step 1: `runIntelligence` 반환 타입 정정.** 이제 `{trace}`만 돌아온다 — `contextPack`·`files`·`cloudDispatched`는 완료 이벤트에서 온다. 타입을 `IntelligenceStartResult`로 분리해 **컴파일러가 모든 사용처를 잡게 한다.**
-- [ ] **Step 2: 구독.** `intelligence:trace`를 받아 스토어의 트레이스 맵을 갱신한다. 같은 id의 늦은 이벤트가 새 상태를 덮지 않도록 **단조 진행만 허용**한다(터미널 상태에 도달한 트레이스는 되돌리지 않는다).
-- [ ] **Step 3: NativeChat.** 실행 버튼은 202를 받는 즉시 "진행 중"으로 바뀌고, 이후 상태는 이벤트가 민다. **탭을 닫았다 돌아와도 진행 중 트레이스가 보여야 한다** — 재연결 시 `GET /api/intelligence/traces?limit=…`로 한 번 채운다(WS 재연결 훅에 이미 자리가 있다).
-- [ ] **Step 4: 취소 버튼.** 진행 중 트레이스에 취소를 붙인다. 취소는 `LOCAL_REQUEST_CANCELED`로 끝나야 한다 — 미커밋 diff가 추가한 그 에러코드가 **이제 제 이름값을 한다**(브라우저 사고가 아니라 사용자 의도).
-- [ ] **Step 5: 검증.** `cd client && ./node_modules/.bin/tsc --noEmit`
+- [x] **Step 1: `runIntelligence` 반환 타입 정정.** 이제 `{trace}`만 돌아온다 — `contextPack`·`files`·`cloudDispatched`는 완료 이벤트에서 온다. 타입을 `IntelligenceStartResult`로 분리해 **컴파일러가 모든 사용처를 잡게 한다.**
+- [x] **Step 2: 구독.** `intelligence:trace`를 받아 스토어의 트레이스 맵을 갱신한다. 같은 id의 늦은 이벤트가 새 상태를 덮지 않도록 **단조 진행만 허용**한다(터미널 상태에 도달한 트레이스는 되돌리지 않는다).
+- [x] **Step 3: NativeChat.** 실행 버튼은 202를 받는 즉시 "진행 중"으로 바뀌고, 이후 상태는 이벤트가 민다. **탭을 닫았다 돌아와도 진행 중 트레이스가 보여야 한다** — 재연결 시 `GET /api/intelligence/traces?limit=…`로 한 번 채운다(WS 재연결 훅에 이미 자리가 있다).
+- [x] **Step 4: 취소 버튼.** 진행 중 트레이스에 취소를 붙인다. 취소는 `LOCAL_REQUEST_CANCELED`로 끝나야 한다 — 미커밋 diff가 추가한 그 에러코드가 **이제 제 이름값을 한다**(브라우저 사고가 아니라 사용자 의도).
+- [x] **Step 5: 검증.** `cd client && ./node_modules/.bin/tsc --noEmit`
 
 ---
 
 ### Task 5: 실물 확인 · 문서 · 바이너리
 
-- [ ] **Step 1: 재현 시나리오.** 실패대 컨텍스트(raw ≈ 34k)로 하이브리드를 걸고 **실행 중 브라우저 탭을 닫는다.** 다시 열었을 때:
+- [x] **Step 1: 재현 시나리오.** 실패대 컨텍스트(raw ≈ 34k)로 하이브리드를 걸고 **실행 중 브라우저 탭을 닫는다.** 다시 열었을 때:
   - 트레이스가 진행 중이거나 완주해 있어야 한다
   - `LOCAL_PROVIDER_UNREACHABLE` / `context canceled`가 **나오지 않아야 한다**
   - 오늘 이 시나리오는 125초 취소로 끝난다 — 그게 이 계획의 성공 판정 기준이다
-- [ ] **Step 2: 프로바이더 타임아웃 자체는 그대로 살아 있는지.** 진짜로 죽은 프로바이더에 대고 걸면 `LOCAL_TIMEOUT`으로 정상 종료해야 한다. **취소 분리가 타임아웃까지 없애면 안 된다.**
-- [ ] **Step 3: 문서.** `docs/local-intelligence-poc-report.md` §11(Known limitations)에서 요청 수명 문제를 지우고, 실행 모델이 잡으로 바뀐 사실을 §5에 적는다.
-- [ ] **Step 4: `dist/pcd.exe` 재빌드** (클라이언트가 바뀌었으므로 필수).
+
+  **실측(2026-08-21, 실제 바이너리):** 하이브리드가 아니라 `LOCAL_ONLY`로 확인했다 — 하이브리드는
+  살아 있는 네이티브 CLI 세션이 필요해서 스크립트로 세울 수 없다. 요청 수명 분리는 두 모드가
+  같은 경로(`Start` → 잡 고루틴)를 쓰므로 이 확인으로 덮인다.
+  - 6초짜리 스텁 프로바이더에 `POST /run` → **202를 0.9ms에 반환**, 클라이언트는 즉시 연결 종료
+  - 그럼에도 실행은 완주: `SUCCESS`, 로컬 지연 6,018ms, 3,944 → 28 추정 토큰
+  - `intelligence:trace` 이벤트 4건 수신(직접 붙인 WS 클라이언트): `RUNNING`×2 → `SUCCESS`(트레이스만)
+    → `SUCCESS`(컨텍스트 팩 + 파일 9개). 저장되지 않는 팩이 종료 이벤트로만 나온다는 설계가 실제로 성립
+  - 취소: `204` → `FAILED` / `LOCAL_REQUEST_CANCELED`, `fallback=false`(클라우드 미발송), 재취소는 `404`
+  - 검증 실패는 여전히 요청 안에서 `400` + 트레이스
+- [x] **Step 2: 프로바이더 타임아웃 자체는 그대로 살아 있는지.** 죽은 엔드포인트에 걸면
+  `LOCAL_PROVIDER_UNREACHABLE`로 정상 종료했고, 하이브리드 데드라인 폴백은
+  `TestStartStillHonorsLocalTimeout`이 고정한다(취소만 폴백하지 않는다). 진짜로 죽은 프로바이더에 대고 걸면 `LOCAL_TIMEOUT`으로 정상 종료해야 한다. **취소 분리가 타임아웃까지 없애면 안 된다.**
+- [x] **Step 3: 문서.** `docs/local-intelligence-poc-report.md` §11(Known limitations)에서 요청 수명 문제를 지우고, 실행 모델이 잡으로 바뀐 사실을 §5에 적는다.
+- [x] **Step 4: `dist/pcd.exe` 재빌드** (클라이언트가 바뀌었으므로 필수).
 
 ## Self-Review
 

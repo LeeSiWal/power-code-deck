@@ -72,6 +72,20 @@ export function useWebSocket() {
       agentDeckWS.on('agent:summaries', (payload: any) => {
         useAppStore.getState().applySummaries(payload?.summaries || []);
       }),
+      // Local Intelligence runs are server-side jobs: they keep going when the tab
+      // closes, so their progress arrives here rather than as the answer to the
+      // request that started them.
+      agentDeckWS.on('intelligence:trace', (payload: any) => {
+        if (payload?.trace?.id) useAppStore.getState().applyIntelligenceRun(payload);
+      }),
+      // (Re)connect: fill in whatever ran while this client was away. Without this a
+      // run started before a reload is invisible until it happens to emit again —
+      // and a run that finished in the meantime never would.
+      agentDeckWS.on('open', () => {
+        void api.intelligenceTraces(20)
+          .then((traces) => useAppStore.getState().seedIntelligenceRuns(traces))
+          .catch(() => { /* the traces panel surfaces its own load errors */ });
+      }),
       agentDeckWS.on('native:approval', (payload: any) => {
         // Same event the native chat uses; here it feeds the global approval queue.
         //

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type IntelligenceTrace } from '../../lib/api';
+import { useAppStore } from '../../stores/appStore';
 import { IconChevronDown, IconChevronRight } from '../icons';
 import { TraceDetail } from './TraceDetail';
 import { TraceStatus } from './TraceStatus';
@@ -48,9 +49,15 @@ export function SessionSavingsSummary({
     };
   }, [agentId, refreshKey]);
 
-  if (!trace) return null;
-  const state = savingsState(trace);
-  const compressed = compressedEstimatedTokens(trace);
+  // Runs are jobs: this trace keeps changing after the fetch above returned. Prefer
+  // the live copy the socket pushed into the store, so the panel advances from
+  // "local model running" to the finished numbers without a refresh.
+  const live = useAppStore((s) => (trace ? s.intelligenceRuns.get(trace.id)?.trace : undefined));
+  const shown = live || trace;
+
+  if (!shown) return null;
+  const state = savingsState(shown);
+  const compressed = compressedEstimatedTokens(shown);
 
   const toggleDetail = async () => {
     if (detail) {
@@ -59,7 +66,7 @@ export function SessionSavingsSummary({
     }
     setDetailLoading(true);
     try {
-      setDetail(await api.intelligenceTrace(trace.id));
+      setDetail(await api.intelligenceTrace(shown.id));
     } catch {
       // Keep the compact, already-loaded summary usable when detail loading fails.
     } finally {
@@ -74,20 +81,20 @@ export function SessionSavingsSummary({
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
             <span className="shrink-0 text-xs font-medium">Local Intelligence</span>
-            <span className="truncate text-[11px] text-deck-accent-light">{sessionOutcome(trace)}</span>
+            <span className="truncate text-[11px] text-deck-accent-light">{sessionOutcome(shown)}</span>
           </span>
           <span className="mt-0.5 flex min-w-0 items-center gap-2">
-            {trace.provider && (
+            {shown.provider && (
               <span className="min-w-0 truncate text-[10px] text-deck-text-dim">
-                {trace.provider} → {trace.mode === 'LOCAL_ONLY' ? 'Local result' : cloudTargetName(driver)}
+                {shown.provider} → {shown.mode === 'LOCAL_ONLY' ? 'Local result' : cloudTargetName(driver)}
               </span>
             )}
             {compressed !== null && (
               <span className="shrink-0 text-[10px] text-deck-text-dim">
-                {formatEstimatedTokens(trace.rawEstimatedTokens)} → {formatEstimatedTokens(trace.optimizedEstimatedTokens)} est. context
+                {formatEstimatedTokens(shown.rawEstimatedTokens)} → {formatEstimatedTokens(shown.optimizedEstimatedTokens)} est. context
               </span>
             )}
-            <TraceStatus trace={trace} compact />
+            <TraceStatus trace={shown} compact />
           </span>
         </span>
         {detail ? <IconChevronDown size={13} className="shrink-0 text-deck-text-faint" /> : <IconChevronRight size={13} className="shrink-0 text-deck-text-faint" />}

@@ -10,6 +10,7 @@ const STATUS: Record<string, { symbol: string; label: string; tone: string }> = 
   FALLBACK_CLOUD_DISPATCHED: { symbol: '↪', label: 'Cloud fallback running', tone: 'text-deck-warning' },
   FAILED: { symbol: '×', label: 'Local preprocessing failed', tone: 'text-deck-danger' },
   STARTED: { symbol: '○', label: 'Running', tone: 'text-deck-accent-light' },
+  RUNNING: { symbol: '○', label: 'Local model running', tone: 'text-deck-accent-light' },
 };
 
 export function traceStatusInfo(status: string) {
