@@ -218,6 +218,25 @@ func Migrate(db *sql.DB) error {
 		created_at       TEXT NOT NULL DEFAULT (datetime('now')),
 		updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
 	)`)
+	// Cloud consumption on the closing result event — may already exist, non-fatal.
+	// Hybrid savings have to be measured against what the CLOUD actually spent:
+	// raw−optimized compares against a baseline CLOUD_ONLY never sends, because
+	// CLOUD_ONLY passes the user's task through byte-for-byte and the candidate
+	// context is never transmitted at all.
+	//
+	// cloud_usage_known separates "this driver reported no usage" from "it reported
+	// zero". Codex is the first case (verified in codex_driver.go), so without this
+	// flag a Codex turn would average into the comparison as a free turn.
+	for _, stmt := range []string{
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_cost_usd REAL DEFAULT 0",
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_input_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_output_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_cache_read_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_usage_known BOOLEAN DEFAULT FALSE",
+	} {
+		db.Exec(stmt)
+	}
+
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_intelligence_traces_created ON intelligence_traces(created_at DESC)")
 
 	return nil

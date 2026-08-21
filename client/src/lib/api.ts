@@ -46,6 +46,19 @@ export interface IntelligenceTrace {
   fallback: boolean;
   events: IntelligenceTraceEvent[];
   createdAt: string;
+  // What the CLOUD actually spent on the dispatched turn — the only honest basis
+  // for a savings claim. rawEstimatedTokens is the candidate context PowerCodeDeck
+  // assembled, which CLOUD_ONLY never sends, so raw−optimized measures local
+  // compression rather than saving.
+  //
+  // cloudUsageKnown is false when the driver reports no usage at all (Codex —
+  // verified against codex-cli 0.146.0). The numbers below are then "not measured",
+  // never "measured as zero", and must not be rendered as a value.
+  cloudCostUsd?: number;
+  cloudInputTokens?: number;
+  cloudOutputTokens?: number;
+  cloudCacheReadTokens?: number;
+  cloudUsageKnown?: boolean;
 }
 
 export interface IntelligenceRunResult {

@@ -441,9 +441,31 @@ func (d *CodexDriver) handleNotification(method string, raw json.RawMessage) {
 		d.mu.Lock()
 		d.turnID = ""
 		d.mu.Unlock()
+		if codexTurnObserver != nil {
+			codexTurnObserver(p.Turn)
+		}
 		d.events <- nativeResultEvent()
 	}
 }
+
+// codexTurnObserver is a discovery hook for the opt-in live test: the app-server's
+// turn/completed payload is not a published schema, so the only way to learn what
+// it carries is to look at a real one. nil in production.
+var codexTurnObserver func(json.RawMessage)
+
+// Codex reports NO token or cost usage on turn completion. Verified, not assumed:
+// TestCodexTurnCompletedPayload captured a real turn from codex-cli 0.146.0 and
+// the entire payload is
+//
+//	{"id":"01a023b8-…","items":[…],"itemsView":"summary","status":"completed",
+//	 "error":null,"startedAt":1787305712,"completedAt":1787305721,"durationMs":9476}
+//
+// That absence is load-bearing for Local Intelligence: hybrid savings are measured
+// from what the cloud actually spent, so the Codex path cannot be measured at all
+// and its traces must say so rather than record a fabricated zero. Usage therefore
+// stays nil here (see nativeResultEventWithUsage), and the savings measurement runs
+// on Claude sessions. If a future Codex version adds usage, the live test above is
+// what will tell us.
 
 func (d *CodexDriver) emitSystem(model string) {
 	raw, _ := json.Marshal(map[string]any{

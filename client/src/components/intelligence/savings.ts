@@ -6,7 +6,7 @@ export interface SavingsAggregate {
   runCount: number;
   totalRaw: number;
   totalOptimized: number;
-  totalSaved: number;
+  totalCompressed: number;
   overallReduction: number;
 }
 
@@ -51,25 +51,56 @@ export function cloudFailureCode(trace: IntelligenceTrace): string | undefined {
   return undefined;
 }
 
-export function savedEstimatedTokens(trace: IntelligenceTrace): number | null {
+// How much the LOCAL model compressed the candidate context. Deliberately NOT
+// called "saved": the candidate context is assembled by PowerCodeDeck and is never
+// sent in CLOUD_ONLY (which forwards the user's task byte-for-byte), so this
+// difference is a compression ratio, not a cloud saving. Actual saving lives in
+// cloudCostUsd / cloudInputTokens, measured on the closing result event.
+export function compressedEstimatedTokens(trace: IntelligenceTrace): number | null {
   if (!hasValidReduction(trace) || trace.fallback || trace.mode === 'CLOUD_ONLY') return null;
   return trace.rawEstimatedTokens - trace.optimizedEstimatedTokens;
+}
+
+export type CloudSpend =
+  | { known: true; costUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number }
+  | { known: false };
+
+// A trace only carries cloud spend once its turn closed AND the driver reported
+// usage. Codex reports none, so this returns {known:false} there — the caller must
+// say so rather than print a zero.
+export function cloudSpend(trace: IntelligenceTrace): CloudSpend {
+  if (!trace.cloudUsageKnown) return { known: false };
+  return {
+    known: true,
+    costUsd: trace.cloudCostUsd ?? 0,
+    inputTokens: trace.cloudInputTokens ?? 0,
+    outputTokens: trace.cloudOutputTokens ?? 0,
+    cacheReadTokens: trace.cloudCacheReadTokens ?? 0,
+  };
+}
+
+export function formatUSD(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value > 0 && value < 0.01) return '<$0.01';
+  return `$${value.toFixed(2)}`;
 }
 
 export function aggregateSavings(traces: IntelligenceTrace[]): SavingsAggregate | null {
   const eligible = traces.filter((trace) =>
     trace.mode === 'LOCAL_PREPROCESS_CLOUD' && !trace.fallback && hasValidReduction(trace));
+  // Note: this aggregate is COMPRESSION across runs, not saving. See
+  // compressedEstimatedTokens for why the two are not the same number.
   if (eligible.length === 0) return null;
 
   const totalRaw = eligible.reduce((total, trace) => total + trace.rawEstimatedTokens, 0);
   const totalOptimized = eligible.reduce((total, trace) => total + trace.optimizedEstimatedTokens, 0);
-  const totalSaved = totalRaw - totalOptimized;
+  const totalCompressed = totalRaw - totalOptimized;
   return {
     runCount: eligible.length,
     totalRaw,
     totalOptimized,
-    totalSaved,
-    overallReduction: totalRaw > 0 ? (totalSaved * 100) / totalRaw : 0,
+    totalCompressed,
+    overallReduction: totalRaw > 0 ? (totalCompressed * 100) / totalRaw : 0,
   };
 }
 

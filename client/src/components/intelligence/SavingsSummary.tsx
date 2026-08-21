@@ -2,12 +2,14 @@ import type { IntelligenceTrace } from '../../lib/api';
 import { SavingsBar } from './SavingsBar';
 import { TraceStatus } from './TraceStatus';
 import {
+  cloudFailureCode,
+  cloudSpend,
+  compressedEstimatedTokens,
   formatEstimatedTokens,
   formatLatency,
   formatReduction,
-  cloudFailureCode,
+  formatUSD,
   localFailureCode,
-  savedEstimatedTokens,
   savingsState,
 } from './savings';
 
@@ -60,8 +62,9 @@ export function SavingsSummary({ trace }: { trace: IntelligenceTrace }) {
     );
   }
 
-  const saved = savedEstimatedTokens(trace)!;
+  const compressed = compressedEstimatedTokens(trace)!;
   const localOnly = state === 'local-only';
+  const spend = cloudSpend(trace);
   return (
     <div className="rounded-lg border border-deck-accent/25 bg-deck-accent/5 p-3 space-y-3">
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -77,15 +80,32 @@ export function SavingsSummary({ trace }: { trace: IntelligenceTrace }) {
       <div className="grid grid-cols-3 gap-3">
         <Metric label="Raw context" value={`${formatEstimatedTokens(trace.rawEstimatedTokens)} est.`} exact={`${trace.rawEstimatedTokens.toLocaleString()} estimated tokens`} />
         <Metric label="Optimized" value={`${formatEstimatedTokens(trace.optimizedEstimatedTokens)} est.`} exact={`${trace.optimizedEstimatedTokens.toLocaleString()} estimated tokens`} />
-        <Metric label={localOnly ? 'Reduced' : 'Saved'} value={`${formatEstimatedTokens(saved)} est.`} exact={`${saved.toLocaleString()} estimated tokens`} />
+        <Metric label="Compressed" value={`${formatEstimatedTokens(compressed)} est.`} exact={`${compressed.toLocaleString()} estimated tokens`} />
       </div>
 
       <SavingsBar trace={trace} localOnly={localOnly} />
 
       <div className="grid grid-cols-2 gap-3 border-t border-deck-border/70 pt-2">
-        <Metric label="Reduction" value={formatReduction(trace.reductionPercent)} />
+        <Metric label="Compression" value={formatReduction(trace.reductionPercent)} />
         <Metric label="Local latency" value={formatLatency(trace.latencyMs)} />
       </div>
+
+      {!localOnly && (
+        <div className="border-t border-deck-border/70 pt-2">
+          {spend.known ? (
+            <div className="grid grid-cols-3 gap-3">
+              <Metric label="Cloud cost" value={formatUSD(spend.costUsd)} />
+              <Metric label="Cloud input" value={`${formatEstimatedTokens(spend.inputTokens)}`} exact={`${spend.inputTokens.toLocaleString()} input tokens`} />
+              <Metric label="Cloud output" value={`${formatEstimatedTokens(spend.outputTokens)}`} exact={`${spend.outputTokens.toLocaleString()} output tokens`} />
+            </div>
+          ) : (
+            <div className="text-[10px] leading-relaxed text-deck-text-faint">
+              Cloud spend not reported by this driver — compression above is not a
+              measured saving.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

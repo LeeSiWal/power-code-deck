@@ -22,8 +22,8 @@ const STAGE_LABELS: Record<string, string> = {
 
 const SAFE_DETAIL_KEYS: Record<string, string[]> = {
   task_received: ['mode'],
-  repository_scan: ['source', 'candidateFiles', 'rawEstimatedTokens'],
-  local_request: ['provider', 'model'],
+  repository_scan: ['source', 'candidateFiles', 'contextBytes', 'rawEstimatedTokens'],
+  local_request: ['provider', 'model', 'timeoutMs'],
   local_response: ['latencyMs', 'localTokens'],
   context_measurement: ['rawEstimatedTokens', 'optimizedEstimatedTokens', 'reductionPercent'],
   local_processing: ['errorCode', 'reason'],
@@ -37,7 +37,8 @@ function detailLabel(key: string): string {
     candidateFiles: 'Candidate files', rawEstimatedTokens: 'Raw', optimizedEstimatedTokens: 'Optimized',
     reductionPercent: 'Reduction', latencyMs: 'Latency', localTokens: 'Local output',
     nativeTurnBoundary: 'Turn completed', cloudExecution: 'Cloud execution',
-    errorCode: 'Error code', source: 'Source', reason: 'Reason',
+    contextBytes: 'Context bytes', errorCode: 'Error code', source: 'Source', reason: 'Reason',
+    timeoutMs: 'Timeout',
   };
   return labels[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase());
 }

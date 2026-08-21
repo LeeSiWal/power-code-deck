@@ -32,8 +32,21 @@ func nativeTextEvent(role, text string) *StreamEvent {
 // user turn looking forever in-flight: the composer's "작업 중" bar span on a
 // resumed chat with nothing actually running. Closing the turn here fixes that.
 func nativeResultEvent() *StreamEvent {
-	raw, _ := json.Marshal(map[string]any{"type": StreamTypeResult})
-	return &StreamEvent{Type: StreamTypeResult, Raw: raw}
+	return nativeResultEventWithUsage(nil)
+}
+
+// nativeResultEventWithUsage is nativeResultEvent plus what the cloud spent, for
+// drivers that report it. usage stays nil when the driver reports nothing — Raw
+// then omits the field entirely, so a consumer cannot mistake "not reported" for
+// zero. Raw must stay result-shaped: the hub ships it to the browser verbatim
+// (ws/hub.go, EventNativeEvent) and the client keys off `type`.
+func nativeResultEventWithUsage(usage *StreamUsage) *StreamEvent {
+	payload := map[string]any{"type": StreamTypeResult}
+	if usage != nil {
+		payload["usage"] = usage
+	}
+	raw, _ := json.Marshal(payload)
+	return &StreamEvent{Type: StreamTypeResult, Usage: usage, Raw: raw}
 }
 
 // sessionPolicy holds the permission mode and working directory for a session.

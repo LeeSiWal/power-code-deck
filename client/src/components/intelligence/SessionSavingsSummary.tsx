@@ -6,18 +6,18 @@ import { TraceStatus } from './TraceStatus';
 import {
   formatEstimatedTokens,
   formatReduction,
-  savedEstimatedTokens,
+  compressedEstimatedTokens,
   savingsState,
 } from './savings';
 import { cloudTargetName, type NativeDriverName } from './executionRouting';
 
 function sessionOutcome(trace: IntelligenceTrace): string {
   const state = savingsState(trace);
-  if (state === 'validated') return `${formatReduction(trace.reductionPercent)} saved`;
+  if (state === 'validated') return `${formatReduction(trace.reductionPercent)} context compressed`;
   if (state === 'local-only') return 'Local result';
   if (state === 'fallback') return 'Fallback';
   if (state === 'cloud-only') return 'Cloud Only';
-  return 'Savings unavailable';
+  return 'Compression unavailable';
 }
 
 export function SessionSavingsSummary({
@@ -50,7 +50,7 @@ export function SessionSavingsSummary({
 
   if (!trace) return null;
   const state = savingsState(trace);
-  const saved = savedEstimatedTokens(trace);
+  const compressed = compressedEstimatedTokens(trace);
 
   const toggleDetail = async () => {
     if (detail) {
@@ -82,7 +82,7 @@ export function SessionSavingsSummary({
                 {trace.provider} → {trace.mode === 'LOCAL_ONLY' ? 'Local result' : cloudTargetName(driver)}
               </span>
             )}
-            {saved !== null && (
+            {compressed !== null && (
               <span className="shrink-0 text-[10px] text-deck-text-dim">
                 {formatEstimatedTokens(trace.rawEstimatedTokens)} → {formatEstimatedTokens(trace.optimizedEstimatedTokens)} est. context
               </span>

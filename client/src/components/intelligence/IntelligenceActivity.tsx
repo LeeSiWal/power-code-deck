@@ -111,7 +111,7 @@ export function IntelligenceActivity() {
               <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
                 <div><div className="text-[10px] text-deck-text-faint">Raw context</div><div className="font-medium tabular-nums">{formatEstimatedTokens(aggregate.totalRaw)} est.</div></div>
                 <div><div className="text-[10px] text-deck-text-faint">Optimized</div><div className="font-medium tabular-nums">{formatEstimatedTokens(aggregate.totalOptimized)} est.</div></div>
-                <div><div className="text-[10px] text-deck-text-faint">Saved pre-cloud</div><div className="font-medium tabular-nums text-deck-success">{formatEstimatedTokens(aggregate.totalSaved)} est.</div></div>
+                <div><div className="text-[10px] text-deck-text-faint">Compressed</div><div className="font-medium tabular-nums text-deck-success">{formatEstimatedTokens(aggregate.totalCompressed)} est.</div></div>
                 <div><div className="text-[10px] text-deck-text-faint">Reduction</div><div className="font-medium tabular-nums">{formatReduction(aggregate.overallReduction)}</div></div>
               </div>
             </section>

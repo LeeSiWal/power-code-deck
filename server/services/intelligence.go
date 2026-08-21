@@ -626,6 +626,20 @@ type IntelligenceTrace struct {
 	Fallback        bool         `json:"fallback"`
 	Events          []TraceEvent `json:"events"`
 	CreatedAt       string       `json:"createdAt"`
+
+	// What the CLOUD actually spent on the dispatched turn. This is the only
+	// honest basis for a savings comparison: RawTokens is the candidate context
+	// PowerCodeDeck assembled, which CLOUD_ONLY never sends, so RawTokens−
+	// OptimizedTokens measures local compression, not saving.
+	//
+	// CloudUsageKnown is false when the driver reported no usage at all (Codex —
+	// see codex_driver.go). The zeros below then mean "not measured", never
+	// "measured as zero", and the UI must not present them as a number.
+	CloudCostUSD         float64 `json:"cloudCostUsd"`
+	CloudInputTokens     int     `json:"cloudInputTokens"`
+	CloudOutputTokens    int     `json:"cloudOutputTokens"`
+	CloudCacheReadTokens int     `json:"cloudCacheReadTokens"`
+	CloudUsageKnown      bool    `json:"cloudUsageKnown"`
 }
 
 type IntelligenceRunRequest struct {
@@ -899,17 +913,35 @@ func (s *IntelligenceService) observeNativeEvent(agentID string, ev *StreamEvent
 	} else {
 		t.Status = "CLOUD_COMPLETED"
 	}
-	addTrace(&t, "cloud_execution", "COMPLETED", map[string]any{"nativeTurnBoundary": true})
+	details := map[string]any{"nativeTurnBoundary": true}
+	if ev.Usage != nil {
+		t.CloudUsageKnown = true
+		t.CloudCostUSD = ev.TotalCostUSD
+		t.CloudInputTokens = ev.Usage.InputTokens
+		t.CloudOutputTokens = ev.Usage.OutputTokens
+		t.CloudCacheReadTokens = ev.Usage.CacheReadInputTokens
+		details["cloudCostUsd"] = t.CloudCostUSD
+		details["cloudInputTokens"] = t.CloudInputTokens
+		details["cloudOutputTokens"] = t.CloudOutputTokens
+		details["cloudCacheReadTokens"] = t.CloudCacheReadTokens
+	} else {
+		// Recorded, not silently skipped: a reader of this trace must be able to
+		// tell "the driver reports nothing" from "the turn was free".
+		details["cloudUsageReported"] = false
+	}
+	addTrace(&t, "cloud_execution", "COMPLETED", details)
 	s.saveTrace(t)
 }
 
 func (s *IntelligenceService) saveTrace(t IntelligenceTrace) {
 	events, _ := json.Marshal(t.Events)
 	_, _ = s.db.Exec(`INSERT OR REPLACE INTO intelligence_traces
-		(id,agent_id,mode,status,provider,model,raw_tokens,optimized_tokens,local_tokens,latency_ms,error_code,fallback,events_json,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`, t.ID, t.AgentID, t.Mode, t.Status,
+		(id,agent_id,mode,status,provider,model,raw_tokens,optimized_tokens,local_tokens,latency_ms,error_code,fallback,events_json,created_at,
+		 cloud_cost_usd,cloud_input_tokens,cloud_output_tokens,cloud_cache_read_tokens,cloud_usage_known,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`, t.ID, t.AgentID, t.Mode, t.Status,
 		t.Provider, t.Model, t.RawTokens, t.OptimizedTokens, t.LocalTokens, t.LatencyMS,
-		t.ErrorCode, t.Fallback, string(events), t.CreatedAt)
+		t.ErrorCode, t.Fallback, string(events), t.CreatedAt,
+		t.CloudCostUSD, t.CloudInputTokens, t.CloudOutputTokens, t.CloudCacheReadTokens, t.CloudUsageKnown)
 }
 
 func (s *IntelligenceService) Traces(limit int) ([]IntelligenceTrace, error) {
@@ -917,8 +949,9 @@ func (s *IntelligenceService) Traces(limit int) ([]IntelligenceTrace, error) {
 		limit = 50
 	}
 	rows, err := s.db.Query(`SELECT id,agent_id,mode,status,provider,model,raw_tokens,optimized_tokens,
-		local_tokens,latency_ms,error_code,fallback,events_json,created_at FROM intelligence_traces
-		ORDER BY created_at DESC LIMIT ?`, limit)
+		local_tokens,latency_ms,error_code,fallback,events_json,created_at,
+		cloud_cost_usd,cloud_input_tokens,cloud_output_tokens,cloud_cache_read_tokens,cloud_usage_known
+		FROM intelligence_traces ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -929,7 +962,9 @@ func (s *IntelligenceService) Traces(limit int) ([]IntelligenceTrace, error) {
 		var events string
 		if err := rows.Scan(&t.ID, &t.AgentID, &t.Mode, &t.Status, &t.Provider, &t.Model,
 			&t.RawTokens, &t.OptimizedTokens, &t.LocalTokens, &t.LatencyMS, &t.ErrorCode,
-			&t.Fallback, &events, &t.CreatedAt); err != nil {
+			&t.Fallback, &events, &t.CreatedAt,
+			&t.CloudCostUSD, &t.CloudInputTokens, &t.CloudOutputTokens,
+			&t.CloudCacheReadTokens, &t.CloudUsageKnown); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(events), &t.Events)
@@ -945,9 +980,12 @@ func (s *IntelligenceService) Trace(id string) (IntelligenceTrace, error) {
 	var t IntelligenceTrace
 	var events string
 	err := s.db.QueryRow(`SELECT id,agent_id,mode,status,provider,model,raw_tokens,optimized_tokens,
-		local_tokens,latency_ms,error_code,fallback,events_json,created_at FROM intelligence_traces WHERE id=?`, id).Scan(
+		local_tokens,latency_ms,error_code,fallback,events_json,created_at,
+		cloud_cost_usd,cloud_input_tokens,cloud_output_tokens,cloud_cache_read_tokens,cloud_usage_known
+		FROM intelligence_traces WHERE id=?`, id).Scan(
 		&t.ID, &t.AgentID, &t.Mode, &t.Status, &t.Provider, &t.Model, &t.RawTokens,
-		&t.OptimizedTokens, &t.LocalTokens, &t.LatencyMS, &t.ErrorCode, &t.Fallback, &events, &t.CreatedAt)
+		&t.OptimizedTokens, &t.LocalTokens, &t.LatencyMS, &t.ErrorCode, &t.Fallback, &events, &t.CreatedAt,
+		&t.CloudCostUSD, &t.CloudInputTokens, &t.CloudOutputTokens, &t.CloudCacheReadTokens, &t.CloudUsageKnown)
 	if err != nil {
 		return t, err
 	}

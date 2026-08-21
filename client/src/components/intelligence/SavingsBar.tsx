@@ -1,9 +1,9 @@
 import type { IntelligenceTrace } from '../../lib/api';
-import { formatEstimatedTokens, savedEstimatedTokens } from './savings';
+import { compressedEstimatedTokens, formatEstimatedTokens } from './savings';
 
 export function SavingsBar({ trace, localOnly = false }: { trace: IntelligenceTrace; localOnly?: boolean }) {
-  const saved = savedEstimatedTokens(trace);
-  if (saved === null) return null;
+  const compressed = compressedEstimatedTokens(trace);
+  if (compressed === null) return null;
   const optimizedWidth = Math.max(3, (trace.optimizedEstimatedTokens / trace.rawEstimatedTokens) * 100);
 
   return (
@@ -27,7 +27,7 @@ export function SavingsBar({ trace, localOnly = false }: { trace: IntelligenceTr
         </span>
       </div>
       <div className="text-right text-[10px] text-deck-text-dim">
-        {localOnly ? 'Reduced locally' : 'Saved before cloud'}: {formatEstimatedTokens(saved)} est.
+        Compressed locally: {formatEstimatedTokens(compressed)} est.
       </div>
     </div>
   );

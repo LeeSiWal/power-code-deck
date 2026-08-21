@@ -6,7 +6,7 @@ import {
   formatReduction,
   hasValidReduction,
   localFailureCode,
-  savedEstimatedTokens,
+  compressedEstimatedTokens,
   savingsState,
 } from './savings';
 
@@ -23,13 +23,13 @@ function equal(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
 }
 
-equal(savedEstimatedTokens(trace()), 24_004, 'saved tokens');
+equal(compressedEstimatedTokens(trace()), 24_004, 'compressed tokens');
 equal(hasValidReduction(trace()), true, 'valid reduction');
 equal(hasValidReduction(trace({ rawEstimatedTokens: 0 })), false, 'zero raw is invalid');
 equal(hasValidReduction(trace({ optimizedEstimatedTokens: 0 })), false, 'zero optimized is invalid');
 equal(hasValidReduction(trace({ optimizedEstimatedTokens: 28_322 })), false, 'non-reduction is invalid');
 equal(savingsState(trace({ fallback: true, errorCode: 'LOCAL_PROVIDER_UNREACHABLE' })), 'fallback', 'fallback state');
-equal(savedEstimatedTokens(trace({ fallback: true })), null, 'fallback hides savings');
+equal(compressedEstimatedTokens(trace({ fallback: true })), null, 'fallback hides compression');
 equal(savingsState(trace({ mode: 'CLOUD_ONLY', rawEstimatedTokens: 0, optimizedEstimatedTokens: 0, reductionPercent: 0 })), 'cloud-only', 'cloud-only state');
 equal(savingsState(trace({ mode: 'LOCAL_ONLY' })), 'local-only', 'local-only state');
 equal(formatEstimatedTokens(832), '832', 'small token format');
@@ -56,6 +56,6 @@ const aggregate = aggregateSavings([
   trace({ id: 'cloud', mode: 'CLOUD_ONLY' }),
 ]);
 equal(aggregate?.runCount, 1, 'aggregate only includes validated hybrid');
-equal(aggregate?.totalSaved, 24_004, 'aggregate saved tokens');
+equal(aggregate?.totalCompressed, 24_004, 'aggregate compressed tokens');
 
 console.log('Savings calculation tests passed.');

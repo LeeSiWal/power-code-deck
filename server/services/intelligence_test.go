@@ -46,7 +46,10 @@ func intelligenceRunTestDB(t *testing.T) *sql.DB {
 	CREATE TABLE intelligence_traces (
 		id TEXT PRIMARY KEY,agent_id TEXT,mode TEXT,status TEXT,provider TEXT,model TEXT,
 		raw_tokens INTEGER,optimized_tokens INTEGER,local_tokens INTEGER,latency_ms INTEGER,
-		error_code TEXT,fallback BOOLEAN,events_json TEXT,created_at TEXT,updated_at TEXT)`)
+		error_code TEXT,fallback BOOLEAN,events_json TEXT,created_at TEXT,updated_at TEXT,
+		cloud_cost_usd REAL DEFAULT 0,cloud_input_tokens INTEGER DEFAULT 0,
+		cloud_output_tokens INTEGER DEFAULT 0,cloud_cache_read_tokens INTEGER DEFAULT 0,
+		cloud_usage_known BOOLEAN DEFAULT FALSE)`)
 	if err != nil {
 		t.Fatal(err)
 	}
