@@ -50,6 +50,21 @@ type CodexDriver struct {
 	exitDone   chan struct{}
 	rpcTimeout time.Duration
 	exitErr    error
+	stderrTail *tailBuffer
+}
+
+// why returns whatever the app-server last complained about on stderr, ready to be
+// appended to an error. Codex used to pipe stderr straight to io.Discard, so a
+// failed start reached the user as a bare "timed out" with the CLI's own
+// explanation thrown away — the same blindness that once hid a Claude flag outage.
+func (d *CodexDriver) why() string {
+	if d.stderrTail == nil {
+		return ""
+	}
+	if tail := d.stderrTail.String(); tail != "" {
+		return ": " + tail
+	}
+	return ""
 }
 
 const defaultCodexRPCTimeout = 30 * time.Second
@@ -58,7 +73,7 @@ func NewCodexDriver(cfg CodexConfig) *CodexDriver {
 	return &CodexDriver{
 		cfg: cfg, pending: make(map[string]chan codexRPCMessage),
 		events: make(chan *StreamEvent, 128), done: make(chan struct{}),
-		exitDone: make(chan struct{}),
+		exitDone:   make(chan struct{}),
 		rpcTimeout: defaultCodexRPCTimeout,
 	}
 }
@@ -84,7 +99,11 @@ func (d *CodexDriver) Start() error {
 	if err != nil {
 		return err
 	}
-	go io.Copy(io.Discard, stderr)
+	d.mu.Lock()
+	d.stderrTail = &tailBuffer{}
+	tail := d.stderrTail
+	d.mu.Unlock()
+	go io.Copy(tail, stderr)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -100,7 +119,7 @@ func (d *CodexDriver) Start() error {
 		"capabilities": map[string]any{"experimentalApi": true},
 	}); err != nil {
 		d.Stop()
-		return fmt.Errorf("codex initialize: %w", err)
+		return fmt.Errorf("codex initialize: %w%s", err, d.why())
 	}
 	if err := d.notify("initialized", map[string]any{}); err != nil {
 		d.Stop()
@@ -116,7 +135,7 @@ func (d *CodexDriver) Start() error {
 	}
 	if err != nil {
 		d.Stop()
-		return fmt.Errorf("codex thread start: %w", err)
+		return fmt.Errorf("codex thread start: %w%s", err, d.why())
 	}
 	var started struct {
 		Thread struct {
@@ -269,9 +288,9 @@ func (d *CodexDriver) call(method string, params any) (json.RawMessage, error) {
 			exitErr := d.exitErr
 			d.mu.Unlock()
 			if exitErr != nil {
-				return nil, fmt.Errorf("codex app-server exited: %w", exitErr)
+				return nil, fmt.Errorf("codex app-server exited: %w%s", exitErr, d.why())
 			}
-			return nil, fmt.Errorf("codex app-server exited")
+			return nil, fmt.Errorf("codex app-server exited%s", d.why())
 		}
 		if len(msg.Error) > 0 && string(msg.Error) != "null" {
 			return nil, fmt.Errorf("%s", msg.Error)
@@ -285,7 +304,7 @@ func (d *CodexDriver) call(method string, params any) (json.RawMessage, error) {
 			delete(d.pending, id)
 		}
 		d.mu.Unlock()
-		return nil, fmt.Errorf("codex app-server %s timed out after %s", method, timeout)
+		return nil, fmt.Errorf("codex app-server %s timed out after %s%s", method, timeout, d.why())
 	}
 }
 
