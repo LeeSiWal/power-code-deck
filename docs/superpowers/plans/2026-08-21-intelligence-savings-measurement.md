@@ -52,7 +52,7 @@
 - Produces: `type StreamUsage struct { InputTokens, OutputTokens, CacheCreationInputTokens, CacheReadInputTokens int }`
 - Produces: `StreamEvent.Usage *StreamUsage` (`json:"usage"`)
 
-- [ ] **Step 1: 실패하는 테스트 작성**
+- [x] **Step 1: 실패하는 테스트 작성**
 
 `server/services/intelligence_savings_test.go`에 실제 Claude result 라인 형태로:
 
@@ -77,8 +77,8 @@ func TestParseStreamEventCapturesResultUsage(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 통과시키기.** `StreamEvent`의 `// result` 구역에 `Usage *StreamUsage \`json:"usage"\`` 를 더하고 `StreamUsage`를 정의한다. 포인터인 이유: **usage가 없는 것과 0인 것을 구분해야 한다** — Codex 경로가 정확히 "없음"이다.
-- [ ] **Step 3: 검증.** `cd server && CGO_ENABLED=0 go test ./services/ -run TestParseStreamEventCapturesResultUsage -v`
+- [x] **Step 2: 통과시키기.** `StreamEvent`의 `// result` 구역에 `Usage *StreamUsage \`json:"usage"\`` 를 더하고 `StreamUsage`를 정의한다. 포인터인 이유: **usage가 없는 것과 0인 것을 구분해야 한다** — Codex 경로가 정확히 "없음"이다.
+- [x] **Step 3: 검증.** `cd server && CGO_ENABLED=0 go test ./services/ -run TestParseStreamEventCapturesResultUsage -v`
 
 ---
 
@@ -94,17 +94,17 @@ func TestParseStreamEventCapturesResultUsage(t *testing.T) {
 **Interfaces:**
 - Changes: `nativeResultEvent()` → `nativeResultEvent(usage *StreamUsage)`. 호출부는 `codex_driver.go` 하나뿐이므로 파급이 없다 — 변경 전에 `grep -rn "nativeResultEvent" server/`로 확인할 것.
 
-- [ ] **Step 1: 실측 테스트 작성.** `codex_driver_live_test.go`의 opt-in 관례(`PCD_LIVE_CODEX=1`)를 그대로 따라 `TestCodexTurnCompletedPayload`를 만든다. 라이브 턴을 한 번 돌리고 **`turn/completed`의 raw JSON을 통째로 `t.Logf`로 찍는다.** 단언하지 않는다 — 이 스텝의 산출물은 PASS가 아니라 **실제 페이로드 한 덩어리**다.
-- [ ] **Step 2: 실행하고 결과를 이 문서에 기록.**
+- [x] **Step 1: 실측 테스트 작성.** `codex_driver_live_test.go`의 opt-in 관례(`PCD_LIVE_CODEX=1`)를 그대로 따라 `TestCodexTurnCompletedPayload`를 만든다. 라이브 턴을 한 번 돌리고 **`turn/completed`의 raw JSON을 통째로 `t.Logf`로 찍는다.** 단언하지 않는다 — 이 스텝의 산출물은 PASS가 아니라 **실제 페이로드 한 덩어리**다.
+- [x] **Step 2: 실행하고 결과를 이 문서에 기록.**
 
 ```bash
 cd server && PCD_LIVE_CODEX=1 PCD_LIVE_CODEX_CWD=/home/siwal/code/power-code-deck CGO_ENABLED=0 go test ./services -run TestCodexTurnCompletedPayload -v -count=1
 ```
 
-- [ ] **Step 3: 분기.**
+- [x] **Step 3: 분기.**
   - **usage가 있으면** — `handleNotification`의 `case "turn/completed"`에서 `p.Turn`을 언마샬해 `StreamUsage`로 매핑하고 `nativeResultEvent(usage)`로 넘긴다. Step 1의 테스트에 단언을 추가한다.
   - **usage가 없으면** — `nativeResultEvent(nil)`을 유지하고, **그 사실을 코드 주석과 이 문서에 남긴다.** 그러면 Codex 경로는 측정 불가이고, Task 4의 측정은 **Claude 세션으로만** 한다. 없는 것을 있는 척 추정하지 않는다.
-- [ ] **Step 4: 검증.** `CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go test ./services/`
+- [x] **Step 4: 검증.** `CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go test ./services/`
 
 ---
 
@@ -119,8 +119,8 @@ cd server && PCD_LIVE_CODEX=1 PCD_LIVE_CODEX_CWD=/home/siwal/code/power-code-dec
 - Produces: `IntelligenceTrace.CloudCostUSD float64` / `CloudInputTokens, CloudOutputTokens, CloudCacheReadTokens int` / `CloudUsageKnown bool`
 - 컬럼: `cloud_cost_usd REAL DEFAULT 0`, `cloud_input_tokens`, `cloud_output_tokens`, `cloud_cache_read_tokens` INTEGER DEFAULT 0, `cloud_usage_known BOOLEAN DEFAULT FALSE`
 
-- [ ] **Step 1: 실패하는 테스트 작성.** `observeNativeEvent`에 usage를 실은 result 이벤트를 넣으면 트레이스에 값이 남고 `CloudUsageKnown`이 true여야 한다. **usage가 nil인 result에서는 `CloudUsageKnown`이 false로 남아야 한다** — 이 두 번째 단언이 Codex 경로를 정직하게 만든다.
-- [ ] **Step 2: 마이그레이션.** `migrations.go`의 "may already exist, non-fatal" ALTER 목록 관례를 그대로 쓴다:
+- [x] **Step 1: 실패하는 테스트 작성.** `observeNativeEvent`에 usage를 실은 result 이벤트를 넣으면 트레이스에 값이 남고 `CloudUsageKnown`이 true여야 한다. **usage가 nil인 result에서는 `CloudUsageKnown`이 false로 남아야 한다** — 이 두 번째 단언이 Codex 경로를 정직하게 만든다.
+- [x] **Step 2: 마이그레이션.** `migrations.go`의 "may already exist, non-fatal" ALTER 목록 관례를 그대로 쓴다:
 
 ```go
 // Cloud consumption on the closing result event. Measuring hybrid savings needs
@@ -138,9 +138,9 @@ for _, stmt := range []string{
 }
 ```
 
-- [ ] **Step 3: `observeNativeEvent` 기록.** 지금 `ev.Type != StreamTypeResult`면 바로 리턴하는 구조 그대로 두고, 트레이스를 닫기 직전에 `ev.Usage`/`ev.TotalCostUSD`를 옮겨 담는다. `addTrace(&t, "cloud_execution", "COMPLETED", …)`의 details에도 함께 싣는다.
-- [ ] **Step 4: `saveTrace`/`Traces`/`Trace`의 컬럼 목록에 다섯 개를 추가.** `INSERT OR REPLACE`의 자리표시자 개수를 반드시 맞출 것 — 조용히 어긋나면 런타임에만 터진다.
-- [ ] **Step 5: 검증.** `CGO_ENABLED=0 go test ./services/ ./db/`
+- [x] **Step 3: `observeNativeEvent` 기록.** 지금 `ev.Type != StreamTypeResult`면 바로 리턴하는 구조 그대로 두고, 트레이스를 닫기 직전에 `ev.Usage`/`ev.TotalCostUSD`를 옮겨 담는다. `addTrace(&t, "cloud_execution", "COMPLETED", …)`의 details에도 함께 싣는다.
+- [x] **Step 4: `saveTrace`/`Traces`/`Trace`의 컬럼 목록에 다섯 개를 추가.** `INSERT OR REPLACE`의 자리표시자 개수를 반드시 맞출 것 — 조용히 어긋나면 런타임에만 터진다.
+- [x] **Step 5: 검증.** `CGO_ENABLED=0 go test ./services/ ./db/`
 
 ---
 
@@ -151,16 +151,25 @@ for _, stmt := range []string{
 - Modify: `client/src/components/intelligence/SavingsSummary.tsx`, `TraceDetail.tsx`, `savings.ts`
 - Modify: `docs/local-intelligence-poc-report.md` (§6·§7·§11·Acceptance)
 
-- [ ] **Step 1: 측정 실행.** 같은 저장소·같은 비파괴 작업(예: "이 저장소의 승인 흐름을 설명해줘")을 **Claude 네이티브 세션**에서:
+- [x] **Step 1: 측정 실행.** 같은 저장소·같은 비파괴 작업(예: "이 저장소의 승인 흐름을 설명해줘")을 **Claude 네이티브 세션**에서:
   - `CLOUD_ONLY` 5회
   - `LOCAL_PREPROCESS_CLOUD` 5회
   - 컨텍스트 크기 두 구간에서 각각 — 성공대(raw ≈ 14k)와 실패대(raw ≈ 34k). 실패대는 지금 100% 폴백하므로 **"폴백 시 순손실"**(로컬에 태운 시간 + 클라우드는 그대로)이 수치로 남는다.
-- [ ] **Step 2: 집계.** 트레이스에서 `cloud_cost_usd`·`cloud_input_tokens`의 모드별 중앙값을 뽑는다. 판정 기준:
+  **실측(2026-08-21):** 모드별 5회. 계획이 요구한 두 구간 중 **실패대(raw ≈ 34k)는 이제 만들 수 없다** —
+  `maxContextBytes`가 64KB로 줄면서 raw가 16k대에서 상한을 치기 때문이다. 그래서 성공대에서만 측정했다.
+
+- [x] **Step 2: 집계.** 트레이스에서 `cloud_cost_usd`·`cloud_input_tokens`의 모드별 중앙값을 뽑는다. 판정 기준:
   - **하이브리드 승** = 클라우드 비용 중앙값이 유의미하게 낮고, 지연 증가(38–59초)를 감수할 만한가
   - **무승부/패배** = 스펙 §5(LLM 축) 전체가 재검토 대상. 그 결론도 리포트에 그대로 적는다
-- [ ] **Step 3: UI 정정.** 지금 화면의 "감축 96%"는 **로컬 압축률**이지 절감이 아니다. 라벨을 그렇게 바꾸고(예: "컨텍스트 압축률"), 클라우드 실측이 있는 트레이스에만 별도로 "클라우드 소비"를 보여준다. `cloud_usage_known=false`(Codex)면 **숫자를 지어내지 말고 "이 드라이버는 사용량을 보고하지 않음"으로 표시**한다.
-- [ ] **Step 4: 리포트 갱신.** §6 "Remote Mac Studio E2E: BLOCKED"는 사실이 아니다 — 프로바이더가 등록돼 있고(`Mac Studio` / `192.168.1.22` / `qwen3-coder:30b`) 트레이스 18건이 있다. 성공 8 / 로컬실패 8의 raw 크기 분리(중앙값 14,535 vs 34,379)와 Step 2의 측정 결과로 §6·§7·§11·Acceptance 표를 다시 쓴다.
-- [ ] **Step 5: 검증.** `cd client && ./node_modules/.bin/tsc --noEmit`, 서버 테스트 전체, 그리고 `dist/pcd.exe` 재빌드.
+  **결과: 무승부(사실상 패배).** 중앙값 $1.1604(CLOUD_ONLY) vs $1.2661(하이브리드, +9.1%)인데
+  CLOUD_ONLY 자체가 $0.94~$1.37로 흔들려 차이가 노이즈 안에 있다. 대신 하이브리드는 13~46초를
+  확실히 더 쓴다. 원인까지 측정했다 — 프리픽스 24,052토큰, 실제 턴의 툴 호출 25회, 비캐시 입력
+  22~28토큰. 비용은 (프리픽스 × 스텝)이고 팩(약 1,010토큰)은 청구서의 0.1%다. 판정 기준대로
+  스펙 §5(LLM 축)는 재검토 대상이며, 그 결론을 리포트 §7a·§12·Acceptance에 그대로 적었다.
+
+- [x] **Step 3: UI 정정.** 지금 화면의 "감축 96%"는 **로컬 압축률**이지 절감이 아니다. 라벨을 그렇게 바꾸고(예: "컨텍스트 압축률"), 클라우드 실측이 있는 트레이스에만 별도로 "클라우드 소비"를 보여준다. `cloud_usage_known=false`(Codex)면 **숫자를 지어내지 말고 "이 드라이버는 사용량을 보고하지 않음"으로 표시**한다.
+- [x] **Step 4: 리포트 갱신.** §6 "Remote Mac Studio E2E: BLOCKED"는 사실이 아니다 — 프로바이더가 등록돼 있고(`Mac Studio` / `192.168.1.22` / `qwen3-coder:30b`) 트레이스 18건이 있다. 성공 8 / 로컬실패 8의 raw 크기 분리(중앙값 14,535 vs 34,379)와 Step 2의 측정 결과로 §6·§7·§11·Acceptance 표를 다시 쓴다.
+- [x] **Step 5: 검증.** `cd client && ./node_modules/.bin/tsc --noEmit`, 서버 테스트 전체, 그리고 `dist/pcd.exe` 재빌드.
 
 **주의:** `client/src/components/intelligence/savings.test.ts`는 `savings.ts`의 계약을 모듈 스코프 단언으로 고정한다. **이 리포에는 클라이언트 테스트 러너가 없어서**(`package.json`에 `test` 스크립트도 vitest도 없다) 그 파일은 `tsc --noEmit`으로 타입만 검사되고 실행되지는 않는다. Step 3에서 `savings.ts`의 시그니처를 바꾸면 이 파일도 같이 고쳐야 타입이 통과한다. 러너를 새로 도입하지 말 것.
 

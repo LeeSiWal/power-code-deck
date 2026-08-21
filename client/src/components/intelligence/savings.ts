@@ -62,7 +62,17 @@ export function compressedEstimatedTokens(trace: IntelligenceTrace): number | nu
 }
 
 export type CloudSpend =
-  | { known: true; costUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number }
+  | {
+      known: true;
+      costUsd: number;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+      // Tool calls in the turn. Measured cost ≈ prefix × steps, so this explains a
+      // bill far better than the prompt size does.
+      toolCalls: number;
+    }
   | { known: false };
 
 // A trace only carries cloud spend once its turn closed AND the driver reported
@@ -76,6 +86,8 @@ export function cloudSpend(trace: IntelligenceTrace): CloudSpend {
     inputTokens: trace.cloudInputTokens ?? 0,
     outputTokens: trace.cloudOutputTokens ?? 0,
     cacheReadTokens: trace.cloudCacheReadTokens ?? 0,
+    cacheCreationTokens: trace.cloudCacheCreationTokens ?? 0,
+    toolCalls: trace.cloudToolCalls ?? 0,
   };
 }
 

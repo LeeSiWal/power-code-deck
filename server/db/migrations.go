@@ -232,6 +232,16 @@ func Migrate(db *sql.DB) error {
 		"ALTER TABLE intelligence_traces ADD COLUMN cloud_input_tokens INTEGER DEFAULT 0",
 		"ALTER TABLE intelligence_traces ADD COLUMN cloud_output_tokens INTEGER DEFAULT 0",
 		"ALTER TABLE intelligence_traces ADD COLUMN cloud_cache_read_tokens INTEGER DEFAULT 0",
+		// Cache CREATION is the other half of the bill and the only way to see how big
+		// the cached prefix actually is: a fresh session writes it once, every later
+		// step re-reads it. Without this column the prefix is invisible, and a claim
+		// about shrinking it cannot be checked.
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_cache_creation_tokens INTEGER DEFAULT 0",
+		// How many tool calls the cloud agent made. Measured cost tracks
+		// (prefix x steps) and steps vary 2x between runs of the same task, so this
+		// is the term that actually explains a bill — inferring it from
+		// cache_read / prefix only ever gave an upper bound.
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_tool_calls INTEGER DEFAULT 0",
 		"ALTER TABLE intelligence_traces ADD COLUMN cloud_usage_known BOOLEAN DEFAULT FALSE",
 	} {
 		db.Exec(stmt)

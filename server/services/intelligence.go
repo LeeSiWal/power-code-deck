@@ -639,6 +639,12 @@ type IntelligenceTrace struct {
 	CloudInputTokens     int     `json:"cloudInputTokens"`
 	CloudOutputTokens    int     `json:"cloudOutputTokens"`
 	CloudCacheReadTokens int     `json:"cloudCacheReadTokens"`
+	// Written once per session, re-read on every step. Measured cost is dominated by
+	// (prefix size x steps), so this is the number any prefix diet has to move.
+	CloudCacheCreationTokens int `json:"cloudCacheCreationTokens"`
+	// Tool calls the cloud agent made on this turn, counted from its own event
+	// stream. Subagent calls are included: they are billed the same.
+	CloudToolCalls int `json:"cloudToolCalls"`
 	CloudUsageKnown      bool    `json:"cloudUsageKnown"`
 }
 
@@ -665,6 +671,9 @@ type IntelligenceService struct {
 	hybridTimeout time.Duration
 	mu            sync.Mutex
 	pending       map[string]string // agent id -> trace id awaiting a native result event
+	// toolCalls counts tool_use blocks seen since a trace was dispatched, per agent.
+	// Only agents with a pending trace are counted, so this cannot grow unbounded.
+	toolCalls map[string]int
 	// running holds the cancel func of every job started by Start, keyed by trace
 	// id. It is what makes cancellation a decision (a user pressing stop) instead
 	// of an accident (a browser closing a socket).
@@ -676,7 +685,8 @@ func NewIntelligenceService(db *sql.DB, providers *ProviderRegistry, agents *Age
 	s := &IntelligenceService{
 		db: db, providers: providers, agents: agents, native: native,
 		hybridTimeout: defaultHybridTimeout, pending: make(map[string]string),
-		running: make(map[string]context.CancelFunc),
+		toolCalls: make(map[string]int),
+		running:   make(map[string]context.CancelFunc),
 	}
 	if native != nil {
 		native.AddEventObserver(s.observeNativeEvent)
@@ -995,11 +1005,15 @@ func (s *IntelligenceService) dispatchCloud(result IntelligenceRunResult, prompt
 	s.saveTrace(*t)
 	s.mu.Lock()
 	s.pending[t.AgentID] = t.ID
+	// Reset with the registration, not after Send: a fast driver can emit its first
+	// tool_use before Send returns, and those calls belong to this turn.
+	s.toolCalls[t.AgentID] = 0
 	s.mu.Unlock()
 	if err := s.native.SendWithDisplayText(t.AgentID, prompt, displayTask); err != nil {
 		s.mu.Lock()
 		if s.pending[t.AgentID] == t.ID {
 			delete(s.pending, t.AgentID)
+			delete(s.toolCalls, t.AgentID)
 		}
 		s.mu.Unlock()
 		t.Status, t.ErrorCode = "FAILED", ErrCloudExecution
@@ -1030,12 +1044,36 @@ func (s *IntelligenceService) dispatchCloud(result IntelligenceRunResult, prompt
 }
 
 func (s *IntelligenceService) observeNativeEvent(agentID string, ev *StreamEvent) {
-	if ev == nil || ev.Type != StreamTypeResult {
+	if ev == nil {
+		return
+	}
+	// Every tool call re-reads the whole conversation from cache, so the step count
+	// is what a bill is actually made of. Count it here rather than inferring it
+	// later from cache_read / prefix, which can only bound it from above.
+	if ev.Type == StreamTypeAssistant && ev.Message != nil {
+		calls := 0
+		for _, block := range ev.Message.Content {
+			if block.Type == "tool_use" {
+				calls++
+			}
+		}
+		if calls > 0 {
+			s.mu.Lock()
+			if _, watching := s.pending[agentID]; watching {
+				s.toolCalls[agentID] += calls
+			}
+			s.mu.Unlock()
+		}
+		return
+	}
+	if ev.Type != StreamTypeResult {
 		return
 	}
 	s.mu.Lock()
 	traceID := s.pending[agentID]
 	delete(s.pending, agentID)
+	calls := s.toolCalls[agentID]
+	delete(s.toolCalls, agentID)
 	s.mu.Unlock()
 	if traceID == "" {
 		return
@@ -1049,17 +1087,20 @@ func (s *IntelligenceService) observeNativeEvent(agentID string, ev *StreamEvent
 	} else {
 		t.Status = "CLOUD_COMPLETED"
 	}
-	details := map[string]any{"nativeTurnBoundary": true}
+	t.CloudToolCalls = calls
+	details := map[string]any{"nativeTurnBoundary": true, "cloudToolCalls": calls}
 	if ev.Usage != nil {
 		t.CloudUsageKnown = true
 		t.CloudCostUSD = ev.TotalCostUSD
 		t.CloudInputTokens = ev.Usage.InputTokens
 		t.CloudOutputTokens = ev.Usage.OutputTokens
 		t.CloudCacheReadTokens = ev.Usage.CacheReadInputTokens
+		t.CloudCacheCreationTokens = ev.Usage.CacheCreationInputTokens
 		details["cloudCostUsd"] = t.CloudCostUSD
 		details["cloudInputTokens"] = t.CloudInputTokens
 		details["cloudOutputTokens"] = t.CloudOutputTokens
 		details["cloudCacheReadTokens"] = t.CloudCacheReadTokens
+		details["cloudCacheCreationTokens"] = t.CloudCacheCreationTokens
 	} else {
 		// Recorded, not silently skipped: a reader of this trace must be able to
 		// tell "the driver reports nothing" from "the turn was free".
@@ -1073,11 +1114,13 @@ func (s *IntelligenceService) saveTrace(t IntelligenceTrace) {
 	events, _ := json.Marshal(t.Events)
 	_, _ = s.db.Exec(`INSERT OR REPLACE INTO intelligence_traces
 		(id,agent_id,mode,status,provider,model,raw_tokens,optimized_tokens,local_tokens,latency_ms,error_code,fallback,events_json,created_at,
-		 cloud_cost_usd,cloud_input_tokens,cloud_output_tokens,cloud_cache_read_tokens,cloud_usage_known,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`, t.ID, t.AgentID, t.Mode, t.Status,
+		 cloud_cost_usd,cloud_input_tokens,cloud_output_tokens,cloud_cache_read_tokens,
+		 cloud_cache_creation_tokens,cloud_tool_calls,cloud_usage_known,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`, t.ID, t.AgentID, t.Mode, t.Status,
 		t.Provider, t.Model, t.RawTokens, t.OptimizedTokens, t.LocalTokens, t.LatencyMS,
 		t.ErrorCode, t.Fallback, string(events), t.CreatedAt,
-		t.CloudCostUSD, t.CloudInputTokens, t.CloudOutputTokens, t.CloudCacheReadTokens, t.CloudUsageKnown)
+		t.CloudCostUSD, t.CloudInputTokens, t.CloudOutputTokens, t.CloudCacheReadTokens,
+		t.CloudCacheCreationTokens, t.CloudToolCalls, t.CloudUsageKnown)
 	// The single persistence point is also the single broadcast point: every state
 	// transition already passes through here, so no path can forget to announce
 	// itself. Extras that are never stored (the context pack) ride the terminal
@@ -1091,7 +1134,8 @@ func (s *IntelligenceService) Traces(limit int) ([]IntelligenceTrace, error) {
 	}
 	rows, err := s.db.Query(`SELECT id,agent_id,mode,status,provider,model,raw_tokens,optimized_tokens,
 		local_tokens,latency_ms,error_code,fallback,events_json,created_at,
-		cloud_cost_usd,cloud_input_tokens,cloud_output_tokens,cloud_cache_read_tokens,cloud_usage_known
+		cloud_cost_usd,cloud_input_tokens,cloud_output_tokens,cloud_cache_read_tokens,
+		cloud_cache_creation_tokens,cloud_tool_calls,cloud_usage_known
 		FROM intelligence_traces ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -1105,7 +1149,8 @@ func (s *IntelligenceService) Traces(limit int) ([]IntelligenceTrace, error) {
 			&t.RawTokens, &t.OptimizedTokens, &t.LocalTokens, &t.LatencyMS, &t.ErrorCode,
 			&t.Fallback, &events, &t.CreatedAt,
 			&t.CloudCostUSD, &t.CloudInputTokens, &t.CloudOutputTokens,
-			&t.CloudCacheReadTokens, &t.CloudUsageKnown); err != nil {
+			&t.CloudCacheReadTokens, &t.CloudCacheCreationTokens, &t.CloudToolCalls,
+			&t.CloudUsageKnown); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(events), &t.Events)
@@ -1122,11 +1167,13 @@ func (s *IntelligenceService) Trace(id string) (IntelligenceTrace, error) {
 	var events string
 	err := s.db.QueryRow(`SELECT id,agent_id,mode,status,provider,model,raw_tokens,optimized_tokens,
 		local_tokens,latency_ms,error_code,fallback,events_json,created_at,
-		cloud_cost_usd,cloud_input_tokens,cloud_output_tokens,cloud_cache_read_tokens,cloud_usage_known
+		cloud_cost_usd,cloud_input_tokens,cloud_output_tokens,cloud_cache_read_tokens,
+		cloud_cache_creation_tokens,cloud_tool_calls,cloud_usage_known
 		FROM intelligence_traces WHERE id=?`, id).Scan(
 		&t.ID, &t.AgentID, &t.Mode, &t.Status, &t.Provider, &t.Model, &t.RawTokens,
 		&t.OptimizedTokens, &t.LocalTokens, &t.LatencyMS, &t.ErrorCode, &t.Fallback, &events, &t.CreatedAt,
-		&t.CloudCostUSD, &t.CloudInputTokens, &t.CloudOutputTokens, &t.CloudCacheReadTokens, &t.CloudUsageKnown)
+		&t.CloudCostUSD, &t.CloudInputTokens, &t.CloudOutputTokens, &t.CloudCacheReadTokens,
+		&t.CloudCacheCreationTokens, &t.CloudToolCalls, &t.CloudUsageKnown)
 	if err != nil {
 		return t, err
 	}

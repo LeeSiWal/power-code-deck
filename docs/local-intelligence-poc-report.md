@@ -89,41 +89,119 @@ WebSocket (server → client): `intelligence:trace`
 
 ## 6. Remote provider validation
 
-Remote Mac Studio E2E: **BLOCKED**
+Remote Mac Studio E2E: **PASSED** (2026-08-21).
 
-- Provider: not supplied/configured in this environment
-- Endpoint: not available
-- Model: not available
-- Health: not tested against a real remote Ollama
-- Latency: not available
-
-The actual API E2E used an intentionally invalid remote hostname and returned, without a crash:
+- Provider: `Mac Studio`
+- Endpoint: `http://192.168.1.22:11434`
+- Model: `qwen3-coder:30b`
+- Health: all four stages pass — reachable, API healthy, model available, real generation test
 
 ```json
 {
-  "provider": "invalid-remote",
-  "reachable": false,
-  "apiHealthy": false,
-  "modelAvailable": false,
-  "generationTest": false,
-  "latencyMs": 6,
+  "provider": "Mac Studio", "reachable": true, "apiHealthy": true,
+  "modelAvailable": true, "generationTest": true, "latencyMs": 2340
+}
+```
+
+The earlier "BLOCKED" status in this section was already stale when it was written: the provider was registered and 18 traces existed. It is replaced by the measured run below.
+
+The unreachable path is unchanged and still returns, without a crash:
+
+```json
+{
+  "provider": "invalid-remote", "reachable": false, "apiHealthy": false,
+  "modelAvailable": false, "generationTest": false, "latencyMs": 6,
   "errorCode": "LOCAL_PROVIDER_UNREACHABLE"
 }
 ```
 
-An alive-API/missing-model path is regression-tested and returns `LOCAL_MODEL_UNAVAILABLE`, but that test uses a controlled HTTP transport and is not claimed as remote E2E evidence.
+An alive-API/missing-model path is regression-tested and returns `LOCAL_MODEL_UNAVAILABLE`, using a controlled HTTP transport rather than a live remote.
 
 ## 7. Context measurement
 
-Actual PowerCodeDeck repository measurement:
+Measured on this repository through a real Claude native session, one fresh session per run
+(a reused session carries prior turns as input tokens and would inflate every run after the first).
 
 - Candidate files: 12
-- Raw bytes: 114,496
-- Raw estimated tokens: 28,322
-- Optimized estimated tokens: **BLOCKED — no real local provider response**
-- Reduction: **BLOCKED — no real local provider response**
+- Raw estimated tokens: **16,071** — the 64 KiB budget (§11) caps this; the 28,322 recorded earlier
+  was produced under the old 256 KiB budget and is no longer reachable
+- Optimized estimated tokens: **863 – 1,010** (real `qwen3-coder:30b` responses)
+- Local compression: **~94%** of the candidate context
+- Local latency: 17.5 – 46.2 s
 
-`estimatedTokens` is `ceil(Unicode code points / 4)`. It is a deterministic provider-independent comparison estimate, not an exact Codex or Ollama tokenizer count. Ollama's returned `prompt_eval_count + eval_count` is recorded separately as `localTokens`.
+`estimatedTokens` is `ceil(Unicode code points / 4)`. It is a deterministic, provider-independent
+comparison estimate — not an exact tokenizer count. Ollama's `prompt_eval_count + eval_count` is
+recorded separately as `localTokens`.
+
+**Compression is not saving.** The candidate context is assembled by PowerCodeDeck and is never sent
+in `CLOUD_ONLY`, which forwards the user's task byte-for-byte. What the cloud actually spent is
+measured separately — see §7a.
+
+## 7a. What the cloud actually spent (2026-08-21)
+
+The question this section exists to answer: does `LOCAL_PREPROCESS_CLOUD` reduce what the
+cloud charges? Five runs per mode, same repository, same non-destructive task
+("Explain how the approval flow works in this repository"), one fresh Claude session per run.
+
+| median of 5 | `CLOUD_ONLY` | `LOCAL_PREPROCESS_CLOUD` |
+|---|---|---|
+| cloud cost | **$1.1604** | **$1.2661** (+9.1%) |
+| cache read | 788,104 | 820,821 |
+| output tokens | 6,709 | 7,323 |
+| local latency added | 0 s | 13 – 46 s |
+
+**Verdict: no measurable saving.** The `CLOUD_ONLY` runs alone spanned $0.94 – $1.37 (±20%),
+so the +9.1% median gap sits inside the noise — the two most expensive runs of the whole set
+were `CLOUD_ONLY`, not hybrid. What hybrid does add, reliably, is 13-46 seconds of local
+preprocessing.
+
+### Why: the bill is (prefix × steps), and the pack touches neither
+
+Fitting the ten runs to `cost = a·cache_read + b·output` lands within ±$0.037 (3%):
+
+```
+cost ≈ $0.96/Mtok · cache_read  +  $63/Mtok · output
+```
+
+Two measurements make that concrete:
+
+- **The cached prefix is 24,052 tokens.** A turn that uses no tools at all ("reply with: ok")
+  costs **$0.179** — 16,682 cache-creation + 24,052 cache-read tokens for a 4-token answer.
+  That is the floor of any turn.
+- **A real turn made 25 tool calls** (measured, `cloud_tool_calls`; the earlier
+  `cache_read / prefix` estimate bounded it at 36). Every call re-reads the conversation,
+  so cost tracks prefix × steps — and steps varied 2× between runs of the same task.
+
+Non-cached input measured **22 – 28 tokens on every real run**. The context pack (≈1,010 tokens)
+is therefore ~0.1% of what is billed: **the pack is not what costs money, and shrinking it
+cannot be what saves money.** A 96% "compression" of a candidate context that `CLOUD_ONLY`
+never sends changes nothing on the invoice.
+
+Worse, the pack is **additive by construction**. The cloud wrapper says "verify it against the
+repository, and inspect additional files whenever needed", and the local prompt is told "do not
+claim the cloud agent is restricted to these files". Both are deliberate correctness choices —
+a 30B model's pack will miss files, and a cloud agent forbidden to look would answer wrongly.
+The cost is that the pack adds leads to follow instead of removing work: hybrid's cache reads
+did not drop.
+
+### What this means for the plan
+
+Per the measurement plan's own criterion ("무승부/패배 = 스펙 §5 전체가 재검토 대상"), the LLM
+axis as wired does not pay for itself:
+
+- **`LOCAL_ONLY` stays.** It is the only proven saving, and it is total: no cloud turn, $1.16 → $0.
+  Its limit is the operation allow-list, and its open risk is that a *wrong* local answer looks
+  exactly like a right one — there is no correctness check today, only a structural one
+  (`validContextPack` checks headings).
+- **`LOCAL_PREPROCESS_CLOUD` should not be a default.** Measured benefit zero, measured cost
+  13-46 s per turn plus the deadline/fallback/cancel machinery it requires.
+- **The lever is step count, not prompt size.** 25 steps × a growing conversation is the bill.
+  Trimming the prefix is capped low: of the 24k, CLAUDE.md is ~440 tokens and PowerCodeDeck's own
+  additions are small — most of it is Claude Code's own system prompt and built-in tool
+  definitions, which PowerCodeDeck does not control.
+- **The one hybrid variant still worth testing** is substitutive rather than advisory: answer from
+  the pack and open at most N more files. That trades correctness for cost explicitly, so it
+  should be scoped to tasks where the pack is provably sufficient. Untested as of this writing.
 
 ## 8. Codex regression
 
@@ -178,10 +256,15 @@ The initial `pnpm build` attempt was blocked by host pnpm 11 requiring Node ≥2
 
 ## 11. Known limitations
 
-- Real remote Ollama inference, optimized context size and reduction ratio are unverified in this environment.
-- `LOCAL_PREPROCESS_CLOUD` real E2E and real local-failure→cloud-completion E2E remain unverified without a reachable local endpoint and an active native session. The fallback policy itself has regression coverage.
+- Local answer *quality* has never been measured. `validContextPack` checks that seven headings are
+  present, not that the content is right, and `LOCAL_ONLY` output has no correctness check at all.
+  This is the open risk of routing more work to the local model.
+- The comparison covers one repository, one task, one cloud model. It shows that this wiring does not
+  save; it does not show that no wiring could.
 - A native result proves turn completion, not that tests passed or the requested code change is semantically correct.
-- Traces allow baseline/hybrid comparison but do not yet capture Codex's hidden internal context/token usage or post-turn changed-file snapshots.
+- Traces now record what the cloud spent (cost, input/output, cache read, cache creation) and how many
+  tool calls the turn made. Codex still reports no usage at all, so its traces carry
+  `cloud_usage_known=false` rather than a fabricated zero.
 - Only Ollama is implemented. OpenAI-compatible, MLX and vLLM are future provider additions.
 - Context collection requires a Git repository and is capped at 24 files, 12 KiB per file and 64 KiB total.
   The budget was cut from 256 KiB so a 30B local model can finish inside common reverse-proxy deadlines.
@@ -194,17 +277,31 @@ The initial `pnpm build` attempt was blocked by host pnpm 11 requiring Node ≥2
 
 ## 12. Next recommended milestone
 
-Do not add automatic routing yet. First configure one real remote Ollama provider, run health until all four stages pass, then execute the same non-destructive repository task through `CLOUD_ONLY` and `LOCAL_PREPROCESS_CLOUD`. Promote the POC only if the local trace contains a real response, raw > optimized context, the Codex turn completes in both runs, and the task result remains equivalent. After that proof, the next useful work is manual routing in NativeChat and provider expansion; cost tracking and automatic routing should wait.
+The milestone this section used to describe is **done**: a real remote provider passes all four
+health stages, and the same task was run five times per mode through a real Claude session. The
+result is in §7a — hybrid preprocessing shows no measurable saving.
+
+So the next work is *not* more of this axis:
+
+1. **Demote `LOCAL_PREPROCESS_CLOUD` from a default** to an experiment. It costs 13-46 s per turn
+   for a benefit that measurement cannot find.
+2. **Measure local answer quality** before routing anything to `LOCAL_ONLY` automatically. Today the
+   human picks the mode, and that choice is the only safeguard against a confidently wrong local
+   answer; automating routing removes it while nothing checks correctness.
+3. **Attack step count, not prompt size** — 25 tool calls per question, varying 2× run to run, is
+   what the bill is made of. The one hybrid variant still worth a test is substitutive ("answer from
+   the pack, open at most N more files"), scoped to tasks where the pack is provably sufficient.
 
 ## Acceptance status
 
 | Test | Status | Evidence |
 |---|---|---|
-| Remote Local LLM on another machine | BLOCKED | No endpoint supplied |
+| Remote Local LLM on another machine | **PASS** | `Mac Studio` / `192.168.1.22` / `qwen3-coder:30b`, four health stages, 2,340 ms (§6) |
 | Invalid endpoint | PASS | `LOCAL_PROVIDER_UNREACHABLE`, no crash, actual API E2E |
-| Live endpoint, missing model | IMPLEMENTED / E2E BLOCKED | staged regression test; no real provider |
-| Context pack from actual repository | INPUT PASS / OUTPUT BLOCKED | actual repository scan passed; local generation unavailable |
-| Raw > optimized | BLOCKED | optimized result unavailable |
+| Live endpoint, missing model | IMPLEMENTED / E2E BLOCKED | staged regression test; a live missing-model run was not performed |
+| Context pack from actual repository | **PASS** | 16,071 raw → 636-1,010 optimized estimated tokens from real `qwen3-coder:30b` responses |
+| Raw > optimized | **PASS** | ~94% compression, 5 hybrid runs (§7) |
 | Existing CLOUD_ONLY | PASS | unchanged-prompt regression + real Codex driver live smoke |
-| LOCAL_PREPROCESS_CLOUD | IMPLEMENTED / E2E BLOCKED | no real local inference endpoint |
-| Local failure fallback | PASS (regression) / E2E BLOCKED | fallback trace and unchanged cloud prompt tested; no real remote failure + completed Codex turn run |
+| LOCAL_PREPROCESS_CLOUD | **PASS (works) / FAILS ITS PURPOSE** | 5 real runs complete end to end; median cloud cost +9.1% vs `CLOUD_ONLY`, inside that mode's own ±20% spread — no saving (§7a) |
+| Local failure fallback | PASS (regression) / E2E PASS for timeout | `TestStartStillHonorsLocalTimeout`; a live dead provider ends `LOCAL_PROVIDER_UNREACHABLE` |
+| Cloud spend is measured, not inferred | **PASS** | `cloud_cost_usd`, `cloud_input/output_tokens`, `cloud_cache_read/creation_tokens`, `cloud_tool_calls` on every trace; Codex reports none and says so |

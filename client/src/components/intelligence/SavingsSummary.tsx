@@ -93,10 +93,22 @@ export function SavingsSummary({ trace }: { trace: IntelligenceTrace }) {
       {!localOnly && (
         <div className="border-t border-deck-border/70 pt-2">
           {spend.known ? (
+            // Cost, steps, cache reads — the three numbers the bill is actually made
+            // of. Plain input tokens are omitted on purpose: they measured 22-26 on
+            // every real turn, so showing them invites the wrong conclusion that the
+            // prompt is what costs money.
             <div className="grid grid-cols-3 gap-3">
               <Metric label="Cloud cost" value={formatUSD(spend.costUsd)} />
-              <Metric label="Cloud input" value={`${formatEstimatedTokens(spend.inputTokens)}`} exact={`${spend.inputTokens.toLocaleString()} input tokens`} />
-              <Metric label="Cloud output" value={`${formatEstimatedTokens(spend.outputTokens)}`} exact={`${spend.outputTokens.toLocaleString()} output tokens`} />
+              <Metric
+                label="Cloud steps"
+                value={spend.toolCalls ? `${spend.toolCalls}` : '—'}
+                exact={`${spend.toolCalls.toLocaleString()} tool calls in this turn`}
+              />
+              <Metric
+                label="Cache read"
+                value={formatEstimatedTokens(spend.cacheReadTokens)}
+                exact={`${spend.cacheReadTokens.toLocaleString()} tokens re-read from cache · ${spend.cacheCreationTokens.toLocaleString()} written · ${spend.outputTokens.toLocaleString()} output`}
+              />
             </div>
           ) : (
             <div className="text-[10px] leading-relaxed text-deck-text-faint">

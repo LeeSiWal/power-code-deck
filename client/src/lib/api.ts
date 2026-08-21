@@ -87,6 +87,12 @@ export interface IntelligenceTrace {
   cloudInputTokens?: number;
   cloudOutputTokens?: number;
   cloudCacheReadTokens?: number;
+  // Written once per session and re-read on every agent step. Cost is dominated by
+  // (prefix size x steps), so this is the number a prefix diet has to move.
+  cloudCacheCreationTokens?: number;
+  // Tool calls the cloud agent made. Cost tracks (prefix x steps), and steps vary
+  // ~2x between runs of the same task, so this is the number that explains a bill.
+  cloudToolCalls?: number;
   cloudUsageKnown?: boolean;
 }
 

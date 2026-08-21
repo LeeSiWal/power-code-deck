@@ -50,6 +50,7 @@ func intelligenceRunTestDB(t *testing.T) *sql.DB {
 		error_code TEXT,fallback BOOLEAN,events_json TEXT,created_at TEXT,updated_at TEXT,
 		cloud_cost_usd REAL DEFAULT 0,cloud_input_tokens INTEGER DEFAULT 0,
 		cloud_output_tokens INTEGER DEFAULT 0,cloud_cache_read_tokens INTEGER DEFAULT 0,
+		cloud_cache_creation_tokens INTEGER DEFAULT 0,cloud_tool_calls INTEGER DEFAULT 0,
 		cloud_usage_known BOOLEAN DEFAULT FALSE)`)
 	if err != nil {
 		t.Fatal(err)

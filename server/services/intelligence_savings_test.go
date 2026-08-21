@@ -59,6 +59,50 @@ func savingsTestService(t *testing.T) *IntelligenceService {
 // The closing result event is the only place the cloud's real spend is visible.
 // Without it a trace can only report raw−optimized, which compares against a
 // baseline CLOUD_ONLY never sends.
+// The step count is the term that explains a bill: measured cost tracks
+// (prefix x steps), and steps varied 25-51 between runs of the SAME task in the
+// 2026-08-21 measurement. Counting them here turns that from an inference
+// (cache_read / prefix, an upper bound) into a recorded fact.
+func TestObserveNativeEventCountsCloudToolCalls(t *testing.T) {
+	s := savingsTestService(t)
+	tr := newTrace(IntelligenceRunRequest{AgentID: "a1", Mode: ModeLocalPreprocessCloud})
+	tr.Status = "CLOUD_DISPATCHED"
+	s.saveTrace(tr)
+	s.mu.Lock()
+	s.pending["a1"] = tr.ID
+	s.toolCalls["a1"] = 0
+	s.mu.Unlock()
+
+	assistant := func(blocks ...ContentBlock) *StreamEvent {
+		return &StreamEvent{Type: StreamTypeAssistant, Message: &StreamMessage{Role: "assistant", Content: blocks}}
+	}
+	s.observeNativeEvent("a1", assistant(ContentBlock{Type: "text", Text: "looking"}))
+	s.observeNativeEvent("a1", assistant(ContentBlock{Type: "tool_use", Name: "Read"}))
+	// Two calls in one message is one message but two billed steps.
+	s.observeNativeEvent("a1", assistant(
+		ContentBlock{Type: "tool_use", Name: "Grep"},
+		ContentBlock{Type: "tool_use", Name: "Read"},
+	))
+	// Another agent's traffic must not land on this trace.
+	s.observeNativeEvent("other", assistant(ContentBlock{Type: "tool_use", Name: "Read"}))
+	s.observeNativeEvent("a1", &StreamEvent{Type: StreamTypeResult, Usage: &StreamUsage{OutputTokens: 10}})
+
+	got, err := s.Trace(tr.ID)
+	if err != nil {
+		t.Fatalf("load trace: %v", err)
+	}
+	if got.CloudToolCalls != 3 {
+		t.Fatalf("CloudToolCalls = %d, want 3", got.CloudToolCalls)
+	}
+
+	s.mu.Lock()
+	leaked := len(s.toolCalls)
+	s.mu.Unlock()
+	if leaked != 0 {
+		t.Fatalf("tool-call counters leaked for %d agents after the turn closed", leaked)
+	}
+}
+
 func TestObserveNativeEventRecordsCloudUsage(t *testing.T) {
 	s := savingsTestService(t)
 	tr := newTrace(IntelligenceRunRequest{AgentID: "a1", Mode: ModeLocalPreprocessCloud})
@@ -92,6 +136,13 @@ func TestObserveNativeEventRecordsCloudUsage(t *testing.T) {
 	}
 	if got.CloudCacheReadTokens != 42000 {
 		t.Errorf("CloudCacheReadTokens = %d, want 42000", got.CloudCacheReadTokens)
+	}
+	// Cache CREATION is what sizes the cached prefix. Measured cost tracks
+	// (prefix x steps), so dropping this number makes any "we shrank the prefix"
+	// claim uncheckable — the same mistake as comparing against a context that is
+	// never sent.
+	if got.CloudCacheCreationTokens != 15000 {
+		t.Errorf("CloudCacheCreationTokens = %d, want 15000", got.CloudCacheCreationTokens)
 	}
 	if got.Status != "CLOUD_COMPLETED" {
 		t.Errorf("Status = %q, want CLOUD_COMPLETED", got.Status)
