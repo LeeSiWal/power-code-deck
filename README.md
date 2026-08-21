@@ -135,6 +135,7 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 - [사용법](#사용법)
 - [세션 히스토리](#세션-히스토리)
 - [Session Handoff](#session-handoff)
+- [원격 접속](#원격-접속)
 - [설정](#설정)
 - [CLI 커맨드](#cli-커맨드)
 - [기술 스택](#기술-스택)
@@ -610,6 +611,70 @@ POWERCODEDECK_LAN_URL=http://192.168.0.25:33033
 
 ---
 
+## 원격 접속
+
+PowerCodeDeck 서버는 API가 아니라 **작업 머신 그 자체**입니다 — PTY를 띄우고, 작업 디렉터리에서 git을 돌리고, 소스를 들고 있습니다. 그래서 "원격 접속"은 곧 **다른 워크스테이션을 조종하는 것**입니다. 인증 없이 열린 네트워크에 내놓지 마세요([보안 주의](#보안-주의)).
+
+세 개의 가드가 **하나의 소스에서 파생**됩니다 — 브라우저 Origin 허용목록(CORS·WebSocket)과 Host 헤더 검증(DNS 리바인딩 방지). 셋이 어긋나면 "페이지는 뜨는데 붙지는 않는" 상태가 되므로, 아래 조합 그대로 쓰는 것을 권장합니다.
+
+### T1 — 같은 Wi-Fi (LAN)
+
+```bash
+POWERCODEDECK_BIND_HOST=0.0.0.0
+POWERCODEDECK_LAN_URL=http://192.168.0.25:33033   # 이 서버의 LAN 주소
+```
+
+`LAN_URL`은 QR 주소일 뿐 아니라 **허용 Origin과 허용 Host에 함께 등록**됩니다. 휴대폰에서 그 주소로 열면 그대로 붙습니다. 인증을 켜지 않았다면 같은 네트워크의 누구나 세션에 들어올 수 있다는 점을 기억하세요.
+
+### T2 — 리버스 프록시 + 도메인
+
+```bash
+POWERCODEDECK_BIND_HOST=127.0.0.1                  # 프록시만 서버에 닿게
+POWERCODEDECK_PUBLIC_URL=https://deck.example.com
+```
+
+프록시는 `/ws`의 **WebSocket 업그레이드를 통과**시켜야 합니다(`Upgrade`/`Connection` 헤더 보존). 도메인만 `CORS_ORIGINS`에 넣고 `PUBLIC_URL`을 비워두면 Host 검증에서 403이 납니다 — `PUBLIC_URL`을 쓰세요.
+
+> ⚠️ **WebSocket 토큰은 쿼리스트링으로 갑니다** (`/ws?token=…`). 브라우저 WebSocket API가 헤더를 붙일 수 없기 때문인데, 그래서 이 토큰이 **리버스 프록시·CDN의 액세스 로그에 그대로 남습니다.** 로그를 남기는 구간이라면 `/ws`의 쿼리스트링을 마스킹하거나 로깅에서 제외하세요.
+
+### T3 — Tailscale (또는 VPN)
+
+```bash
+POWERCODEDECK_BIND_HOST=0.0.0.0
+POWERCODEDECK_LAN_URL=http://100.x.y.z:33033       # 이 머신의 tailnet 주소
+```
+
+Tailscale 주소는 `LAN_URL` 자리에 그대로 들어갑니다. tailnet 밖에서는 라우팅 자체가 안 되므로, 노출도 면에서 T2보다 안전합니다. **HTTPS가 아니면 브라우저 클립보드 API 등 보안 컨텍스트 전용 기능은 제한됩니다**(`tailscale cert` + `serve`로 HTTPS를 붙일 수 있습니다).
+
+### UI를 서버와 다른 오리진에서 서빙할 때
+
+데스크탑 셸이나 개발 서버처럼 **UI와 서버의 오리진이 다른** 경우에만 필요합니다. 보통은 서버가 UI를 직접 서빙하므로 아무 설정도 필요 없습니다.
+
+```bash
+POWERCODEDECK_CLIENT_ORIGINS=http://localhost:5173   # UI가 서빙되는 오리진
+POWERCODEDECK_LAN_URL=http://100.x.y.z:33033         # ← 서버 자신의 주소도 필요
+```
+
+> **함정:** `CLIENT_ORIGINS`에 포트까지 적힌 항목은 **그 포트만** Host로 허용됩니다. UI가 `:5173`, API가 `:33033`처럼 포트가 다르면 서버 자신의 주소를 `LAN_URL`(또는 `PUBLIC_URL`/`ALLOWED_HOSTS`)로 따로 알려줘야 Host 검증을 통과합니다.
+
+클라이언트는 엔드포인트를 **런타임 값**으로 다룹니다. `baseUrl`이 비어 있으면 현재 오리진이므로, 서버가 직접 서빙하는 기존 방식은 아무것도 달라지지 않습니다. 토큰은 엔드포인트별로 저장되어 원격 하나가 만료돼도 로컬 세션이 로그아웃되지 않습니다.
+
+### 확인된 동작 (2026-08-21, 실제 브라우저)
+
+Tailscale 주소로 UI(`:5173`)와 서버(`:33209`)를 **다른 오리진**에 띄우고 확인:
+
+| 항목 | 결과 |
+|---|---|
+| REST (`/api/agents`) | 200 |
+| WebSocket | 연결됨 |
+| 파일 원본 읽기 (`/api/files/raw`) | 200 (37,560바이트) |
+| 첨부 업로드 (multipart + Authorization) | 프리플라이트 통과, 서버 응답 정상 수신 |
+| 브라우저 패널 프록시 (`/api/proxy`) | 200 |
+| **허용목록 밖 오리진** | REST·익명토큰 차단, WS 403 — **셋이 함께 거부** |
+| 서버가 직접 서빙(회귀) | REST 200, WS 연결됨, 기존 토큰 키는 엔드포인트별 키로 이관 |
+
+---
+
 ## 설정
 
 ### 인앱 설정 (Settings 화면)
@@ -633,7 +698,8 @@ POWERCODEDECK_LAN_URL=http://192.168.0.25:33033
 | `POWERCODEDECK_PORT` | `33033` | 서버 포트 |
 | `POWERCODEDECK_DB_PATH` | `./powercodedeck.db` | SQLite 데이터베이스 경로 |
 | `POWERCODEDECK_SESSION_SCROLLBACK_BYTES` | `524288` | 세션별 스크롤백 링버퍼 크기(바이트, 재접속 시 재생) |
-| `POWERCODEDECK_CORS_ORIGINS` | `http://localhost:33033` | CORS 허용 origin |
+| `POWERCODEDECK_CLIENT_ORIGINS` | (빈 값) | UI가 서빙되는 오리진(쉼표 구분). CORS·WebSocket·Host 세 가드에 함께 적용됩니다 → [원격 접속](#원격-접속) |
+| `POWERCODEDECK_CORS_ORIGINS` | `http://localhost:<PORT>` | `CLIENT_ORIGINS`의 레거시 별칭. 둘 다 있으면 `CLIENT_ORIGINS`가 우선 |
 | `POWERCODEDECK_ALLOWED_HOSTS` | (빈 값) | Host 헤더 검증에서 추가로 허용할 호스트(쉼표 구분) |
 | `POWERCODEDECK_WORKSPACE_ROOT` | (빈 값) | 프로젝트 탐색 기본 루트 |
 | `POWERCODEDECK_BIND_HOST` | `127.0.0.1` | 서버 바인드 호스트. LAN 핸드오프에는 `0.0.0.0` 필요 |
