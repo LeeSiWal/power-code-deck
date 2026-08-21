@@ -248,6 +248,57 @@ has not been made.
 Also note the term that now dominates: at 4 steps, $0.479 of a $0.5438 turn is output. Step count is
 no longer the lever — answer length is.
 
+## 7c. Was any of that the local model? (2026-08-21)
+
+§7b left one thing unmeasured: in all three substitutive runs the pack was irrelevant to the
+question, so the saving might have come entirely from the instruction. This arm removes the local
+model completely — same cap, same honesty requirement, **no pack, no local inference** — by carrying
+the instruction in the task text (`CLOUD_ONLY` still forwards it byte-for-byte, so its invariant and
+its regression test are untouched).
+
+| arm | pack | local inference | tool calls (median) | cost (median) | added latency |
+|---|---|---|---|---|---|
+| baseline, no cap | — | — | 25 | $1.1949 | — |
+| **cap only** | — | — | **11** | **$0.7113** | none |
+| cap + pack (§7b) | yes | 10-46 s | 4 | $0.5438 | 10-46 s |
+
+**The instruction alone accounts for most of it: −40% with no local model in the picture.**
+Adding the pack takes it a further −24%.
+
+That residual is smaller than the median suggests. The hybrid median of 4 includes the run that
+*declined to answer* (1 tool call). Comparing only runs that actually answered:
+
+```
+cap + pack   7 and 4 tool calls    $0.6024, $0.5438
+cap only     11, 13, 10 calls      $0.6692, $0.7853, $0.7113
+```
+
+≈ **$0.15 per turn**, bought with 10-46 seconds of local inference, at n=2 vs 3.
+
+**Quality held in both arms.** The cap-only answers were checked against the source: the bridge
+documented in `cli/mcp_approve.go`, the per-session token check in `handlers/native_approve.go`, the
+`AskUserQuestion` exemption, and the `{"behavior":…,"updatedInput":…}` contract recorded at
+`claude_permission.go:31-32`. All correct. Answer lengths were comparable (4.5-5.6k characters
+vs 5.5-7.1k for hybrid).
+
+### Where the pack's residual actually comes from
+
+Not from answering the question — it was about a different subsystem. From **listing real repository
+paths**. The tool traces show it: cap-only spent 7-9 of its 10-13 calls on `Bash` greps, i.e. on
+*locating* the code, which the pack's FILES/SYMBOLS section let the hybrid runs skip.
+
+That matters because `BuildCandidateContext` already produces that file list **deterministically**
+(git status / diff / ls-files plus task terms) *before* the local model runs — the model only
+summarizes it. If the value is the list, the list can be sent directly: a few hundred tokens, zero
+seconds, no 30B model. That is the next arm.
+
+### Standing conclusion
+
+- The large, free lever is the **instruction**, and it works on ordinary `CLOUD_ONLY` turns — which
+  is where the volume is. It requires no local model, adds no latency, and measured −40%.
+- The measured scope is one repository, one explanatory question, one cloud model, n=3 per arm. A
+  hard 3-file cap is wrong for tasks that must edit code; nothing here says otherwise.
+
 ## 8. Codex regression
 
 - Existing `NativeService.Send` remains the default UI path.
@@ -328,9 +379,9 @@ result is in §7a — hybrid preprocessing shows no measurable saving.
 
 So the next work is *not* more of this axis:
 
-1. **Run the bare-cap arm** (§7b): the same cap with no pack and no local phase. It decides whether
-   `LOCAL_PREPROCESS_CLOUD` has any cost justification left at all, or whether the instruction alone
-   should move to ordinary `CLOUD_ONLY` turns — where the volume is.
+1. **Test the deterministic file list** (§7c): the cap plus `BuildCandidateContext`'s own candidate
+   paths, with no local inference. If that lands near the hybrid numbers, the local model has no
+   remaining cost justification and the instruction belongs on ordinary `CLOUD_ONLY` turns.
 2. **Measure local answer quality** before routing anything to `LOCAL_ONLY` automatically. Today the
    human picks the mode, and that choice is the only safeguard against a confidently wrong local
    answer; automating routing removes it while nothing checks correctness.
