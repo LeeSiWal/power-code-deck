@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentDeckWS } from '../../lib/ws';
-import {
-  api, ApiError, isLocalPhaseRunning, type IntelligenceMode, type IntelligenceTrace,
-  type LocalProvider,
-} from '../../lib/api';
+import { api } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 import {
   IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconDevices, IconGauge, IconHand,
@@ -15,14 +12,9 @@ import {
   EMPTY_OPTIONS, hasSessionOptions, parseSessionOptions, SessionOptionsSheet, type SessionOptions,
 } from './SessionOptionsSheet';
 import { writeClipboard } from '../../lib/clipboard';
-import { useAppStore, type ActivityTodo } from '../../stores/appStore';
+import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
-import { SessionSavingsSummary } from '../intelligence/SessionSavingsSummary';
-import { ExecutionModeControl } from '../intelligence/ExecutionModeControl';
-import {
-  clientCommand, cloudTargetName, routeNativeTask, type LocalOperation,
-} from '../intelligence/executionRouting';
-import { cloudFailureCode, localFailureCode } from '../intelligence/savings';
+import { clientCommand, type NativeDriverName } from '../../lib/nativeCommands';
 
 /**
  * NativeChat — a Claude session rendered from its event stream instead of a
@@ -52,36 +44,7 @@ interface NativeChatProps {
   driver?: 'claude' | 'codex';
 }
 
-function savedIntelligenceMode(agentId: string): IntelligenceMode {
-  const value = localStorage.getItem(`pcd:intelligence-mode:${agentId}`);
-  return value === 'LOCAL_PREPROCESS_CLOUD' || value === 'LOCAL_ONLY' ? value : 'CLOUD_ONLY';
-}
-
-function savedLocalOperation(agentId: string): LocalOperation {
-  const value = localStorage.getItem(`pcd:intelligence-operation:${agentId}`);
-  return value === 'summarize' || value === 'explain' || value === 'classify'
-    || value === 'log_analysis' || value === 'repository_question' ? value : 'repository_question';
-}
-
-function traceFromApiError(error: unknown): IntelligenceTrace | undefined {
-  if (!(error instanceof ApiError) || !error.data || typeof error.data !== 'object') return undefined;
-  return (error.data as { trace?: IntelligenceTrace }).trace;
-}
-
-function localErrorLabel(code?: string): string {
-  const labels: Record<string, string> = {
-    LOCAL_PROVIDER_UNREACHABLE: 'Local provider is unreachable.',
-    LOCAL_MODEL_UNAVAILABLE: 'The configured local model is unavailable.',
-    LOCAL_TIMEOUT: 'Local preprocessing timed out.',
-    LOCAL_REQUEST_CANCELED: 'Local preprocessing was stopped.',
-    LOCAL_GENERATION_FAILED: 'Local context generation failed.',
-    CONTEXT_BUILD_FAILED: 'Repository context could not be prepared.',
-    CLOUD_EXECUTION_FAILED: 'Cloud fallback could not start.',
-    NATIVE_SESSION_NOT_READY: 'The native cloud session is not ready.',
-    VALIDATION_FAILED: 'Local Intelligence rejected this task.',
-  };
-  return code ? labels[code] || code : 'Local Intelligence request failed.';
-}
+const cloudTargetName = (d: NativeDriverName) => (d === 'codex' ? 'Codex' : 'Claude Code');
 
 // Model choices for the switcher. `id` is passed straight to the CLI's --model;
 // '' = the CLI default ("Auto"). Switching restarts the session on the same
@@ -142,25 +105,6 @@ const MODES: { id: string; label: string; desc: string; icon: React.ComponentTyp
 export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeChatProps) {
   const navigate = useNavigate(); // /clear swaps to a freshly created session
   const [events, setEvents] = useState<StreamEvent[]>([]);
-  const [intelligenceRefreshKey, setIntelligenceRefreshKey] = useState(0);
-  const [intelligenceMode, setIntelligenceMode] = useState<IntelligenceMode>(() => savedIntelligenceMode(agentId));
-  const [localProviders, setLocalProviders] = useState<LocalProvider[]>([]);
-  const [providersLoading, setProvidersLoading] = useState(true);
-  const [providersError, setProvidersError] = useState(false);
-  const [localProvider, setLocalProvider] = useState(() => localStorage.getItem(`pcd:intelligence-provider:${agentId}`) || '');
-  const [localOperation, setLocalOperation] = useState<LocalOperation>(() => savedLocalOperation(agentId));
-  // The id of the Local Intelligence run this chat is waiting on, or null. A run is
-  // a server-side job: it survives this component, this tab, and this device, so
-  // what we hold is a subscription key rather than the run itself.
-  const [activeTraceId, setActiveTraceId] = useState<string | null>(null);
-  // Covers the gap between pressing send and the 202 coming back with a trace id.
-  const [intelligenceStarting, setIntelligenceStarting] = useState(false);
-  // The turn to put back in the composer if the run fails. The draft is cleared at
-  // send time (the server owns the echo), and the failure now arrives seconds later
-  // over the socket, so the text has to be parked somewhere until then.
-  const restoreOnFailure = useRef<{ text: string; attachments: { name: string; path: string }[] } | null>(null);
-  const [intelligenceNotice, setIntelligenceNotice] = useState('');
-  const [localOutput, setLocalOutput] = useState('');
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
@@ -215,49 +159,6 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   modeIdRef.current = modeId;
   const effortIdRef = useRef(effortId);
   effortIdRef.current = effortId;
-
-  useEffect(() => {
-    let active = true;
-    setProvidersLoading(true);
-    setProvidersError(false);
-    api.listLocalProviders()
-      .then((providers) => {
-        if (!active) return;
-        const enabled = providers.filter((provider) => provider.enabled);
-        setLocalProviders(enabled);
-        setLocalProvider((current) => {
-          if (enabled.some((provider) => provider.name === current)) return current;
-          if (enabled.length === 1) {
-            try { localStorage.setItem(`pcd:intelligence-provider:${agentId}`, enabled[0].name); } catch { /* ignore */ }
-            return enabled[0].name;
-          }
-          return '';
-        });
-      })
-      .catch(() => {
-        if (active) setProvidersError(true);
-      })
-      .finally(() => {
-        if (active) setProvidersLoading(false);
-      });
-    return () => { active = false; };
-  }, [agentId]);
-
-  const pickIntelligenceMode = useCallback((next: IntelligenceMode) => {
-    setIntelligenceMode(next);
-    setIntelligenceNotice('');
-    try { localStorage.setItem(`pcd:intelligence-mode:${agentId}`, next); } catch { /* ignore */ }
-  }, [agentId]);
-
-  const pickLocalProvider = useCallback((next: string) => {
-    setLocalProvider(next);
-    try { localStorage.setItem(`pcd:intelligence-provider:${agentId}`, next); } catch { /* ignore */ }
-  }, [agentId]);
-
-  const pickLocalOperation = useCallback((next: LocalOperation) => {
-    setLocalOperation(next);
-    try { localStorage.setItem(`pcd:intelligence-operation:${agentId}`, next); } catch { /* ignore */ }
-  }, [agentId]);
 
   const pickModel = useCallback((id: string) => {
     setMenu(null);
@@ -439,7 +340,6 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       if (p.agentId !== agentId) return;
       const event = p.event as StreamEvent;
       setEvents((prev) => [...prev, event]);
-      if (event.type === 'result') setIntelligenceRefreshKey((key) => key + 1);
     });
     // History is the native track's replay — no serializer, no ring buffer. The
     // events ARE the state, so reconnecting just means folding them again.
@@ -545,88 +445,9 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     agentDeckWS.send('native:interrupt', { agentId });
   }, [agentId]);
 
-  // The run we are watching, pushed here by the socket (useWebSocket → appStore).
-  const activeRun = useAppStore((s) => (activeTraceId ? s.intelligenceRuns.get(activeTraceId) : undefined));
-  // "Preparing" covers only the local phase: from pressing send until the local
-  // model hands off. Once the task is dispatched to the cloud, the ordinary
-  // "agent is working" indicator owns the screen, even though the trace stays open
-  // until the cloud turn closes it.
-  const intelligencePreparing = intelligenceStarting
-    || (!!activeTraceId && (!activeRun || isLocalPhaseRunning(activeRun.trace)));
-
-  const failRun = useCallback((trace: IntelligenceTrace) => {
-    const localCode = localFailureCode(trace);
-    const cloudCode = cloudFailureCode(trace);
-    setError(localCode && cloudCode
-      ? `${localErrorLabel(localCode)} ${localErrorLabel(cloudCode)} The task was not sent.`
-      : `${localErrorLabel(localCode || cloudCode || trace.errorCode)} The task was not sent.`);
-    // Give the turn back. Only if the composer is still empty — the user has had
-    // seconds to start typing something else, and overwriting that would be worse
-    // than losing the original.
-    const restore = restoreOnFailure.current;
-    restoreOnFailure.current = null;
-    if (!restore) return;
-    setDraft((current) => current || restore.text);
-    setAttachments((current) => (current.length ? current : restore.attachments));
-  }, []);
-
-  // The outcome of a run arrives here, not from the call that started it. Anything
-  // that used to follow `await runIntelligence(...)` lives in this effect now —
-  // which is also why closing the tab mid-run no longer loses the result.
-  useEffect(() => {
-    if (!activeTraceId || !activeRun) return;
-    const { trace } = activeRun;
-    if (isLocalPhaseRunning(trace)) return;
-
-    setActiveTraceId(null);
-    setIntelligenceRefreshKey((key) => key + 1);
-
-    if (trace.mode === 'LOCAL_ONLY') {
-      if (trace.status !== 'SUCCESS') {
-        failRun(trace);
-        return;
-      }
-      // The pack is never stored server-side, so this event is the only place it
-      // exists. If it is missing, say so rather than showing an empty panel.
-      setLocalOutput(activeRun.contextPack || 'Local task completed without a returned context result.');
-      setIntelligenceNotice('Local result ready. No cloud execution was used.');
-      restoreOnFailure.current = null;
-      return;
-    }
-    if (trace.status === 'FAILED') {
-      failRun(trace);
-      return;
-    }
-    markJustSent();
-    setIntelligenceNotice(trace.fallback
-      ? `Local optimization unavailable. ${localErrorLabel(localFailureCode(trace))} Continuing with ${cloudTargetName(driver)}.`
-      : `Optimized context sent to ${cloudTargetName(driver)}.`);
-    restoreOnFailure.current = null;
-  }, [activeRun, activeTraceId, driver, failRun, markJustSent]);
-
-  // Stopping is a decision now, so it ends the run as a cancellation and never
-  // spends a cloud turn on a fallback (the server enforces that half).
-  const cancelIntelligenceRun = useCallback(async () => {
-    if (!activeTraceId) return;
-    try {
-      await api.cancelIntelligence(activeTraceId);
-    } catch {
-      // 404 means it already finished; the trace event that follows says how.
-    }
-  }, [activeTraceId]);
-
   const send = useCallback(async () => {
     const text = draft.trim();
     if (!text && !attachments.length) return;
-    // A hybrid run holds the turn while the local model chews on the context pack —
-    // which has taken minutes on a slow or unreachable provider. Returning silently
-    // here made the deck look dead: you typed, pressed Enter, and nothing happened,
-    // with no banner and the draft still sitting there. Say so instead, and keep the
-    // draft so Enter after it finishes still sends what you wrote.
-    if (intelligencePreparing) {
-      setError('로컬 컨텍스트를 준비하는 중입니다. 끝나면 전송하거나, 중단하려면 Intelligence 모드를 Cloud Only로 바꾸세요.');
-      return;
-    }
     const command = !attachments.length ? clientCommand(text) : null;
     // /clear starts a genuinely new session instead of being forwarded. Sent to the
     // CLI it drops the context but leaves the transcript on screen, so the chat looks
@@ -665,33 +486,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       }
       return;
     }
-    const isNativeCommand = command === 'native';
-    // Attachments ride along as paths inside the project — Claude opens them with
-    // its Read tool. Sent as part of the same user turn.
-    const msg = attachments.length
-      ? (text ? text + '\n\n' : '') + '첨부 파일 (Read 도구로 확인해줘):\n' + attachments.map((a) => a.path).join('\n')
-      : text;
-    const hasAttachments = attachments.length > 0;
-    if (intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && busy && !hasAttachments && !isNativeCommand) {
-      setError('Wait for the current cloud turn to finish before starting another Hybrid run.');
-      return;
-    }
-    if (intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && !running && !hasAttachments && !isNativeCommand) {
-      setError(`Wait for the ${cloudTargetName(driver)} session to be ready before starting a Hybrid run.`);
-      return;
-    }
-    if (intelligenceMode !== 'CLOUD_ONLY' && !hasAttachments && !isNativeCommand) {
-      if (providersLoading) {
-        setError('Local Intelligence providers are still loading.');
-        return;
-      }
-      if (!localProvider || !localProviders.some((provider) => provider.name === localProvider)) {
-        setError('No Local Intelligence provider selected. Open Settings or choose an enabled provider.');
-        return;
-      }
-    }
 
-    const originalAttachments = attachments;
     setAttachments([]);
     setHistIdx(null); // sending ends history browsing; the next ↑ starts from the newest
     // No local echo: the server records the user turn the moment it's sent
@@ -700,66 +495,14 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     // the server — would vanish whenever history replaced our events.
     setDraft('');
     setError('');
-    setIntelligenceNotice('');
-    setLocalOutput('');
 
-    const usesIntelligence = intelligenceMode !== 'CLOUD_ONLY' && !hasAttachments && !isNativeCommand;
-    if (usesIntelligence) setIntelligenceStarting(true);
-    try {
-      const routed = await routeNativeTask({
-        agentId,
-        driver,
-        task: msg,
-        mode: intelligenceMode,
-        provider: localProvider,
-        operation: localOperation,
-        hasAttachments,
-        isNativeCommand,
-      }, {
-        sendNative: sendText,
-        runIntelligence: api.runIntelligence,
-      });
-
-      if (routed.path === 'cloud') {
-        if (routed.attachmentFallback) {
-          setIntelligenceNotice('Attachments use Cloud Only. Local optimization was not used.');
-        } else if (routed.commandBypass) {
-          setIntelligenceNotice('Commands use the direct native path. Local optimization was not used.');
-        }
-        return;
-      }
-
-      // The run was ACCEPTED, not finished. Everything that used to be read off the
-      // response — the context pack, the fallback notice, the failure — now arrives
-      // on intelligence:trace and is handled by the effect above. This is what lets
-      // the run survive a closed tab, a locked phone, or a proxy read timeout.
-      setIntelligenceRefreshKey((key) => key + 1);
-      restoreOnFailure.current = { text, attachments: originalAttachments };
-      setActiveTraceId(routed.start.trace.id);
-    } catch (err) {
-      // Only synchronous refusals land here now: a 400 the server decided inside the
-      // request, or a transport failure that means the run never started at all.
-      const failedTrace = traceFromApiError(err);
-      if (failedTrace) setIntelligenceRefreshKey((key) => key + 1);
-      const localCode = failedTrace ? localFailureCode(failedTrace) : undefined;
-      const cloudCode = failedTrace ? cloudFailureCode(failedTrace) : undefined;
-      if (!failedTrace) {
-        setError('The run could not be started. Nothing was sent — check the connection and retry.');
-      } else {
-        setError(localCode && cloudCode
-          ? `${localErrorLabel(localCode)} ${localErrorLabel(cloudCode)} The task was not sent.`
-          : `${localErrorLabel(localCode || cloudCode || failedTrace.errorCode)} The task was not sent.`);
-      }
-      restoreOnFailure.current = null;
-      setDraft(text);
-      setAttachments(originalAttachments);
-    } finally {
-      setIntelligenceStarting(false);
-    }
-  }, [
-    agentId, attachments, busy, draft, driver, intelligenceMode, intelligencePreparing,
-    localOperation, localProvider, localProviders, markJustSent, navigate, providersLoading, running, sendText,
-  ]);
+    // Attachments ride along as paths inside the project — Claude opens them with
+    // its Read tool. Sent as part of the same user turn.
+    const msg = attachments.length
+      ? (text ? text + '\n\n' : '') + '첨부 파일 (Read 도구로 확인해줘):\n' + attachments.map((a) => a.path).join('\n')
+      : text;
+    sendText(msg);
+  }, [agentId, attachments, draft, navigate, sendText]);
 
   const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string, remember?: boolean) => {
     agentDeckWS.send('native:decide', { agentId, id, behavior, message, remember });
@@ -783,7 +526,6 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         </div>
       )}
       <div ref={scrollRef} onScroll={onScroll} className="selectable flex-1 overflow-y-auto px-3 py-3 space-y-2">
-        <SessionSavingsSummary agentId={agentId} refreshKey={intelligenceRefreshKey} driver={driver} />
         {items.map((item) => (
           <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} />
         ))}
@@ -976,22 +718,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         {/* Immediate "agent is working" feedback, right above the composer. Appears
             the moment you send (justSent) and stays through the turn (busy), so the
             input never looks like it swallowed your message with no response. */}
-        {intelligencePreparing && (
-          <div className="mx-2 mt-2 flex items-center gap-2 overflow-hidden rounded-lg border border-deck-accent/20 bg-deck-accent/10 px-3 py-1.5 text-xs text-deck-accent-light">
-            <IconSpinner size={13} className="animate-spin shrink-0" />
-            <span className="min-w-0 flex-1 truncate">Preparing local context… {localProvider} → {intelligenceMode === 'LOCAL_ONLY' ? 'Local result' : cloudTargetName(driver)}</span>
-            {activeTraceId && (
-              <button
-                onClick={() => void cancelIntelligenceRun()}
-                className="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium text-deck-text-dim hover:bg-deck-border/50"
-                title="로컬 전처리를 중단합니다. 클라우드로 넘기지 않습니다"
-              >
-                중단
-              </button>
-            )}
-          </div>
-        )}
-        {!intelligencePreparing && working && (
+        {working && (
           <div className="mx-2 mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-deck-accent/10 border border-deck-accent/20 text-deck-accent-light text-xs overflow-hidden">
             <IconSpinner size={13} className="animate-spin shrink-0" />
             <span className="shrink-0">에이전트가 작업 중…</span>
@@ -1001,42 +728,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
           </div>
         )}
 
-        {intelligenceNotice && (
-          <div className={`mx-2 mt-2 flex items-start justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${
-            intelligenceNotice.startsWith('Local optimization unavailable')
-              ? 'border-deck-warning/30 bg-deck-warning/5 text-deck-warning'
-              : 'border-deck-border bg-deck-surface text-deck-text-dim'
-          }`}>
-            <span className="min-w-0 leading-relaxed">{intelligenceNotice}</span>
-            <button onClick={() => setIntelligenceNotice('')} className="min-h-6 shrink-0 px-1 opacity-70" aria-label="Dismiss Intelligence status">×</button>
-          </div>
-        )}
-
-        {localOutput && (
-          <div className="mx-2 mt-2 rounded-lg border border-deck-success/25 bg-deck-success/5 p-3">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-deck-success">Local result</span>
-              <button onClick={() => setLocalOutput('')} className="min-h-7 px-1 text-deck-text-dim" aria-label="Dismiss local result">×</button>
-            </div>
-            <pre className="selectable mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-deck-text">{localOutput}</pre>
-          </div>
-        )}
-
         <div className="p-2 space-y-2">
           <input ref={fileRef} type="file" multiple className="hidden" onChange={onFilePick} />
-          <ExecutionModeControl
-            mode={intelligenceMode}
-            onModeChange={pickIntelligenceMode}
-            providers={localProviders}
-            providersLoading={providersLoading}
-            providersError={providersError}
-            provider={localProvider}
-            onProviderChange={pickLocalProvider}
-            operation={localOperation}
-            onOperationChange={pickLocalOperation}
-            driver={driver}
-            onOpenSettings={() => navigate('/settings')}
-          />
           <textarea
             ref={taRef}
             value={draft}
@@ -1210,18 +903,9 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
             )}
             <button
               onClick={send}
-              disabled={intelligencePreparing || (!draft.trim() && !attachments.length) || (
-                intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && (busy || !running) && !attachments.length
-                && clientCommand(draft.trim()) === null
-              )}
+              disabled={!draft.trim() && !attachments.length}
               className="shrink-0 px-4 h-8 rounded-lg bg-deck-accent text-white text-sm font-medium disabled:opacity-40"
-              title={intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && !running && !attachments.length
-                && clientCommand(draft.trim()) === null
-                ? `${cloudTargetName(driver)} 세션이 준비된 뒤 Hybrid를 실행할 수 있습니다`
-                : intelligenceMode === 'LOCAL_PREPROCESS_CLOUD' && busy && !attachments.length
-                && clientCommand(draft.trim()) === null
-                ? '현재 cloud turn이 끝난 뒤 Hybrid를 실행할 수 있습니다'
-                : busy ? '현재 답변이 끝나면 이어서 처리됩니다' : undefined}
+              title={busy ? '현재 답변이 끝나면 이어서 처리됩니다' : undefined}
             >
               {busy ? '이어서' : '보내기'}
             </button>

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+### Removed
+- **Local Intelligence (로컬 LLM 전처리) 제거** — 클라우드로 보내기 전에 로컬 LLM이 저장소 컨텍스트를 압축하던 실험 기능입니다. 실측 결과 **클라우드 비용 절감이 없었고**(모드별 5회 중앙값 $1.1604 vs $1.2661 — 차이가 CLOUD_ONLY 자체 편차 ±20% 안), 대신 턴마다 10~46초가 더 걸렸습니다. 채팅의 실행 모드 선택기(Cloud/Local/Hybrid), 설정의 Local Intelligence 카드와 활동 패널이 사라집니다. 측정 근거와 원인 분석은 `docs/local-intelligence-poc-report.md` §7a~§7d에 남아 있습니다.
+- 이미 등록한 로컬 프로바이더와 실행 기록은 **DB에서 지우지 않습니다**(`local_ai_providers`·`intelligence_traces`). 그 기록이 위 결론의 근거이고, 코드만 걷어냈습니다.
+
 ## v0.6.1 — 할일 사이드 패널 · 체크리스트 복구 · 권한 모드 제자리 전환
 
 ### Added

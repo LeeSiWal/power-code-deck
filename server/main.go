@@ -119,15 +119,6 @@ func main() {
 	// that's working isn't reported stopped for lacking a live PTY.
 	agentSvc.SetNativeLiveness(nativeSvc.Running)
 	hub.SetNativeService(nativeSvc)
-	providerRegistry := services.NewProviderRegistry(database)
-	intelligenceSvc := services.NewIntelligenceService(database, providerRegistry, agentSvc, nativeSvc)
-
-	// Local Intelligence runs are jobs, not request handlers: they outlive the HTTP
-	// call that started them, so their progress has to reach the client some other
-	// way. Same wiring as the Control Room below — one emitter, hub.BroadcastAll.
-	intelligenceSvc.SetEmitter(func(r services.IntelligenceRunResult) {
-		hub.BroadcastAll(ws.EventIntelligenceTrace, ws.IntelligenceTracePayload(r))
-	})
 
 	// Control Room (v0.3.0): the multi-session overview aggregator. It projects
 	// existing state (agents + activity + pending approvals + notifications) into
@@ -278,17 +269,6 @@ func main() {
 	// 관리 경로는 이 기능의 일부다.
 	api.HandleFunc("/approval-rules", handlers.ListApprovalRules(approvalRules)).Methods("GET")
 	api.HandleFunc("/approval-rules/{id}", handlers.DeleteApprovalRule(approvalRules)).Methods("DELETE")
-
-	// Local Intelligence POC — opt-in and additive. CLOUD_ONLY remains the native
-	// session's unchanged baseline; no existing chat turn is intercepted implicitly.
-	api.HandleFunc("/intelligence/providers", handlers.ListLocalProviders(providerRegistry)).Methods("GET")
-	api.HandleFunc("/intelligence/providers/{name}", handlers.PutLocalProvider(providerRegistry)).Methods("PUT")
-	api.HandleFunc("/intelligence/providers/{name}", handlers.DeleteLocalProvider(providerRegistry)).Methods("DELETE")
-	api.HandleFunc("/intelligence/providers/{name}/health", handlers.LocalProviderHealth(providerRegistry)).Methods("POST")
-	api.HandleFunc("/intelligence/run", handlers.RunIntelligence(intelligenceSvc)).Methods("POST")
-	api.HandleFunc("/intelligence/traces", handlers.ListIntelligenceTraces(intelligenceSvc)).Methods("GET")
-	api.HandleFunc("/intelligence/traces/{id}", handlers.GetIntelligenceTrace(intelligenceSvc)).Methods("GET")
-	api.HandleFunc("/intelligence/traces/{id}/cancel", handlers.CancelIntelligenceRun(intelligenceSvc)).Methods("POST")
 
 	// Control Room (v0.3.0) — initial snapshot of the overview + global approval queue.
 	// Live deltas arrive over the WebSocket (agent:summaries, approval:resolved).
