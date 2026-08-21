@@ -1,5 +1,18 @@
 # CURRENT CODEX STATUS
 
+> **결말 (2026-08-21):** 이 POC의 코드는 제거됐다. §7a~§7d의 측정이 하이브리드 전처리에
+> 절감이 없음을 보였다 — 모드별 5회 중앙값 $1.1604(CLOUD_ONLY) vs $1.2661(하이브리드)로
+> 차이가 CLOUD_ONLY 자체 편차(±20%) 안에 있었고, 대신 턴마다 10~46초를 더 썼다.
+> 절감을 만든 것은 로컬 모델이 아니라 **탐색 상한 지시문**이었다(툴 호출 25→11회,
+> $1.19→$0.71, 팩도 로컬 추론도 없이). 그 지시문은 이 저장소에 기능으로 들어가지 않았다 —
+> 프로젝트 방향이 바뀌어 작업을 여기서 멈췄기 때문이다. 문구는 §7c에 그대로 있으니
+> 필요하면 어디서든 쓸 수 있다.
+>
+> `local_ai_providers`·`intelligence_traces` 테이블은 **남겨뒀다.** 그 안의 트레이스가
+> 이 결론의 증거다. 코드를 지우면서 근거까지 지우면 6개월 뒤에 같은 걸 다시 만든다.
+> 이 문서는 무엇을 만들었는지가 아니라 **왜 뺐는지**의 기록으로 남는다.
+
+
 **MOSTLY OPTIMIZED**
 
 PowerCodeDeck's real Codex path uses `codex app-server --stdio` with the correct repository cwd, inherited user/Codex environment, structured event replay, approval handling, thread resume and explicit process lifecycle. The audit found and fixed both High issues: client-authoritative native launch context and unbounded app-server RPC waits. A real PowerCodeDeck `CodexDriver` live test completed successfully against authenticated Codex.
