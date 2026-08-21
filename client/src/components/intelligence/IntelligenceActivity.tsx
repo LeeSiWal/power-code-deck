@@ -103,7 +103,12 @@ export function IntelligenceActivity() {
       ) : merged.length === 0 ? (
         <div className="py-6 text-center">
           <div className="text-xs font-medium">No Local Intelligence runs yet.</div>
-          <div className="mt-1 text-xs text-deck-text-dim">Run a Hybrid task to measure context savings.</div>
+          {/* Not "savings": raw−optimized is how much the LOCAL model compressed a candidate
+              context that CLOUD_ONLY never sends. What the cloud actually spent is measured
+              separately, per trace. */}
+          <div className="mt-1 text-xs text-deck-text-dim">
+            Traces appear here once a Local or Hybrid run completes.
+          </div>
         </div>
       ) : (
         <div className="mt-3 space-y-4">
@@ -118,14 +123,14 @@ export function IntelligenceActivity() {
           {aggregate && (
             <section className="rounded-lg border border-deck-border p-3">
               <div className="flex items-baseline justify-between gap-2">
-                <div className="text-xs font-medium">Estimated context reduction</div>
+                <div className="text-xs font-medium">Local context compression</div>
                 <div className="text-[10px] text-deck-text-faint">{aggregate.runCount} validated Hybrid {aggregate.runCount === 1 ? 'run' : 'runs'}</div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
                 <div><div className="text-[10px] text-deck-text-faint">Raw context</div><div className="font-medium tabular-nums">{formatEstimatedTokens(aggregate.totalRaw)} est.</div></div>
                 <div><div className="text-[10px] text-deck-text-faint">Optimized</div><div className="font-medium tabular-nums">{formatEstimatedTokens(aggregate.totalOptimized)} est.</div></div>
                 <div><div className="text-[10px] text-deck-text-faint">Compressed</div><div className="font-medium tabular-nums text-deck-success">{formatEstimatedTokens(aggregate.totalCompressed)} est.</div></div>
-                <div><div className="text-[10px] text-deck-text-faint">Reduction</div><div className="font-medium tabular-nums">{formatReduction(aggregate.overallReduction)}</div></div>
+                <div><div className="text-[10px] text-deck-text-faint">Compression</div><div className="font-medium tabular-nums">{formatReduction(aggregate.overallReduction)}</div></div>
               </div>
             </section>
           )}

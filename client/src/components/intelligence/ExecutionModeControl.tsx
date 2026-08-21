@@ -1,10 +1,16 @@
 import type { IntelligenceMode, LocalProvider } from '../../lib/api';
 import { cloudTargetName, type LocalOperation, type NativeDriverName } from './executionRouting';
 
-const MODES: { value: IntelligenceMode; label: string }[] = [
+// Hybrid sits last and carries a marker, because measurement did not support
+// presenting it as a peer of the other two: on this repository it produced no cost
+// reduction against Cloud while adding 10-46 s of local inference per turn, and its
+// spread reached above the cost of doing nothing at all
+// (docs/local-intelligence-poc-report.md §7a-§7d). It stays selectable — the finding
+// is one repo and one task class — but it should not look like a recommendation.
+const MODES: { value: IntelligenceMode; label: string; experimental?: boolean }[] = [
   { value: 'CLOUD_ONLY', label: 'Cloud' },
-  { value: 'LOCAL_PREPROCESS_CLOUD', label: 'Hybrid' },
   { value: 'LOCAL_ONLY', label: 'Local' },
+  { value: 'LOCAL_PREPROCESS_CLOUD', label: 'Hybrid', experimental: true },
 ];
 
 const OPERATIONS: { value: LocalOperation; label: string }[] = [
@@ -52,8 +58,14 @@ export function ExecutionModeControl({
                 className={`min-h-7 rounded-md px-2.5 text-[11px] transition-colors ${
                   mode === item.value ? 'bg-deck-accent text-white' : 'text-deck-text-dim hover:text-deck-text'
                 }`}
+                title={item.experimental
+                  ? 'Experimental: measured on this repository, Hybrid showed no cost reduction versus Cloud and added 10-46 s per turn'
+                  : undefined}
               >
                 {item.label}
+                {item.experimental && (
+                  <span aria-hidden="true" className="ml-1 opacity-60">·exp</span>
+                )}
               </button>
             ))}
           </div>
@@ -110,7 +122,14 @@ export function ExecutionModeControl({
 
       {mode === 'LOCAL_ONLY' && (
         <div className="text-[10px] leading-relaxed text-deck-text-dim">
-          Local Only supports repository analysis tasks. Use Hybrid or Cloud for code changes.
+          Local Only supports repository analysis tasks. Use Cloud for code changes.
+        </div>
+      )}
+
+      {mode === 'LOCAL_PREPROCESS_CLOUD' && (
+        <div className="text-[10px] leading-relaxed text-deck-warning">
+          Experimental. Measured on this repository: no cost reduction versus Cloud, and 10-46 s
+          added per turn while the local model builds the context pack.
         </div>
       )}
     </div>
