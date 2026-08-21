@@ -1,4 +1,33 @@
-const API_BASE = '/api';
+import {
+  apiUrl,
+  clearTokens,
+  currentEndpointId,
+  getRefreshToken,
+  getToken,
+  setAccessToken,
+  setTokens,
+} from './endpoint';
+
+// Thrown when an endpoint's credentials expired. It names WHICH endpoint so the
+// router can decide: re-authenticate only if it is the one being viewed. Sending
+// the whole app to /login because a background remote host expired was the old
+// behaviour and is wrong once more than one server exists.
+export class AuthExpiredError extends Error {
+  constructor(readonly endpointId: string) {
+    super('Session expired');
+    this.name = 'AuthExpiredError';
+  }
+}
+
+let authExpiredHandler: ((endpointId: string) => void) | null = null;
+
+// Registered by the app shell. A callback rather than a store import keeps this
+// module free of UI layering, and — more importantly — it fires even when the
+// caller swallows the rejection. Plenty of call sites end in `.catch(() => {})`
+// because their panel is supplemental; expiry still has to be noticed.
+export function setAuthExpiredHandler(fn: ((endpointId: string) => void) | null) {
+  authExpiredHandler = fn;
+}
 
 export interface LocalProvider {
   name: string;
@@ -75,63 +104,59 @@ export class ApiError extends Error {
   }
 }
 
-function getToken(): string | null {
-  return localStorage.getItem('accessToken');
-}
-
-function setTokens(access: string, refresh: string) {
-  localStorage.setItem('accessToken', access);
-  localStorage.setItem('refreshToken', refresh);
-}
-
-function clearTokens() {
-  localStorage.removeItem('accessToken');
-  localStorage.removeItem('refreshToken');
-}
-
 async function refreshToken(): Promise<boolean> {
-  const rt = localStorage.getItem('refreshToken');
+  const rt = getRefreshToken();
   if (!rt) return false;
 
   try {
-    const res = await fetch(`${API_BASE}/auth/refresh`, {
+    const res = await fetch(apiUrl('/auth/refresh'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: rt }),
     });
     if (!res.ok) return false;
     const data = await res.json();
-    localStorage.setItem('accessToken', data.accessToken);
+    setAccessToken(data.accessToken);
     return true;
   } catch {
     return false;
   }
 }
 
-async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+// apiRequest is the single place that knows how to reach an endpoint: which origin,
+// which credentials, and what to do when they expire. apiFetch (JSON) sits on top.
+// Nothing else in the client may assemble an /api URL or attach a Bearer header —
+// that duplication is exactly what made the client same-origin-only.
+export async function apiRequest(path: string, options: RequestInit = {}): Promise<Response> {
   const token = getToken();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
-  };
+  const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  let res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let res = await fetch(apiUrl(path), { ...options, headers });
 
   // Auto-refresh on 401
   if (res.status === 401 && token) {
     const refreshed = await refreshToken();
     if (refreshed) {
       headers['Authorization'] = `Bearer ${getToken()}`;
-      res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+      res = await fetch(apiUrl(path), { ...options, headers });
     } else {
-      clearTokens();
-      window.location.href = '/login';
-      throw new Error('Session expired');
+      const endpointId = currentEndpointId();
+      clearTokens(endpointId);
+      authExpiredHandler?.(endpointId);
+      throw new AuthExpiredError(endpointId);
     }
   }
+  return res;
+}
+
+async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await apiRequest(path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers as Record<string, string>) },
+  });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -147,7 +172,7 @@ export const api = {
   // Public health/config endpoint — no token required. Lets the client learn
   // whether auth is enabled (and which method) so it can skip the login page.
   getAuthConfig: () =>
-    fetch(`${API_BASE}/auth/health`).then((r) => r.json()) as Promise<{
+    fetch(apiUrl('/auth/health')).then((r) => r.json()) as Promise<{
       status: string;
       appName: string;
       version: string;
@@ -159,7 +184,12 @@ export const api = {
   // Trade a session-scoped handoff cookie (set after redeeming a QR) for normal
   // access/refresh tokens. Only needed when PowerCodeDeck auth is enabled.
   handoffExchange: () =>
-    fetch(`${API_BASE}/auth/handoff/exchange`, { method: 'POST', credentials: 'same-origin' })
+    // credentials are NOT sent cross-origin: this flow rides an httpOnly cookie
+    // the server set when the QR was redeemed, so it only works when the page was
+    // served by that same server. A cross-origin client (desktop shell, separately
+    // hosted UI) gets a clean failure here rather than a silent one — header-based
+    // redemption belongs with device credentials (spec §3), not here.
+    fetch(apiUrl('/auth/handoff/exchange'), { method: 'POST', credentials: 'include' })
       .then(async (r) => {
         if (!r.ok) throw new Error('handoff exchange failed');
         return r.json() as Promise<{ accessToken: string; refreshToken: string; sessionId: string }>;
@@ -173,7 +203,7 @@ export const api = {
   // always authenticates now) can connect without a login. The server only
   // issues this when auth is disabled and the caller's Origin is local.
   getAnonymousToken: () =>
-    fetch(`${API_BASE}/auth/anonymous`, { method: 'POST', credentials: 'same-origin' })
+    fetch(apiUrl('/auth/anonymous'), { method: 'POST' })
       .then(async (r) => {
         if (!r.ok) throw new Error('anonymous token failed');
         return r.json() as Promise<{ accessToken: string; refreshToken: string }>;
@@ -258,12 +288,10 @@ export const api = {
   attachFile: async (id: string, file: File): Promise<{ path: string; name: string }> => {
     const fd = new FormData();
     fd.append('file', file);
-    const token = getToken();
-    const res = await fetch(`${API_BASE}/agents/${id}/attach`, {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: fd,
-    });
+    // apiRequest, not apiFetch: FormData must set its own multipart boundary, so
+    // the JSON content-type has to stay off. Auth and origin still come from the
+    // one place that owns them.
+    const res = await apiRequest(`/agents/${id}/attach`, { method: 'POST', body: fd });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '업로드 실패');
     return res.json();
   },
@@ -289,11 +317,8 @@ export const api = {
   // images / PDFs / video / audio the browser can display natively. Caller must
   // URL.revokeObjectURL() it when done.
   rawFileObjectURL: async (path: string, agentId?: string): Promise<string> => {
-    const token = getToken();
     const q = new URLSearchParams({ path, ...(agentId ? { agentId } : {}) });
-    const res = await fetch(`${API_BASE}/files/raw?${q.toString()}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
+    const res = await apiRequest(`/files/raw?${q.toString()}`);
     if (!res.ok) throw new Error('파일을 불러오지 못했습니다');
     return URL.createObjectURL(await res.blob());
   },

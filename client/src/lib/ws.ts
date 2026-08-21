@@ -1,4 +1,5 @@
 import { getDeviceId } from './deviceId';
+import { currentEndpointId, wsUrl } from './endpoint';
 
 type EventHandler = (payload: any) => void;
 
@@ -8,6 +9,11 @@ class AgentDeckWS {
   private reconnectTimer: number | null = null;
   private livenessTimer: number | null = null;
   private token: string | null = null;
+  // Which endpoint the live socket belongs to. Compared alongside the token on
+  // reconnect: the same token against a DIFFERENT server is a different session,
+  // and reusing the socket would silently keep driving the machine you just
+  // switched away from.
+  private endpointId: string | null = null;
   // Messages sent while the socket wasn't OPEN (still connecting, or between a
   // drop and the reconnect). Without this they were silently dropped — so a
   // native:open / terminal:attach fired at mount, before the socket finished
@@ -46,22 +52,24 @@ class AgentDeckWS {
   }
 
   connect(token: string) {
+    const endpointId = currentEndpointId();
     if (
       this.token === token &&
+      this.endpointId === endpointId &&
       (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING)
     ) {
       return;
     }
 
     this.token = token;
+    this.endpointId = endpointId;
     this.cleanup();
 
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // device= identifies this browser so the server can make a session exclusive to
-    // one device and target push at it (see deviceId.ts).
-    this.ws = new WebSocket(
-      `${protocol}//${location.host}/ws?token=${token}&device=${encodeURIComponent(getDeviceId())}`,
-    );
+    // one device and target push at it (see deviceId.ts). The scheme and host come
+    // from the ENDPOINT, not the page: once the UI can be served separately from the
+    // server, the page's own origin says nothing about where the deck lives.
+    this.ws = new WebSocket(wsUrl(token, getDeviceId()));
 
     this.ws.onopen = () => {
       console.log('[WS] Connected');

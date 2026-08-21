@@ -28,7 +28,8 @@ type Config struct {
 	Port              string
 	BindHost          string // interface to bind (default 127.0.0.1; 0.0.0.0 for LAN)
 	DBPath            string
-	CORSOrigins       string
+	CORSOrigins       string // legacy alias for ClientOriginsRaw
+	ClientOriginsRaw  string // POWERCODEDECK_CLIENT_ORIGINS — extra trusted client Origins
 	AllowedHostsExtra string // extra Host header values accepted by the DNS-rebinding guard (comma-separated)
 	WorkspaceRoot     string // default root for the project browser (optional)
 	SetupMode         bool   // true when this run performed first-run setup
@@ -76,6 +77,7 @@ func Load() *Config {
 		BindHost:          envDual("BIND_HOST"),
 		DBPath:            envDual("DB_PATH"),
 		CORSOrigins:       envDual("CORS_ORIGINS"),
+		ClientOriginsRaw:  envDual("CLIENT_ORIGINS"),
 		AllowedHostsExtra: envDual("ALLOWED_HOSTS"),
 		WorkspaceRoot:     envDual("WORKSPACE_ROOT"),
 		PublicURL:         strings.TrimRight(envDual("PUBLIC_URL"), "/"),
@@ -159,28 +161,58 @@ func Load() *Config {
 	return cfg
 }
 
-// AllowedOrigins returns the browser Origins permitted to open the WebSocket or
-// mint an anonymous token. Loopback origins for the configured port are always
-// allowed; PUBLIC_URL / LAN_URL / CORS_ORIGINS add explicit remote origins.
-func (c *Config) AllowedOrigins() []string {
+// desktopShellOrigins are the Origins a Tauri-packaged client sends. They are
+// allowed explicitly rather than relying on ws.checkOrigin's "no Origin header →
+// allow" exemption, which exists for the CLI: leaning on it would make that
+// exemption impossible to tighten later.
+var desktopShellOrigins = []string{"tauri://localhost", "https://tauri.localhost"}
+
+// ClientOrigins is the ONE list of Origins this deck trusts, and the source every
+// guard derives from: the CORS middleware, the WebSocket handshake check, and
+// (via AllowedHosts) the DNS-rebinding guard.
+//
+// It exists because those three used to be computed separately and could disagree.
+// main.go's LAN-handoff comment records what that costs: HostCheck auto-detected
+// the LAN IP and let the page load while the Origin allow-list did not, so a LAN
+// device sat on "Connecting…" with no token and no error. Cross-origin clients make
+// that failure reachable from every direction, so the lists must not drift again.
+func (c *Config) ClientOrigins() []string {
 	out := []string{
 		"http://localhost:" + c.Port,
 		"http://127.0.0.1:" + c.Port,
 		"https://localhost:" + c.Port,
 		"https://127.0.0.1:" + c.Port,
 	}
+	out = append(out, desktopShellOrigins...)
 	if c.PublicURL != "" {
 		out = append(out, strings.TrimRight(c.PublicURL, "/"))
 	}
 	if c.LanURL != "" {
 		out = append(out, strings.TrimRight(c.LanURL, "/"))
 	}
-	for _, o := range strings.Split(c.CORSOrigins, ",") {
+	for _, o := range strings.Split(c.ClientOriginsExtra(), ",") {
 		if o = strings.TrimSpace(o); o != "" {
-			out = append(out, o)
+			out = append(out, strings.TrimRight(o, "/"))
 		}
 	}
 	return out
+}
+
+// ClientOriginsExtra is the user-configured extra origins. CLIENT_ORIGINS is the
+// name that describes what it is; CORS_ORIGINS stays as the legacy alias because
+// existing .env files use it and it named the same thing all along.
+func (c *Config) ClientOriginsExtra() string {
+	if strings.TrimSpace(c.ClientOriginsRaw) != "" {
+		return c.ClientOriginsRaw
+	}
+	return c.CORSOrigins
+}
+
+// AllowedOrigins returns the browser Origins permitted to open the WebSocket or
+// mint an anonymous token. It is ClientOrigins — kept as a separate name because
+// that is what the WebSocket hub is wired with.
+func (c *Config) AllowedOrigins() []string {
+	return c.ClientOrigins()
 }
 
 // AllowedHosts returns the Host header values accepted by the DNS-rebinding
@@ -204,9 +236,9 @@ func (c *Config) AllowedHosts() []string {
 		}
 	}
 	// A trusted browser Origin is also a trusted Host: reverse-proxy setups that
-	// only set CORS_ORIGINS (not PUBLIC_URL) must still pass the DNS-rebinding
+	// only set CLIENT_ORIGINS (not PUBLIC_URL) must still pass the DNS-rebinding
 	// guard, or every request 403s before any handler runs.
-	for _, o := range strings.Split(c.CORSOrigins, ",") {
+	for _, o := range strings.Split(c.ClientOriginsExtra(), ",") {
 		if h := hostFromURL(strings.TrimSpace(o)); h != "" {
 			out = append(out, h)
 			if _, _, err := net.SplitHostPort(h); err != nil {

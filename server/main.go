@@ -176,7 +176,10 @@ func main() {
 	allowedHosts := cfg.AllowedHosts()
 	r.Use(middleware.Helmet)
 	r.Use(middleware.HostCheck(allowedHosts))
-	r.Use(middleware.CORS(cfg.CORSOrigins))
+	// Same derived list the WebSocket guard uses (cfg.AllowedOrigins is
+	// cfg.ClientOrigins). Passing the raw env string here was how CORS drifted out
+	// of sync with the other two guards.
+	r.Use(middleware.CORS(cfg.ClientOrigins()))
 
 	// Rate limiter for auth endpoints
 	authLimiter := middleware.NewRateLimiter(10, time.Minute)

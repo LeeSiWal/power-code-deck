@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAppStore } from '../../stores/appStore';
 import { IconBack, IconChevronRight, IconClose, IconExternal, IconRefresh } from '../icons';
-import { api } from '../../lib/api';
+import { api, apiRequest } from '../../lib/api';
 
 interface BrowserPanelProps {
   agentId: string;
@@ -43,10 +43,7 @@ export function BrowserPanel({ agentId, onClose }: BrowserPanelProps) {
     // All URLs go through proxy for iPad Link Preview bypass (JS injection)
     setLoading(true);
     try {
-      const token = api.getToken();
-      const res = await fetch(`/api/proxy?url=${encodeURIComponent(normalized)}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const res = await apiRequest(`/proxy?url=${encodeURIComponent(normalized)}`);
 
       if (!res.ok) {
         // Proxy failed — fallback to direct iframe for localhost

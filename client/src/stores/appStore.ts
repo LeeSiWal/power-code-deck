@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { getToken } from '../lib/endpoint';
 import { getUserScale, setUserScale } from '../lib/uiScale';
 
 export interface Agent {
@@ -208,7 +209,9 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  isAuthenticated: !!localStorage.getItem('accessToken'),
+  // Tokens are stored per endpoint now — read through getToken so the legacy
+  // single-key layout is migrated rather than read past (endpoint.ts).
+  isAuthenticated: !!getToken(),
   setAuthenticated: (v) => set({ isAuthenticated: v }),
   authConfig: null,
   authReady: false,
@@ -217,7 +220,7 @@ export const useAppStore = create<AppState>((set) => ({
       authConfig: c,
       authReady: true,
       // No-auth mode: user is implicitly authenticated (skip login page).
-      isAuthenticated: c.authEnabled ? !!localStorage.getItem('accessToken') : true,
+      isAuthenticated: c.authEnabled ? !!getToken() : true,
     }),
 
   agents: [],
