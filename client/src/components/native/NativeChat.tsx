@@ -72,6 +72,7 @@ function localErrorLabel(code?: string): string {
     LOCAL_PROVIDER_UNREACHABLE: 'Local provider is unreachable.',
     LOCAL_MODEL_UNAVAILABLE: 'The configured local model is unavailable.',
     LOCAL_TIMEOUT: 'Local preprocessing timed out.',
+    LOCAL_REQUEST_CANCELED: 'Local preprocessing connection was canceled.',
     LOCAL_GENERATION_FAILED: 'Local context generation failed.',
     CONTEXT_BUILD_FAILED: 'Repository context could not be prepared.',
     CLOUD_EXECUTION_FAILED: 'Cloud fallback could not start.',
@@ -537,7 +538,15 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const send = useCallback(async () => {
     const text = draft.trim();
     if (!text && !attachments.length) return;
-    if (intelligencePreparing) return;
+    // A hybrid run holds the turn while the local model chews on the context pack —
+    // which has taken minutes on a slow or unreachable provider. Returning silently
+    // here made the deck look dead: you typed, pressed Enter, and nothing happened,
+    // with no banner and the draft still sitting there. Say so instead, and keep the
+    // draft so Enter after it finishes still sends what you wrote.
+    if (intelligencePreparing) {
+      setError('로컬 컨텍스트를 준비하는 중입니다. 끝나면 전송하거나, 중단하려면 Intelligence 모드를 Cloud Only로 바꾸세요.');
+      return;
+    }
     const command = !attachments.length ? clientCommand(text) : null;
     // /clear starts a genuinely new session instead of being forwarded. Sent to the
     // CLI it drops the context but leaves the transcript on screen, so the chat looks
@@ -660,9 +669,13 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       if (failedTrace) setIntelligenceRefreshKey((key) => key + 1);
       const localCode = failedTrace ? localFailureCode(failedTrace) : undefined;
       const cloudCode = failedTrace ? cloudFailureCode(failedTrace) : undefined;
-      setError(localCode && cloudCode
-        ? `${localErrorLabel(localCode)} ${localErrorLabel(cloudCode)} The task was not sent.`
-        : `${localErrorLabel(localCode || cloudCode || failedTrace?.errorCode)} The task was not sent.`);
+      if (!failedTrace) {
+        setError('The Local Intelligence connection was interrupted. Check the trace before retrying; cloud fallback may already be running.');
+      } else {
+        setError(localCode && cloudCode
+          ? `${localErrorLabel(localCode)} ${localErrorLabel(cloudCode)} The task was not sent.`
+          : `${localErrorLabel(localCode || cloudCode || failedTrace.errorCode)} The task was not sent.`);
+      }
       setDraft(text);
       setAttachments(originalAttachments);
     } finally {

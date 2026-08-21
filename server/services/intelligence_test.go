@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -259,6 +260,36 @@ func TestBuildCandidateContextFallsBackToSafeFilesystemScan(t *testing.T) {
 	}
 }
 
+func TestBuildCandidateContextHonorsLocalInferenceBudget(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("init")
+	for i := 0; i < 12; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("source-%02d.go", i))
+		if err := os.WriteFile(name, []byte("package source\n"+strings.Repeat("// bounded repository evidence\n", 2000)), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("add", ".")
+
+	c, err := BuildCandidateContext(context.Background(), dir, "inspect repository evidence")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Bytes > maxContextBytes {
+		t.Fatalf("candidate context exceeded local inference budget: %d > %d", c.Bytes, maxContextBytes)
+	}
+	if c.Bytes < maxContextBytes/2 || len(c.Files) < 2 {
+		t.Fatalf("candidate context was bounded too aggressively: bytes=%d files=%d", c.Bytes, len(c.Files))
+	}
+}
+
 func TestEstimatedTokenMeasurementAndPackValidation(t *testing.T) {
 	if got := EstimateTokens("12345"); got != 2 {
 		t.Fatalf("EstimateTokens = %d, want 2", got)
@@ -371,6 +402,55 @@ func TestHybridLocalFailureRecordsFallbackAndContinuesCloud(t *testing.T) {
 	}
 	if len(driver.sent) != 1 || driver.sent[0] != "explain main" {
 		t.Fatalf("fallback did not preserve the original cloud task: %q", driver.sent)
+	}
+}
+
+func TestHybridLocalDeadlineFallsBackBeforeTransportDeadline(t *testing.T) {
+	svc, driver, _ := intelligenceRunFixture(t)
+	svc.hybridTimeout = 15 * time.Millisecond
+	if _, err := svc.providers.Upsert(LocalProvider{
+		Name: "slow", Type: "ollama", BaseURL: "http://local.test", Model: "test-model",
+		TimeoutMS: defaultProviderTimeoutMS, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.providers.httpClient = func(time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		})}
+	}
+
+	started := time.Now()
+	result, err := svc.Run(context.Background(), IntelligenceRunRequest{
+		AgentID: "a1", Task: "explain main", Mode: ModeLocalPreprocessCloud, Provider: "slow",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("hybrid fallback exceeded its local deadline: %s", elapsed)
+	}
+	if !result.Dispatched || !result.Trace.Fallback || result.Trace.ErrorCode != ErrLocalTimeout {
+		t.Fatalf("hybrid deadline did not dispatch cloud fallback: %#v", result.Trace)
+	}
+	if len(driver.sent) != 1 || driver.sent[0] != "explain main" {
+		t.Fatalf("deadline fallback did not preserve task: %q", driver.sent)
+	}
+	var timeoutMS any
+	for _, event := range result.Trace.Events {
+		if event.Stage == "local_request" {
+			timeoutMS = event.Details["timeoutMs"]
+		}
+	}
+	if timeoutMS != int64(15) {
+		t.Fatalf("effective Hybrid timeout missing from trace: %#v", result.Trace.Events)
+	}
+}
+
+func TestClassifyRequestCancellationSeparatelyFromProviderReachability(t *testing.T) {
+	if got := classifyLocalError(context.Canceled); got != ErrRequestCanceled {
+		t.Fatalf("context cancellation classified as %q, want %q", got, ErrRequestCanceled)
 	}
 }
 

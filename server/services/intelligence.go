@@ -32,6 +32,7 @@ const (
 	ModeLocalOnly            = "LOCAL_ONLY"
 
 	defaultProviderTimeoutMS = 180000
+	defaultHybridTimeout     = 90 * time.Second
 	ollamaContextTokens      = 65536
 	ollamaKeepAlive          = "30m"
 	healthProbeTokens        = 32
@@ -40,6 +41,7 @@ const (
 	ErrProviderUnreachable = "LOCAL_PROVIDER_UNREACHABLE"
 	ErrModelUnavailable    = "LOCAL_MODEL_UNAVAILABLE"
 	ErrLocalTimeout        = "LOCAL_TIMEOUT"
+	ErrRequestCanceled     = "LOCAL_REQUEST_CANCELED"
 	ErrGenerationFailed    = "LOCAL_GENERATION_FAILED"
 	ErrContextBuild        = "CONTEXT_BUILD_FAILED"
 	ErrCloudExecution      = "CLOUD_EXECUTION_FAILED"
@@ -310,6 +312,9 @@ func classifyLocalError(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
 		return ErrLocalTimeout
 	}
+	if errors.Is(err, context.Canceled) {
+		return ErrRequestCanceled
+	}
 	if strings.Contains(err.Error(), ErrModelUnavailable) {
 		return ErrModelUnavailable
 	}
@@ -344,12 +349,14 @@ type CandidateContext struct {
 
 const (
 	maxCandidateFiles  = 24
-	maxFileBytes       = 24 * 1024
+	maxFileBytes       = 12 * 1024
 	maxFilesystemFiles = 5000
 	maxFilesystemDepth = 12
-	// Leave room inside the 64k Ollama window for instructions, tokenizer
-	// variance, and the generated context pack itself.
-	maxContextBytes = 192 * 1024
+	// Hybrid preprocessing is a latency-sensitive request, not a full repository
+	// upload. Keep the evidence near 16k estimated tokens so a 30B local model can
+	// finish before common reverse-proxy request deadlines and still leave ample
+	// room for instructions and the generated context pack.
+	maxContextBytes = 64 * 1024
 )
 
 // EstimateTokens is explicitly an estimate: Unicode code points / 4, rounded
@@ -449,11 +456,17 @@ func BuildCandidateContext(ctx context.Context, cwd, task string) (CandidateCont
 		if readErr != nil || bytes.IndexByte(data, 0) >= 0 {
 			continue
 		}
-		remaining := maxContextBytes - b.Len()
+		header := "\nFILE: " + candidate.path + "\n"
+		remaining := maxContextBytes - b.Len() - len(header) - 1
+		if remaining <= 0 {
+			break
+		}
 		if len(data) > remaining {
 			data = data[:remaining]
 		}
-		fmt.Fprintf(&b, "\nFILE: %s\n%s\n", candidate.path, string(data))
+		b.WriteString(header)
+		b.Write(data)
+		b.WriteByte('\n')
 		files = append(files, candidate.path)
 	}
 	text := b.String()
@@ -631,16 +644,20 @@ type IntelligenceRunResult struct {
 }
 
 type IntelligenceService struct {
-	db        *sql.DB
-	providers *ProviderRegistry
-	agents    *AgentService
-	native    *NativeService
-	mu        sync.Mutex
-	pending   map[string]string // agent id -> trace id awaiting a native result event
+	db            *sql.DB
+	providers     *ProviderRegistry
+	agents        *AgentService
+	native        *NativeService
+	hybridTimeout time.Duration
+	mu            sync.Mutex
+	pending       map[string]string // agent id -> trace id awaiting a native result event
 }
 
 func NewIntelligenceService(db *sql.DB, providers *ProviderRegistry, agents *AgentService, native *NativeService) *IntelligenceService {
-	s := &IntelligenceService{db: db, providers: providers, agents: agents, native: native, pending: make(map[string]string)}
+	s := &IntelligenceService{
+		db: db, providers: providers, agents: agents, native: native,
+		hybridTimeout: defaultHybridTimeout, pending: make(map[string]string),
+	}
 	if native != nil {
 		native.AddEventObserver(s.observeNativeEvent)
 	}
@@ -709,7 +726,8 @@ func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunReques
 	t.RawTokens = candidate.EstimatedTokens
 	result.Files = candidate.Files
 	addTrace(t, "repository_scan", "OK", map[string]any{
-		"candidateFiles": len(candidate.Files), "rawEstimatedTokens": t.RawTokens, "source": candidate.Source,
+		"candidateFiles": len(candidate.Files), "rawEstimatedTokens": t.RawTokens,
+		"contextBytes": candidate.Bytes, "source": candidate.Source,
 	})
 
 	p, err := s.providers.Get(req.Provider)
@@ -717,10 +735,24 @@ func (s *IntelligenceService) Run(ctx context.Context, req IntelligenceRunReques
 		return s.localFailure(result, req, ErrProviderUnreachable, fmt.Errorf("provider is missing or disabled"))
 	}
 	t.Provider, t.Model = p.Name, p.Model
-	addTrace(t, "local_request", "STARTED", map[string]any{"provider": p.Name, "model": p.Model})
+	requestTimeout := providerTimeout(p)
+	if req.Mode == ModeLocalPreprocessCloud {
+		hybridTimeout := s.hybridTimeout
+		if hybridTimeout <= 0 {
+			hybridTimeout = defaultHybridTimeout
+		}
+		if requestTimeout > hybridTimeout {
+			requestTimeout = hybridTimeout
+		}
+	}
+	generationCtx, cancelGeneration := context.WithTimeout(ctx, requestTimeout)
+	defer cancelGeneration()
+	addTrace(t, "local_request", "STARTED", map[string]any{
+		"provider": p.Name, "model": p.Model, "timeoutMs": requestTimeout.Milliseconds(),
+	})
 	prompt := contextPackPrompt(req.Task, candidate.Text)
 	started := time.Now()
-	pack, localTokens, err := s.providers.ollamaGenerate(ctx, p, prompt, contextPackTokens)
+	pack, localTokens, err := s.providers.ollamaGenerate(generationCtx, p, prompt, contextPackTokens)
 	t.LatencyMS = time.Since(started).Milliseconds()
 	if err != nil {
 		return s.localFailure(result, req, classifyLocalError(err), err)
