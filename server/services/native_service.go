@@ -412,44 +412,44 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			opts, _ = loadOpts(sessionID).Normalize()
 		}
 	}
-	var d NativeDriver
 	var token string
-	var err error
-	if kind == "codex" {
-		// Codex maps "auto" to its default (on-request) approval policy, so gated calls
-		// still reach the broker and the same policy applies.
-		d = NewCodexDriver(CodexConfig{
-			SessionID: sessionID, Cwd: cwd, Model: model, Mode: mode,
-			ResumeID: resumeID, Broker: s.broker,
-		})
-	} else {
-		token, err = s.tokens.Issue(sessionID)
-		if err != nil {
+	if kind != "codex" {
+		var err error
+		if token, err = s.tokens.Issue(sessionID); err != nil {
 			return err
 		}
-		d = NewClaudeDriver(ClaudeConfig{
+	}
+	// One constructor for both attempts below, so the retry can never drift from the
+	// first try — and so the retry is not silently Claude-only, which is what used to
+	// leave a Codex agent permanently unopenable once a bad resume id was stored.
+	newDriver := func(resume string) NativeDriver {
+		if kind == "codex" {
+			// Codex maps "auto" to its default (on-request) approval policy, so gated calls
+			// still reach the broker and the same policy applies.
+			return NewCodexDriver(CodexConfig{
+				SessionID: sessionID, Cwd: cwd, Model: model, Mode: mode,
+				ResumeID: resume, Broker: s.broker,
+			})
+		}
+		return NewClaudeDriver(ClaudeConfig{
 			SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: cliMode,
 			Effort: effort, Options: opts,
-			ResumeID: resumeID, ApproveURL: s.baseURL + "/internal/native/approve",
+			ResumeID: resume, ApproveURL: s.baseURL + "/internal/native/approve",
 			ApproveToken: token, SelfPath: s.selfBin,
 		})
 	}
+	d := newDriver(resumeID)
 	if err := d.Start(); err != nil {
 		// A stale resume id (its transcript was deleted, or the CLI rejects it)
 		// must not lock the agent out of ever starting. Drop it and try fresh
 		// once, rather than failing every open from here on.
-		if resumeID != "" && kind == "claude" {
-			d = NewClaudeDriver(ClaudeConfig{
-				SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: cliMode,
-				Effort: effort, Options: opts,
-				ApproveURL: s.baseURL + "/internal/native/approve", ApproveToken: token,
-				SelfPath: s.selfBin,
-			})
-			if err2 := d.Start(); err2 != nil {
-				s.tokens.Revoke(sessionID)
-				return err
-			}
-		} else {
+		if resumeID == "" {
+			s.tokens.Revoke(sessionID)
+			return err
+		}
+		d.Stop() // the first attempt may have left a live CLI process behind
+		d = newDriver("")
+		if err2 := d.Start(); err2 != nil {
 			s.tokens.Revoke(sessionID)
 			return err
 		}
