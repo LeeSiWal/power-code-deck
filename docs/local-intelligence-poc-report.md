@@ -199,9 +199,54 @@ axis as wired does not pay for itself:
   Trimming the prefix is capped low: of the 24k, CLAUDE.md is ~440 tokens and PowerCodeDeck's own
   additions are small — most of it is Claude Code's own system prompt and built-in tool
   definitions, which PowerCodeDeck does not control.
-- **The one hybrid variant still worth testing** is substitutive rather than advisory: answer from
-  the pack and open at most N more files. That trades correctness for cost explicitly, so it
-  should be scoped to tasks where the pack is provably sufficient. Untested as of this writing.
+- **The substitutive variant was tested, and it is now the default** (§7b).
+
+## 7b. Capping the survey (2026-08-21) — now the default
+
+§7a showed the bill is made of tool calls, so the follow-up asked whether capping them saves.
+The hybrid wrapper was changed from advisory ("verify this and inspect additional files whenever
+needed") to substitutive: answer from the pack, at most 3 additional files, do not survey, and if
+the pack is not enough **say so and list what you would need** rather than guess. Three runs,
+same repository and question, fresh session each, against an instrumented baseline:
+
+| | tool calls | cache read | output | cost |
+|---|---|---|---|---|
+| baseline (no cap) | 25 | 875,958 | 7,214 | $1.1949 |
+| substitutive #1 | 7 | 264,102 | 4,676 | $0.6024 |
+| substitutive #2 | 4 | 109,687 | 7,544 | $0.5438 |
+| substitutive #3 | 1 | 65,847 | 2,449 | $0.2963 |
+
+**84% fewer steps, 53% less money.** Split into terms, the whole saving is one of them:
+
+```
+cache-read term   $0.838 → $0.105   (−$0.73)
+output term       $0.458 → $0.479   (unchanged)
+```
+
+Output tokens went *up* — this is not "cheaper because it said less". Per-step cache read was
+similar in both (27k-38k); only the number of steps changed.
+
+**Quality was checked, not assumed.** Runs #1 and #2 explained the approval flow correctly, and
+their citations were verified against the source: the silent-deny behaviour documented in
+`claude_permission.go`, the `--permission-prompt-tool mcp__pcd__approve` flag at
+`claude_driver.go:193`, the loopback-only endpoint in `native_approve.go`, and `autoDecision`
+at `native_service.go:274`. Run #2 also listed what it had deliberately left unread. Run #3
+**refused to answer** — correctly: its pack was about the intelligence subsystem, not approvals.
+
+### What this does not prove
+
+In all three runs the pack was irrelevant to the question — `BuildCandidateContext` builds from the
+working tree, and the question was about a subsystem the working tree did not touch. The saving
+therefore came from the **cap and the honesty requirement**, not from local inference: a 1,010-token
+pack cannot account for 766,000 fewer cache-read tokens, and the model said outright that it was not
+using it. The advisory wrapper had been hiding that same broken pack at full price.
+
+The open question is whether a bare cap with **no pack and no local phase** does just as well. If it
+does, the local model contributes nothing to cost and the 10-46 s it spends is pure loss. That run
+has not been made.
+
+Also note the term that now dominates: at 4 steps, $0.479 of a $0.5438 turn is output. Step count is
+no longer the lever — answer length is.
 
 ## 8. Codex regression
 
@@ -283,8 +328,9 @@ result is in §7a — hybrid preprocessing shows no measurable saving.
 
 So the next work is *not* more of this axis:
 
-1. **Demote `LOCAL_PREPROCESS_CLOUD` from a default** to an experiment. It costs 13-46 s per turn
-   for a benefit that measurement cannot find.
+1. **Run the bare-cap arm** (§7b): the same cap with no pack and no local phase. It decides whether
+   `LOCAL_PREPROCESS_CLOUD` has any cost justification left at all, or whether the instruction alone
+   should move to ordinary `CLOUD_ONLY` turns — where the volume is.
 2. **Measure local answer quality** before routing anything to `LOCAL_ONLY` automatically. Today the
    human picks the mode, and that choice is the only safeguard against a confidently wrong local
    answer; automating routing removes it while nothing checks correctness.

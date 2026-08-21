@@ -66,29 +66,29 @@ func savingsTestService(t *testing.T) *IntelligenceService {
 // (prefix x steps), and steps varied 25-51 between runs of the SAME task in the
 // 2026-08-21 measurement. Counting them here turns that from an inference
 // (cache_read / prefix, an upper bound) into a recorded fact.
-// The two wrappers encode opposite bets. Advisory (default) protects correctness by
-// telling the agent to verify and read more — and measurement showed it saves
-// nothing. Substitutive bets that capping reads cuts the step count, which is what
-// the bill is made of. Whichever ships, the pack and the user's task must survive
-// verbatim: the task is the thing the user actually asked.
+// The two wrappers encode opposite bets, and the default is the one that measured
+// better. Substitutive caps reads to cut step count — the term the bill is made of
+// (25 -> 4 tool calls, $1.1949 -> $0.5438, output unchanged). Advisory protects
+// correctness by inviting exploration and saves nothing. Whichever runs, the pack
+// and the user's task must survive verbatim: the task is what the user asked.
 func TestHybridCloudPromptVariants(t *testing.T) {
 	const pack, task = "TASK\nx\nFILES\na", "explain the approval flow"
 
-	advisory := hybridCloudPrompt(pack, task)
-	if !strings.Contains(advisory, "advisory") || !strings.Contains(advisory, "inspect additional files") {
-		t.Fatalf("default wrapper is no longer advisory: %q", advisory)
-	}
-
-	t.Setenv("PCD_HYBRID_PROMPT", "substitutive")
 	substitutive := hybridCloudPrompt(pack, task)
 	if !strings.Contains(substitutive, "at most 3 additional files") {
-		t.Fatalf("substitutive wrapper has no read cap: %q", substitutive)
+		t.Fatalf("default wrapper has no read cap: %q", substitutive)
 	}
 	if !strings.Contains(substitutive, "do not guess") {
-		t.Fatalf("substitutive wrapper must require admitting an insufficient pack: %q", substitutive)
+		t.Fatalf("default wrapper must require admitting an insufficient pack: %q", substitutive)
 	}
 	if strings.Contains(substitutive, "inspect additional files whenever needed") {
-		t.Fatalf("substitutive wrapper still invites open-ended exploration: %q", substitutive)
+		t.Fatalf("default wrapper still invites open-ended exploration: %q", substitutive)
+	}
+
+	t.Setenv("PCD_HYBRID_PROMPT", "advisory")
+	advisory := hybridCloudPrompt(pack, task)
+	if !strings.Contains(advisory, "advisory") || !strings.Contains(advisory, "inspect additional files") {
+		t.Fatalf("advisory opt-out no longer restores the old wrapper: %q", advisory)
 	}
 
 	for name, prompt := range map[string]string{"advisory": advisory, "substitutive": substitutive} {

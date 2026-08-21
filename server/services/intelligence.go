@@ -937,31 +937,44 @@ func (s *IntelligenceService) run(ctx context.Context, req IntelligenceRunReques
 
 // hybridCloudPrompt wraps the pack for the cloud turn.
 //
-// The default is ADVISORY: the pack is a hint and the agent is told to verify it
-// and open whatever else it needs. That is a correctness choice — a 30B local model
-// misses files, and an agent forbidden to look would answer confidently wrong.
+// The default is SUBSTITUTIVE: answer from the pack, open at most three more files,
+// do not survey the repository, and say so plainly when the pack is not enough.
+// That last clause is the safety catch — the risk of this framing is a cheap wrong
+// answer, and it can only be judged if the model admits when it is guessing.
 //
-// It is also why hybrid saves nothing. Measured on 2026-08-21: cost tracks
-// (prefix x steps), a real turn made 25 tool calls, and the advisory wrapper does
-// not reduce that count — it hands the agent more leads to follow. See
+// Measured 2026-08-21 (same repo, same question, fresh session per run, n=3 vs an
+// instrumented baseline). Cost is Sum over steps of (conversation re-read), so the
+// bill is made of tool calls, not prompt size:
+//
+//	baseline (no cap)   25 tool calls   cache read 875,958   $1.1949
+//	substitutive         4 tool calls   cache read 109,687   $0.5438
+//
+// 84% fewer steps, 53% less money — with output tokens UNCHANGED (7,214 -> 7,544),
+// so it is not cheaper by saying less. Answers were checked against the source and
+// were correct; one run correctly refused to answer because the pack was about a
+// different subsystem, which the advisory wrapper had been hiding at full price.
+//
+// The old ADVISORY wrapper ("verify it and inspect additional files whenever
+// needed") is still available as PCD_HYBRID_PROMPT=advisory. It protects
+// correctness by inviting exploration, and measurement showed it saves nothing:
+// its median turn cost more than plain CLOUD_ONLY.
+//
+// Note what this does NOT establish: in all three runs the pack was irrelevant to
+// the question, so the saving came from the cap and the honesty requirement, not
+// from local inference. Whether a bare cap with no pack does the same is untested —
 // docs/local-intelligence-poc-report.md §7a.
-//
-// PCD_HYBRID_PROMPT=substitutive selects the experimental variant that tries to
-// cut steps instead: answer FROM the pack, with a hard cap on extra reads and an
-// explicit requirement to admit when the pack was not enough. It trades correctness
-// for cost, so it stays opt-in until measurement says what that trade actually buys.
 func hybridCloudPrompt(pack, task string) string {
-	if strings.TrimSpace(os.Getenv("PCD_HYBRID_PROMPT")) == "substitutive" {
-		return "PowerCodeDeck generated the following LOCAL context pack from this repository. " +
-			"Answer the user task using this pack as your primary evidence.\n" +
-			"You may open at most 3 additional files, and only to resolve something the pack " +
-			"leaves ambiguous or appears to get wrong. Do not survey the repository.\n" +
-			"If the pack is not enough to answer confidently, say so explicitly and list what " +
-			"you would need to read — do not guess.\n\n" + pack + "\n\nUSER TASK\n" + task
+	if strings.TrimSpace(os.Getenv("PCD_HYBRID_PROMPT")) == "advisory" {
+		return "PowerCodeDeck generated the following LOCAL context pack. Treat it as advisory, " +
+			"verify it against the repository, and inspect additional files whenever needed.\n\n" +
+			pack + "\n\nUSER TASK\n" + task
 	}
-	return "PowerCodeDeck generated the following LOCAL context pack. Treat it as advisory, " +
-		"verify it against the repository, and inspect additional files whenever needed.\n\n" +
-		pack + "\n\nUSER TASK\n" + task
+	return "PowerCodeDeck generated the following LOCAL context pack from this repository. " +
+		"Answer the user task using this pack as your primary evidence.\n" +
+		"You may open at most 3 additional files, and only to resolve something the pack " +
+		"leaves ambiguous or appears to get wrong. Do not survey the repository.\n" +
+		"If the pack is not enough to answer confidently, say so explicitly and list what " +
+		"you would need to read — do not guess.\n\n" + pack + "\n\nUSER TASK\n" + task
 }
 
 func localOnlyAllowed(op string) bool {
