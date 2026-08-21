@@ -20,3 +20,9 @@ server/static/
 
 # Newton run state (per-mission artifacts, regenerated)
 .newton/
+
+# Runtime attachment store (user files uploaded to a chat)
+.pcd-attachments/
+
+# Stray root build artifact (the tracked binary is dist/pcd.exe)
+/pcd.exe

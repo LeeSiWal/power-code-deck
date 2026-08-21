@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -225,7 +227,10 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 
 	// Expand a leading ~ so a directly-typed "~/code/foo" resolves to the home
 	// directory instead of a literal "~" path the shell can't cd into.
-	workingDir := expandHome(req.WorkingDir)
+	workingDir, err := ResolveWorkingDir(req.WorkingDir)
+	if err != nil {
+		return nil, err
+	}
 
 	// Start the session's process via the engine (tmux/PTY details are hidden).
 	if _, err := s.engine.Create(CreateSessionRequest{
@@ -256,7 +261,7 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 		UpdatedAt:   now,
 	}
 
-	_, err := s.db.Exec(
+	_, err = s.db.Exec(
 		"INSERT INTO agents (id, preset, name, tmux_session, working_dir, command, args, status, color_hue, color_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		agent.ID, agent.Preset, agent.Name, agent.TmuxSession, agent.WorkingDir, agent.Command, string(argsJSON), agent.Status, agent.ColorHue, agent.ColorName,
 	)
@@ -280,6 +285,26 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 	insertAgentLog(s.db, agent.ID, "세션 생성됨 · "+agent.Name+" ("+agent.Command+")")
 	s.startActivity(agent)
 	return agent, nil
+}
+
+// ResolveWorkingDir turns a user-selected directory into the stable absolute
+// identity stored on an agent row. Native opens and PTY restarts then cannot
+// reinterpret a relative cwd against a different server launch directory.
+func ResolveWorkingDir(dir string) (string, error) {
+	dir = expandHome(dir)
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("invalid working directory: %w", err)
+	}
+	abs = filepath.Clean(abs)
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", fmt.Errorf("working directory is not accessible: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("working directory is not a directory: %s", abs)
+	}
+	return abs, nil
 }
 
 // inheritedNativeConfig picks the model + permission mode + effort a new session should

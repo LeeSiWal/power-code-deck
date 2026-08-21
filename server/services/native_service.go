@@ -32,8 +32,21 @@ func nativeTextEvent(role, text string) *StreamEvent {
 // user turn looking forever in-flight: the composer's "작업 중" bar span on a
 // resumed chat with nothing actually running. Closing the turn here fixes that.
 func nativeResultEvent() *StreamEvent {
-	raw, _ := json.Marshal(map[string]any{"type": StreamTypeResult})
-	return &StreamEvent{Type: StreamTypeResult, Raw: raw}
+	return nativeResultEventWithUsage(nil)
+}
+
+// nativeResultEventWithUsage is nativeResultEvent plus what the cloud spent, for
+// drivers that report it. usage stays nil when the driver reports nothing — Raw
+// then omits the field entirely, so a consumer cannot mistake "not reported" for
+// zero. Raw must stay result-shaped: the hub ships it to the browser verbatim
+// (ws/hub.go, EventNativeEvent) and the client keys off `type`.
+func nativeResultEventWithUsage(usage *StreamUsage) *StreamEvent {
+	payload := map[string]any{"type": StreamTypeResult}
+	if usage != nil {
+		payload["usage"] = usage
+	}
+	raw, _ := json.Marshal(payload)
+	return &StreamEvent{Type: StreamTypeResult, Usage: usage, Raw: raw}
 }
 
 // sessionPolicy holds the permission mode and working directory for a session.
@@ -82,6 +95,7 @@ type NativeService struct {
 	// onEvent/onApproval are set by the hub at wiring time.
 	onEvent    func(sessionID string, ev *StreamEvent)
 	onApproval func(PermissionRequest)
+	observers  []func(sessionID string, ev *StreamEvent)
 
 	// onSessionID records Claude's own conversation id when a session announces it,
 	// so a later open can --resume instead of starting from nothing. Injected
@@ -283,6 +297,18 @@ func (s *NativeService) SetHandlers(onEvent func(string, *StreamEvent), onApprov
 	})
 }
 
+// AddEventObserver adds a read-only observer without replacing the Hub fan-out.
+// Local Intelligence uses this to turn a dispatched trace into CLOUD_COMPLETED
+// when the native driver emits its real turn boundary.
+func (s *NativeService) AddEventObserver(fn func(string, *StreamEvent)) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	s.observers = append(s.observers, fn)
+	s.mu.Unlock()
+}
+
 // autoDecision applies the auto-approval policy for the request's session.
 //
 // It reads from `policies` — a map with a longer lifetime than `sessions`. The two
@@ -399,44 +425,44 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			opts, _ = loadOpts(sessionID).Normalize()
 		}
 	}
-	var d NativeDriver
 	var token string
-	var err error
-	if kind == "codex" {
-		// Codex maps "auto" to its default (on-request) approval policy, so gated calls
-		// still reach the broker and the same policy applies.
-		d = NewCodexDriver(CodexConfig{
-			SessionID: sessionID, Cwd: cwd, Model: model, Mode: mode,
-			ResumeID: resumeID, Broker: s.broker,
-		})
-	} else {
-		token, err = s.tokens.Issue(sessionID)
-		if err != nil {
+	if kind != "codex" {
+		var err error
+		if token, err = s.tokens.Issue(sessionID); err != nil {
 			return err
 		}
-		d = NewClaudeDriver(ClaudeConfig{
+	}
+	// One constructor for both attempts below, so the retry can never drift from the
+	// first try — and so the retry is not silently Claude-only, which is what used to
+	// leave a Codex agent permanently unopenable once a bad resume id was stored.
+	newDriver := func(resume string) NativeDriver {
+		if kind == "codex" {
+			// Codex maps "auto" to its default (on-request) approval policy, so gated calls
+			// still reach the broker and the same policy applies.
+			return NewCodexDriver(CodexConfig{
+				SessionID: sessionID, Cwd: cwd, Model: model, Mode: mode,
+				ResumeID: resume, Broker: s.broker,
+			})
+		}
+		return NewClaudeDriver(ClaudeConfig{
 			SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: cliMode,
 			Effort: effort, Options: opts,
-			ResumeID: resumeID, ApproveURL: s.baseURL + "/internal/native/approve",
+			ResumeID: resume, ApproveURL: s.baseURL + "/internal/native/approve",
 			ApproveToken: token, SelfPath: s.selfBin,
 		})
 	}
+	d := newDriver(resumeID)
 	if err := d.Start(); err != nil {
 		// A stale resume id (its transcript was deleted, or the CLI rejects it)
 		// must not lock the agent out of ever starting. Drop it and try fresh
 		// once, rather than failing every open from here on.
-		if resumeID != "" && kind == "claude" {
-			d = NewClaudeDriver(ClaudeConfig{
-				SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: cliMode,
-				Effort: effort, Options: opts,
-				ApproveURL: s.baseURL + "/internal/native/approve", ApproveToken: token,
-				SelfPath: s.selfBin,
-			})
-			if err2 := d.Start(); err2 != nil {
-				s.tokens.Revoke(sessionID)
-				return err
-			}
-		} else {
+		if resumeID == "" {
+			s.tokens.Revoke(sessionID)
+			return err
+		}
+		d.Stop() // the first attempt may have left a live CLI process behind
+		d = newDriver("")
+		if err2 := d.Start(); err2 != nil {
 			s.tokens.Revoke(sessionID)
 			return err
 		}
@@ -677,28 +703,40 @@ func (s *NativeService) emit(sess *nativeSession, ev *StreamEvent) {
 
 	s.mu.RLock()
 	fn := s.onEvent
+	observers := append([]func(string, *StreamEvent){}, s.observers...)
 	s.mu.RUnlock()
 	if fn != nil {
 		fn(sess.id, ev)
+	}
+	for _, observe := range observers {
+		observe(sess.id, ev)
 	}
 }
 
 // Send delivers a user turn to a running session.
 func (s *NativeService) Send(sessionID, text string) error {
+	return s.SendWithDisplayText(sessionID, text, text)
+}
+
+// SendWithDisplayText lets a middleware layer enrich what the native driver sees
+// without leaking that transport prompt into chat history. Local Intelligence uses
+// this for its advisory context pack: Codex/Claude receive the optimized prompt,
+// while the user still sees the task they actually typed.
+func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText string) error {
 	s.mu.RLock()
 	sess := s.sessions[sessionID]
 	s.mu.RUnlock()
 	if sess == nil {
 		return fmt.Errorf("native session %s is not running", sessionID)
 	}
-	if err := sess.driver.Send(text); err != nil {
+	if err := sess.driver.Send(driverText); err != nil {
 		return err
 	}
 	// Record the user turn in history NOW — at its real position, before the reply
 	// arrives — instead of relying on the CLI to echo it back (that echo can land
 	// after the assistant's response, flipping the order). This is also what keeps
 	// the user's half of the conversation across a reconnect.
-	s.emit(sess, nativeTextEvent("user", text))
+	s.emit(sess, nativeTextEvent("user", displayText))
 	return nil
 }
 

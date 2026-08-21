@@ -1,66 +1,205 @@
-const API_BASE = '/api';
+import {
+  apiUrl,
+  clearTokens,
+  currentEndpointId,
+  getRefreshToken,
+  getToken,
+  setAccessToken,
+  setTokens,
+} from './endpoint';
 
-function getToken(): string | null {
-  return localStorage.getItem('accessToken');
+// Thrown when an endpoint's credentials expired. It names WHICH endpoint so the
+// router can decide: re-authenticate only if it is the one being viewed. Sending
+// the whole app to /login because a background remote host expired was the old
+// behaviour and is wrong once more than one server exists.
+export class AuthExpiredError extends Error {
+  constructor(readonly endpointId: string) {
+    super('Session expired');
+    this.name = 'AuthExpiredError';
+  }
 }
 
-function setTokens(access: string, refresh: string) {
-  localStorage.setItem('accessToken', access);
-  localStorage.setItem('refreshToken', refresh);
+let authExpiredHandler: ((endpointId: string) => void) | null = null;
+
+// Registered by the app shell. A callback rather than a store import keeps this
+// module free of UI layering, and — more importantly — it fires even when the
+// caller swallows the rejection. Plenty of call sites end in `.catch(() => {})`
+// because their panel is supplemental; expiry still has to be noticed.
+export function setAuthExpiredHandler(fn: ((endpointId: string) => void) | null) {
+  authExpiredHandler = fn;
 }
 
-function clearTokens() {
-  localStorage.removeItem('accessToken');
-  localStorage.removeItem('refreshToken');
+export interface LocalProvider {
+  name: string;
+  type: string;
+  baseUrl: string;
+  model: string;
+  timeoutMs: number;
+  enabled: boolean;
+  updatedAt?: string;
+}
+
+export interface ProviderHealth {
+  provider: string;
+  reachable: boolean;
+  apiHealthy: boolean;
+  modelAvailable: boolean;
+  generationTest: boolean;
+  latencyMs: number;
+  errorCode?: string;
+  error?: string;
+}
+
+export type IntelligenceMode = 'CLOUD_ONLY' | 'LOCAL_PREPROCESS_CLOUD' | 'LOCAL_ONLY';
+
+export interface IntelligenceTraceEvent {
+  at: string;
+  stage: string;
+  status: string;
+  details?: Record<string, unknown>;
+}
+
+export interface IntelligenceTrace {
+  id: string;
+  agentId?: string;
+  mode: IntelligenceMode;
+  status: string;
+  provider?: string;
+  model?: string;
+  rawEstimatedTokens: number;
+  optimizedEstimatedTokens: number;
+  localTokens: number;
+  latencyMs: number;
+  reductionPercent: number;
+  errorCode?: string;
+  fallback: boolean;
+  events: IntelligenceTraceEvent[];
+  createdAt: string;
+  // What the CLOUD actually spent on the dispatched turn — the only honest basis
+  // for a savings claim. rawEstimatedTokens is the candidate context PowerCodeDeck
+  // assembled, which CLOUD_ONLY never sends, so raw−optimized measures local
+  // compression rather than saving.
+  //
+  // cloudUsageKnown is false when the driver reports no usage at all (Codex —
+  // verified against codex-cli 0.146.0). The numbers below are then "not measured",
+  // never "measured as zero", and must not be rendered as a value.
+  cloudCostUsd?: number;
+  cloudInputTokens?: number;
+  cloudOutputTokens?: number;
+  cloudCacheReadTokens?: number;
+  // Written once per session and re-read on every agent step. Cost is dominated by
+  // (prefix size x steps), so this is the number a prefix diet has to move.
+  cloudCacheCreationTokens?: number;
+  // Tool calls the cloud agent made. Cost tracks (prefix x steps), and steps vary
+  // ~2x between runs of the same task, so this is the number that explains a bill.
+  cloudToolCalls?: number;
+  cloudUsageKnown?: boolean;
+}
+
+// What POST /intelligence/run answers with: the run was accepted, here is the id
+// to watch. Nothing else can be known yet — local inference takes 38-59 seconds
+// when it succeeds, and the request no longer waits for it.
+export interface IntelligenceStartResult {
+  trace: IntelligenceTrace;
+}
+
+// What arrives on the `intelligence:trace` socket event. Progress updates carry
+// only the trace; the update that ends a run also carries the pieces that are
+// never stored server-side — the generated context pack and the files it was
+// built from. LOCAL_ONLY output exists nowhere else, so this event is the only
+// place it can be read.
+export interface IntelligenceRunResult {
+  trace: IntelligenceTrace;
+  contextPack?: string;
+  files?: string[];
+  cloudDispatched?: boolean;
+}
+
+// Statuses a trace never leaves. Used to keep a late update from dragging a
+// finished run back into "running".
+const TERMINAL_TRACE_STATUS = new Set([
+  'SUCCESS', 'FAILED', 'CLOUD_COMPLETED', 'CLOUD_COMPLETED_WITH_FALLBACK',
+]);
+
+export function isTraceTerminal(trace: IntelligenceTrace): boolean {
+  return TERMINAL_TRACE_STATUS.has(trace.status);
+}
+
+export function isTraceRunning(trace: IntelligenceTrace): boolean {
+  return !isTraceTerminal(trace);
+}
+
+// The LOCAL phase only: true while the local model still has the task. Once the
+// run is dispatched to the cloud the trace is still open (it closes when the cloud
+// turn ends), but the local wait — the part a composer blocks on — is over.
+export function isLocalPhaseRunning(trace: IntelligenceTrace): boolean {
+  return trace.status === 'RUNNING' || trace.status === 'STARTED';
+}
+
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly data?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
 async function refreshToken(): Promise<boolean> {
-  const rt = localStorage.getItem('refreshToken');
+  const rt = getRefreshToken();
   if (!rt) return false;
 
   try {
-    const res = await fetch(`${API_BASE}/auth/refresh`, {
+    const res = await fetch(apiUrl('/auth/refresh'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: rt }),
     });
     if (!res.ok) return false;
     const data = await res.json();
-    localStorage.setItem('accessToken', data.accessToken);
+    setAccessToken(data.accessToken);
     return true;
   } catch {
     return false;
   }
 }
 
-async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+// apiRequest is the single place that knows how to reach an endpoint: which origin,
+// which credentials, and what to do when they expire. apiFetch (JSON) sits on top.
+// Nothing else in the client may assemble an /api URL or attach a Bearer header —
+// that duplication is exactly what made the client same-origin-only.
+export async function apiRequest(path: string, options: RequestInit = {}): Promise<Response> {
   const token = getToken();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
-  };
+  const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  let res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let res = await fetch(apiUrl(path), { ...options, headers });
 
   // Auto-refresh on 401
   if (res.status === 401 && token) {
     const refreshed = await refreshToken();
     if (refreshed) {
       headers['Authorization'] = `Bearer ${getToken()}`;
-      res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+      res = await fetch(apiUrl(path), { ...options, headers });
     } else {
-      clearTokens();
-      window.location.href = '/login';
-      throw new Error('Session expired');
+      const endpointId = currentEndpointId();
+      clearTokens(endpointId);
+      authExpiredHandler?.(endpointId);
+      throw new AuthExpiredError(endpointId);
     }
   }
+  return res;
+}
+
+async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await apiRequest(path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers as Record<string, string>) },
+  });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || res.statusText);
+    throw new ApiError(err.error || res.statusText, res.status, err);
   }
 
   if (res.status === 204) return undefined as T;
@@ -72,7 +211,7 @@ export const api = {
   // Public health/config endpoint — no token required. Lets the client learn
   // whether auth is enabled (and which method) so it can skip the login page.
   getAuthConfig: () =>
-    fetch(`${API_BASE}/auth/health`).then((r) => r.json()) as Promise<{
+    fetch(apiUrl('/auth/health')).then((r) => r.json()) as Promise<{
       status: string;
       appName: string;
       version: string;
@@ -84,7 +223,12 @@ export const api = {
   // Trade a session-scoped handoff cookie (set after redeeming a QR) for normal
   // access/refresh tokens. Only needed when PowerCodeDeck auth is enabled.
   handoffExchange: () =>
-    fetch(`${API_BASE}/auth/handoff/exchange`, { method: 'POST', credentials: 'same-origin' })
+    // credentials are NOT sent cross-origin: this flow rides an httpOnly cookie
+    // the server set when the QR was redeemed, so it only works when the page was
+    // served by that same server. A cross-origin client (desktop shell, separately
+    // hosted UI) gets a clean failure here rather than a silent one — header-based
+    // redemption belongs with device credentials (spec §3), not here.
+    fetch(apiUrl('/auth/handoff/exchange'), { method: 'POST', credentials: 'include' })
       .then(async (r) => {
         if (!r.ok) throw new Error('handoff exchange failed');
         return r.json() as Promise<{ accessToken: string; refreshToken: string; sessionId: string }>;
@@ -98,7 +242,7 @@ export const api = {
   // always authenticates now) can connect without a login. The server only
   // issues this when auth is disabled and the caller's Origin is local.
   getAnonymousToken: () =>
-    fetch(`${API_BASE}/auth/anonymous`, { method: 'POST', credentials: 'same-origin' })
+    fetch(apiUrl('/auth/anonymous'), { method: 'POST' })
       .then(async (r) => {
         if (!r.ok) throw new Error('anonymous token failed');
         return r.json() as Promise<{ accessToken: string; refreshToken: string }>;
@@ -183,12 +327,10 @@ export const api = {
   attachFile: async (id: string, file: File): Promise<{ path: string; name: string }> => {
     const fd = new FormData();
     fd.append('file', file);
-    const token = getToken();
-    const res = await fetch(`${API_BASE}/agents/${id}/attach`, {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: fd,
-    });
+    // apiRequest, not apiFetch: FormData must set its own multipart boundary, so
+    // the JSON content-type has to stay off. Auth and origin still come from the
+    // one place that owns them.
+    const res = await apiRequest(`/agents/${id}/attach`, { method: 'POST', body: fd });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '업로드 실패');
     return res.json();
   },
@@ -214,11 +356,8 @@ export const api = {
   // images / PDFs / video / audio the browser can display natively. Caller must
   // URL.revokeObjectURL() it when done.
   rawFileObjectURL: async (path: string, agentId?: string): Promise<string> => {
-    const token = getToken();
     const q = new URLSearchParams({ path, ...(agentId ? { agentId } : {}) });
-    const res = await fetch(`${API_BASE}/files/raw?${q.toString()}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
+    const res = await apiRequest(`/files/raw?${q.toString()}`);
     if (!res.ok) throw new Error('파일을 불러오지 못했습니다');
     return URL.createObjectURL(await res.blob());
   },
@@ -273,6 +412,30 @@ export const api = {
   // 규칙 목록은 페이지 로드 시 한 번, 삭제 후 낙관적으로 제거하므로 재로드 없이 동기화된다.
   listApprovalRules: () => apiFetch<any[]>('/approval-rules'),
   deleteApprovalRule: (id: number) => apiFetch(`/approval-rules/${id}`, { method: 'DELETE' }),
+
+  // Local Intelligence POC. Provider settings are server-side runtime data;
+  // changing a remote endpoint never requires rebuilding the app.
+  listLocalProviders: () => apiFetch<LocalProvider[]>('/intelligence/providers'),
+  putLocalProvider: (provider: LocalProvider) =>
+    apiFetch<LocalProvider>(`/intelligence/providers/${encodeURIComponent(provider.name)}`, {
+      method: 'PUT', body: JSON.stringify(provider),
+    }),
+  deleteLocalProvider: (name: string) =>
+    apiFetch(`/intelligence/providers/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  localProviderHealth: (name: string) =>
+    apiFetch<ProviderHealth>(`/intelligence/providers/${encodeURIComponent(name)}/health`, { method: 'POST' }),
+  runIntelligence: (request: {
+    agentId: string; task: string; mode: IntelligenceMode;
+    provider?: string; operation?: string;
+  }) => apiFetch<IntelligenceStartResult>('/intelligence/run', { method: 'POST', body: JSON.stringify(request) }),
+  // Stops a run someone no longer wants. 404 means it already finished — the
+  // caller treats that as success, because the goal (not running) is met.
+  cancelIntelligence: (id: string) =>
+    apiFetch<void>(`/intelligence/traces/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  intelligenceTraces: (limit = 50) =>
+    apiFetch<IntelligenceTrace[]>(`/intelligence/traces?limit=${limit}`),
+  intelligenceTrace: (id: string) =>
+    apiFetch<IntelligenceTrace>(`/intelligence/traces/${encodeURIComponent(id)}`),
 
   // Notifications
   listNotifications: (agentId?: string) =>

@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { isTraceTerminal, type IntelligenceRunResult, type IntelligenceTrace } from '../lib/api';
+import { getToken } from '../lib/endpoint';
 import { getUserScale, setUserScale } from '../lib/uiScale';
 
 export interface Agent {
@@ -176,6 +178,14 @@ interface AppState {
   sidebarOpen: boolean;
   setSidebarOpen: (v: boolean) => void;
 
+  // Local Intelligence runs, keyed by trace id. A run is a server-side job now:
+  // it outlives the request that started it and the tab that was open at the time,
+  // so its progress arrives on the socket and lives here rather than inside
+  // whichever component happened to launch it.
+  intelligenceRuns: Map<string, IntelligenceRunResult>;
+  applyIntelligenceRun: (update: IntelligenceRunResult) => void;
+  seedIntelligenceRuns: (traces: IntelligenceTrace[]) => void;
+
   // Notifications
   notifications: Map<string, AgentNotification[]>;
   addNotification: (n: AgentNotification) => void;
@@ -208,7 +218,9 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  isAuthenticated: !!localStorage.getItem('accessToken'),
+  // Tokens are stored per endpoint now — read through getToken so the legacy
+  // single-key layout is migrated rather than read past (endpoint.ts).
+  isAuthenticated: !!getToken(),
   setAuthenticated: (v) => set({ isAuthenticated: v }),
   authConfig: null,
   authReady: false,
@@ -217,7 +229,7 @@ export const useAppStore = create<AppState>((set) => ({
       authConfig: c,
       authReady: true,
       // No-auth mode: user is implicitly authenticated (skip login page).
-      isAuthenticated: c.authEnabled ? !!localStorage.getItem('accessToken') : true,
+      isAuthenticated: c.authEnabled ? !!getToken() : true,
     }),
 
   agents: [],
@@ -297,6 +309,42 @@ export const useAppStore = create<AppState>((set) => ({
 
   sidebarOpen: false,
   setSidebarOpen: (v) => set({ sidebarOpen: v }),
+
+  intelligenceRuns: new Map(),
+  applyIntelligenceRun: (update) =>
+    set((s) => {
+      const m = new Map(s.intelligenceRuns);
+      const previous = m.get(update.trace.id);
+      // Monotonic: a finished run never goes back to running. Updates can overtake
+      // each other (saveTrace broadcasts every transition, and the job emits its own
+      // terminal update afterwards), and a late RUNNING would otherwise re-open a
+      // trace that already ended.
+      if (previous && isTraceTerminal(previous.trace) && !isTraceTerminal(update.trace)) {
+        return s;
+      }
+      // Extras only ever arrive once, on the closing update. Keep them when a later
+      // update — the same status, re-broadcast — carries none.
+      m.set(update.trace.id, {
+        ...update,
+        contextPack: update.contextPack || previous?.contextPack,
+        files: update.files || previous?.files,
+        cloudDispatched: update.cloudDispatched ?? previous?.cloudDispatched,
+      });
+      return { intelligenceRuns: m };
+    }),
+  // Fills the map from the REST list after a reconnect, so a run started before the
+  // socket dropped is still visible. Never overwrites what the socket already has:
+  // the list is a snapshot and can be older than the live state.
+  seedIntelligenceRuns: (traces) =>
+    set((s) => {
+      const m = new Map(s.intelligenceRuns);
+      for (const trace of traces) {
+        const previous = m.get(trace.id);
+        if (previous && isTraceTerminal(previous.trace)) continue;
+        m.set(trace.id, { ...previous, trace });
+      }
+      return { intelligenceRuns: m };
+    }),
 
   notifications: new Map(),
   addNotification: (n) =>

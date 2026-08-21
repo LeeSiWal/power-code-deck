@@ -67,8 +67,24 @@ type StreamEvent struct {
 	TotalCostUSD     float64            `json:"total_cost_usd"`
 	PermissionDenial []PermissionDenial `json:"permission_denials"`
 	TerminalReason   string             `json:"terminal_reason"`
+	// Usage is what the cloud actually spent on this turn. A POINTER on purpose:
+	// nil means "this driver reported no usage at all" (Codex today — see
+	// nativeResultEvent), which is a different fact from "it reported zero". The
+	// Local Intelligence traces record that distinction rather than showing a
+	// fabricated 0 for a turn that really happened.
+	Usage *StreamUsage `json:"usage"`
 
 	Raw json.RawMessage `json:"-"`
+}
+
+// StreamUsage is the `usage` object on a result event. Cache fields are separate
+// because a cache read is priced differently from fresh input — collapsing them
+// would make a hybrid-vs-baseline comparison meaningless.
+type StreamUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
 type MCPServerInfo struct {

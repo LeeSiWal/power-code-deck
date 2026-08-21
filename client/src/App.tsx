@@ -2,7 +2,8 @@ import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { useAppStore } from './stores/appStore';
 import { useWebSocket } from './hooks/useWebSocket';
-import { api } from './lib/api';
+import { api, setAuthExpiredHandler } from './lib/api';
+import { currentEndpointId, getToken } from './lib/endpoint';
 
 import { LoginPage } from './pages/LoginPage';
 import { ProjectSelectPage } from './pages/ProjectSelectPage';
@@ -38,6 +39,19 @@ function WebSocketProvider({ children }: { children: React.ReactNode }) {
 export default function App() {
   const setAuthConfig = useAppStore((s) => s.setAuthConfig);
 
+  // An endpoint's credentials expiring only means "log in again" when it is the
+  // endpoint being viewed. Before endpoints existed, apiFetch navigated straight
+  // to /login from inside the fetch layer; with more than one server that would
+  // throw the whole app out because a background host went stale.
+  useEffect(() => {
+    setAuthExpiredHandler((endpointId) => {
+      if (endpointId === currentEndpointId()) {
+        useAppStore.getState().setAuthenticated(false);
+      }
+    });
+    return () => setAuthExpiredHandler(null);
+  }, []);
+
   // Fetch auth config once on boot. In no-auth mode this marks the user as
   // authenticated so the login page is skipped. When arriving from a handoff QR
   // with auth enabled and no local token, exchange the handoff cookie for one.
@@ -48,7 +62,7 @@ export default function App() {
 
     const apply = async (cfg: any) => {
       if (cfg.authEnabled) {
-        if (fromHandoff && !localStorage.getItem('accessToken')) {
+        if (fromHandoff && !getToken()) {
           // Redeemed a QR: trade the httpOnly handoff cookie for real tokens.
           await api.handoffExchange().catch(() => {});
         }

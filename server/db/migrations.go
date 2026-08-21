@@ -1,6 +1,9 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"errors"
+)
 
 const schema = `
 CREATE TABLE IF NOT EXISTS agents (
@@ -182,5 +185,98 @@ func Migrate(db *sql.DB) error {
 		UNIQUE(working_dir, tool_name, target)
 	)`)
 
+	// Local Intelligence POC. Provider addresses are runtime data because the model
+	// commonly runs on another LAN/Tailscale machine. Traces deliberately contain
+	// measurements and state transitions only — never prompts, context, credentials,
+	// or provider response bodies.
+	db.Exec(`CREATE TABLE IF NOT EXISTS local_ai_providers (
+		name       TEXT PRIMARY KEY,
+		type       TEXT NOT NULL,
+		base_url   TEXT NOT NULL,
+		model      TEXT NOT NULL,
+		timeout_ms INTEGER NOT NULL DEFAULT 180000,
+		enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`)
+	if err := migrateLocalProviderTimeout(db); err != nil {
+		return err
+	}
+	db.Exec(`CREATE TABLE IF NOT EXISTS intelligence_traces (
+		id               TEXT PRIMARY KEY,
+		agent_id         TEXT NOT NULL DEFAULT '',
+		mode             TEXT NOT NULL,
+		status           TEXT NOT NULL,
+		provider         TEXT NOT NULL DEFAULT '',
+		model            TEXT NOT NULL DEFAULT '',
+		raw_tokens       INTEGER NOT NULL DEFAULT 0,
+		optimized_tokens INTEGER NOT NULL DEFAULT 0,
+		local_tokens     INTEGER NOT NULL DEFAULT 0,
+		latency_ms       INTEGER NOT NULL DEFAULT 0,
+		error_code       TEXT NOT NULL DEFAULT '',
+		fallback         BOOLEAN NOT NULL DEFAULT FALSE,
+		events_json      TEXT NOT NULL DEFAULT '[]',
+		created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+		updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+	)`)
+	// Cloud consumption on the closing result event — may already exist, non-fatal.
+	// Hybrid savings have to be measured against what the CLOUD actually spent:
+	// raw−optimized compares against a baseline CLOUD_ONLY never sends, because
+	// CLOUD_ONLY passes the user's task through byte-for-byte and the candidate
+	// context is never transmitted at all.
+	//
+	// cloud_usage_known separates "this driver reported no usage" from "it reported
+	// zero". Codex is the first case (verified in codex_driver.go), so without this
+	// flag a Codex turn would average into the comparison as a free turn.
+	for _, stmt := range []string{
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_cost_usd REAL DEFAULT 0",
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_input_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_output_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_cache_read_tokens INTEGER DEFAULT 0",
+		// Cache CREATION is the other half of the bill and the only way to see how big
+		// the cached prefix actually is: a fresh session writes it once, every later
+		// step re-reads it. Without this column the prefix is invisible, and a claim
+		// about shrinking it cannot be checked.
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_cache_creation_tokens INTEGER DEFAULT 0",
+		// How many tool calls the cloud agent made. Measured cost tracks
+		// (prefix x steps) and steps vary 2x between runs of the same task, so this
+		// is the term that actually explains a bill — inferring it from
+		// cache_read / prefix only ever gave an upper bound.
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_tool_calls INTEGER DEFAULT 0",
+		"ALTER TABLE intelligence_traces ADD COLUMN cloud_usage_known BOOLEAN DEFAULT FALSE",
+	} {
+		db.Exec(stmt)
+	}
+
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_intelligence_traces_created ON intelligence_traces(created_at DESC)")
+
 	return nil
+}
+
+// The original Local Intelligence POC used 30 seconds for both a network check
+// and an entire non-streaming Ollama generation. That is too short for a cold
+// 30B model and a repository-sized prompt. Upgrade only the old default once;
+// after the marker is written, an explicit user choice of 30000 is preserved.
+func migrateLocalProviderTimeout(db *sql.DB) error {
+	const marker = "local_intelligence_timeout_v2"
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var value string
+	err = tx.QueryRow("SELECT value FROM app_config WHERE key=?", marker).Scan(&value)
+	if err == nil {
+		return tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if _, err := tx.Exec("UPDATE local_ai_providers SET timeout_ms=180000 WHERE timeout_ms=30000"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("INSERT INTO app_config(key,value) VALUES(?,?)", marker, "180000"); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

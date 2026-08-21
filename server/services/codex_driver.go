@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
+	"time"
 
 	"powercodedeck/version"
 )
@@ -36,22 +37,44 @@ type codexRPCMessage struct {
 type CodexDriver struct {
 	cfg CodexConfig
 
-	mu       sync.Mutex
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	stopped  bool
-	nextID   int64
-	pending  map[string]chan codexRPCMessage
-	threadID string
-	turnID   string
-	events   chan *StreamEvent
-	done     chan struct{}
+	mu         sync.Mutex
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	stopped    bool
+	nextID     int64
+	pending    map[string]chan codexRPCMessage
+	threadID   string
+	turnID     string
+	events     chan *StreamEvent
+	done       chan struct{}
+	exitDone   chan struct{}
+	rpcTimeout time.Duration
+	exitErr    error
+	stderrTail *tailBuffer
 }
+
+// why returns whatever the app-server last complained about on stderr, ready to be
+// appended to an error. Codex used to pipe stderr straight to io.Discard, so a
+// failed start reached the user as a bare "timed out" with the CLI's own
+// explanation thrown away — the same blindness that once hid a Claude flag outage.
+func (d *CodexDriver) why() string {
+	if d.stderrTail == nil {
+		return ""
+	}
+	if tail := d.stderrTail.String(); tail != "" {
+		return ": " + tail
+	}
+	return ""
+}
+
+const defaultCodexRPCTimeout = 30 * time.Second
 
 func NewCodexDriver(cfg CodexConfig) *CodexDriver {
 	return &CodexDriver{
 		cfg: cfg, pending: make(map[string]chan codexRPCMessage),
 		events: make(chan *StreamEvent, 128), done: make(chan struct{}),
+		exitDone:   make(chan struct{}),
+		rpcTimeout: defaultCodexRPCTimeout,
 	}
 }
 
@@ -76,7 +99,11 @@ func (d *CodexDriver) Start() error {
 	if err != nil {
 		return err
 	}
-	go io.Copy(io.Discard, stderr)
+	d.mu.Lock()
+	d.stderrTail = &tailBuffer{}
+	tail := d.stderrTail
+	d.mu.Unlock()
+	go io.Copy(tail, stderr)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -85,13 +112,14 @@ func (d *CodexDriver) Start() error {
 	d.cmd, d.stdin = cmd, stdin
 	d.mu.Unlock()
 	go d.readPump(stdout)
+	go d.waitProcess(cmd)
 
 	if _, err := d.call("initialize", map[string]any{
 		"clientInfo":   map[string]any{"name": version.AppName, "version": version.Version},
 		"capabilities": map[string]any{"experimentalApi": true},
 	}); err != nil {
 		d.Stop()
-		return fmt.Errorf("codex initialize: %w", err)
+		return fmt.Errorf("codex initialize: %w%s", err, d.why())
 	}
 	if err := d.notify("initialized", map[string]any{}); err != nil {
 		d.Stop()
@@ -107,7 +135,7 @@ func (d *CodexDriver) Start() error {
 	}
 	if err != nil {
 		d.Stop()
-		return fmt.Errorf("codex thread start: %w", err)
+		return fmt.Errorf("codex thread start: %w%s", err, d.why())
 	}
 	var started struct {
 		Thread struct {
@@ -243,14 +271,41 @@ func (d *CodexDriver) call(method string, params any) (json.RawMessage, error) {
 		d.mu.Unlock()
 		return nil, err
 	}
-	msg, ok := <-ch
-	if !ok {
-		return nil, fmt.Errorf("codex app-server exited")
+	timeout := d.rpcTimeout
+	if timeout <= 0 {
+		timeout = defaultCodexRPCTimeout
 	}
-	if len(msg.Error) > 0 && string(msg.Error) != "null" {
-		return nil, fmt.Errorf("%s", msg.Error)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case msg, ok := <-ch:
+		if !ok {
+			select {
+			case <-d.exitDone:
+			default:
+			}
+			d.mu.Lock()
+			exitErr := d.exitErr
+			d.mu.Unlock()
+			if exitErr != nil {
+				return nil, fmt.Errorf("codex app-server exited: %w%s", exitErr, d.why())
+			}
+			return nil, fmt.Errorf("codex app-server exited%s", d.why())
+		}
+		if len(msg.Error) > 0 && string(msg.Error) != "null" {
+			return nil, fmt.Errorf("%s", msg.Error)
+		}
+		return msg.Result, nil
+	case <-timer.C:
+		// Remove only our own still-pending call. A response racing the timer may
+		// already have removed it in readPump, which is harmless.
+		d.mu.Lock()
+		if pending := d.pending[id]; pending == ch {
+			delete(d.pending, id)
+		}
+		d.mu.Unlock()
+		return nil, fmt.Errorf("codex app-server %s timed out after %s%s", method, timeout, d.why())
 	}
-	return msg.Result, nil
 }
 
 func (d *CodexDriver) notify(method string, params any) error {
@@ -304,11 +359,15 @@ func (d *CodexDriver) readPump(stdout io.ReadCloser) {
 		close(ch)
 		delete(d.pending, id)
 	}
-	cmd := d.cmd
 	d.mu.Unlock()
-	if cmd != nil {
-		_ = cmd.Wait()
-	}
+}
+
+func (d *CodexDriver) waitProcess(cmd *exec.Cmd) {
+	err := cmd.Wait()
+	d.mu.Lock()
+	d.exitErr = err
+	d.mu.Unlock()
+	close(d.exitDone)
 }
 
 func (d *CodexDriver) handleRequest(msg codexRPCMessage) {
@@ -382,9 +441,31 @@ func (d *CodexDriver) handleNotification(method string, raw json.RawMessage) {
 		d.mu.Lock()
 		d.turnID = ""
 		d.mu.Unlock()
+		if codexTurnObserver != nil {
+			codexTurnObserver(p.Turn)
+		}
 		d.events <- nativeResultEvent()
 	}
 }
+
+// codexTurnObserver is a discovery hook for the opt-in live test: the app-server's
+// turn/completed payload is not a published schema, so the only way to learn what
+// it carries is to look at a real one. nil in production.
+var codexTurnObserver func(json.RawMessage)
+
+// Codex reports NO token or cost usage on turn completion. Verified, not assumed:
+// TestCodexTurnCompletedPayload captured a real turn from codex-cli 0.146.0 and
+// the entire payload is
+//
+//	{"id":"01a023b8-…","items":[…],"itemsView":"summary","status":"completed",
+//	 "error":null,"startedAt":1787305712,"completedAt":1787305721,"durationMs":9476}
+//
+// That absence is load-bearing for Local Intelligence: hybrid savings are measured
+// from what the cloud actually spent, so the Codex path cannot be measured at all
+// and its traces must say so rather than record a fabricated zero. Usage therefore
+// stays nil here (see nativeResultEventWithUsage), and the savings measurement runs
+// on Claude sessions. If a future Codex version adds usage, the live test above is
+// what will tell us.
 
 func (d *CodexDriver) emitSystem(model string) {
 	raw, _ := json.Marshal(map[string]any{
