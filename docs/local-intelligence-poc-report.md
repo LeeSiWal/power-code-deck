@@ -215,8 +215,14 @@ same repository and question, fresh session each, against an instrumented baseli
 | substitutive #1 | 7 | 264,102 | 4,676 | $0.6024 |
 | substitutive #2 | 4 | 109,687 | 7,544 | $0.5438 |
 | substitutive #3 | 1 | 65,847 | 2,449 | $0.2963 |
+| substitutive #4 (added later) | 22 | 839,317 | 9,005 | **$1.3296** |
 
-**84% fewer steps, 53% less money.** Split into terms, the whole saving is one of them:
+**84% fewer steps, 53% less money** — on the first three runs. A fourth run, made later while
+capturing the candidate file list, came in at 22 tool calls and **$1.3296, above the uncapped
+baseline**. Its pack was again about the working tree rather than the question, and this time the
+model did not stop: it explored anyway. With n=4 the arm reads 1 / 4 / 7 / 22 calls and
+$0.2963 / $0.5438 / $0.6024 / $1.3296 — a low median with a tail that exceeds doing nothing.
+§7c and §7d put that in context. Split into terms, the whole saving is one of them:
 
 ```
 cache-read term   $0.838 → $0.105   (−$0.73)
@@ -299,6 +305,55 @@ seconds, no 30B model. That is the next arm.
 - The measured scope is one repository, one explanatory question, one cloud model, n=3 per arm. A
   hard 3-file cap is wrong for tasks that must edit code; nothing here says otherwise.
 
+## 7d. Does a deterministic map do the local model's job? (2026-08-21)
+
+§7c found the pack's only real contribution was **listing real repository paths**, which
+`BuildCandidateContext` already produces without a model. This arm tests that directly: the same cap
+and honesty requirement, plus a file list ranked by task-term frequency over `git ls-files`. It took
+**4 ms** to produce and involved no model.
+
+| arm | tool calls (median) | cost (median) | cache read | cache creation | wall clock |
+|---|---|---|---|---|---|
+| baseline, no cap | 25 | $1.1949 | 875,958 | 57,643 | — |
+| cap only | 11 | $0.7113 | 429,903 | 36,839 | 89 s |
+| cap + LLM pack | 5.5 | $0.5731 | 186,894 | 32,684 | **141 s** |
+| **cap + 4 ms map** | **6** | $0.7617 | **217,990** | 55,762 | **71 s** |
+
+**The map halved the work and did not lower the bill.** Steps fell 11 → 6 and cache reads
+429,903 → 217,990, yet cost did not follow, because cache *creation* rose (36,839 → 55,762). Cache
+writes are roughly twenty times the per-token price of cache reads, so the two effects cancelled:
+
+```
+cap only #1   read 318,756  write 36,839  → $0.6692
+cap + map #1  read 192,475  write 55,834  → $0.7617
+cap + map #3  read 217,990  write 30,087  → $0.5070   ← cheapest run of any arm
+```
+
+This also corrects §7a's two-term model (`cache_read` + `output`). Those two terms fit the earlier
+runs only because they were correlated; this arm broke the correlation and exposed cache creation as
+a third term. The column that made it visible was added two commits earlier — the instrument earned
+its keep.
+
+**Quality was highest here.** The 6-call run read exactly the three files that matter
+(`claude_permission.go`, `cli/mcp_approve.go`, `handlers/native_approve.go`) and got the subtle parts
+right: why `bypassPermissions` is a server-side policy rather than a CLI flag, why there is
+deliberately no timeout, why `allow` echoes `updatedInput`, the `AskUserQuestion` exemption, and
+`Pending()` on reconnect.
+
+### Standing conclusion after four arms
+
+1. **The instruction is the lever.** 25 → 10-13 calls, $1.19 → $0.67-0.79, consistently, for free,
+   with no added latency. This is the finding that generalizes.
+2. **The local model has no measured cost justification.** Its median is the lowest, but the spread
+   is 1-22 calls and $0.2963-$1.3296 — one run cost *more* than doing nothing — and it adds 10-46 s
+   per turn. In all four runs its pack was about the working tree rather than the question, because
+   `BuildCandidateContext` is diff-centric.
+3. **A deterministic map is worth having, but not as a savings claim.** It cut steps and wall clock
+   (71 s vs 89 s vs 141 s) and produced the best answer, at zero cost and 4 ms — but the money did
+   not move.
+4. Scope, unchanged: one repository, one explanatory question, one cloud model, n=3-4 per arm. A hard
+   3-file cap is wrong for tasks that must edit code.
+
 ## 8. Codex regression
 
 - Existing `NativeService.Send` remains the default UI path.
@@ -379,13 +434,17 @@ result is in §7a — hybrid preprocessing shows no measurable saving.
 
 So the next work is *not* more of this axis:
 
-1. **Test the deterministic file list** (§7c): the cap plus `BuildCandidateContext`'s own candidate
-   paths, with no local inference. If that lands near the hybrid numbers, the local model has no
-   remaining cost justification and the instruction belongs on ordinary `CLOUD_ONLY` turns.
-2. **Measure local answer quality** before routing anything to `LOCAL_ONLY` automatically. Today the
+1. **Move the instruction to ordinary `CLOUD_ONLY` turns** — that is where the volume is and where
+   §7c/§7d measured −40% for free. It must be scoped: the cap suits explanatory questions and is
+   wrong for tasks that edit code, so it needs a task-class decision (or a visible per-turn control),
+   not a global switch.
+2. **Fix retrieval before defending the local model.** `BuildCandidateContext` is diff-centric, so it
+   answered a different question than the user asked in all four hybrid runs. Until a map is relevant
+   to the question, no measurement of the local model means much.
+3. **Measure local answer quality** before routing anything to `LOCAL_ONLY` automatically. Today the
    human picks the mode, and that choice is the only safeguard against a confidently wrong local
    answer; automating routing removes it while nothing checks correctness.
-3. **Attack step count, not prompt size** — 25 tool calls per question, varying 2× run to run, is
+4. **Attack step count, not prompt size** — 25 tool calls per question, varying 2× run to run, is
    what the bill is made of. The one hybrid variant still worth a test is substitutive ("answer from
    the pack, open at most N more files"), scoped to tasks where the pack is provably sufficient.
 
