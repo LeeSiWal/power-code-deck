@@ -931,8 +931,37 @@ func (s *IntelligenceService) run(ctx context.Context, req IntelligenceRunReques
 		s.saveTrace(*t)
 		return result, nil
 	}
-	cloudPrompt := "PowerCodeDeck generated the following LOCAL context pack. Treat it as advisory, verify it against the repository, and inspect additional files whenever needed.\n\n" + pack + "\n\nUSER TASK\n" + req.Task
+	cloudPrompt := hybridCloudPrompt(pack, req.Task)
 	return s.dispatchCloud(result, cloudPrompt, req.Task, false)
+}
+
+// hybridCloudPrompt wraps the pack for the cloud turn.
+//
+// The default is ADVISORY: the pack is a hint and the agent is told to verify it
+// and open whatever else it needs. That is a correctness choice — a 30B local model
+// misses files, and an agent forbidden to look would answer confidently wrong.
+//
+// It is also why hybrid saves nothing. Measured on 2026-08-21: cost tracks
+// (prefix x steps), a real turn made 25 tool calls, and the advisory wrapper does
+// not reduce that count — it hands the agent more leads to follow. See
+// docs/local-intelligence-poc-report.md §7a.
+//
+// PCD_HYBRID_PROMPT=substitutive selects the experimental variant that tries to
+// cut steps instead: answer FROM the pack, with a hard cap on extra reads and an
+// explicit requirement to admit when the pack was not enough. It trades correctness
+// for cost, so it stays opt-in until measurement says what that trade actually buys.
+func hybridCloudPrompt(pack, task string) string {
+	if strings.TrimSpace(os.Getenv("PCD_HYBRID_PROMPT")) == "substitutive" {
+		return "PowerCodeDeck generated the following LOCAL context pack from this repository. " +
+			"Answer the user task using this pack as your primary evidence.\n" +
+			"You may open at most 3 additional files, and only to resolve something the pack " +
+			"leaves ambiguous or appears to get wrong. Do not survey the repository.\n" +
+			"If the pack is not enough to answer confidently, say so explicitly and list what " +
+			"you would need to read — do not guess.\n\n" + pack + "\n\nUSER TASK\n" + task
+	}
+	return "PowerCodeDeck generated the following LOCAL context pack. Treat it as advisory, " +
+		"verify it against the repository, and inspect additional files whenever needed.\n\n" +
+		pack + "\n\nUSER TASK\n" + task
 }
 
 func localOnlyAllowed(op string) bool {
