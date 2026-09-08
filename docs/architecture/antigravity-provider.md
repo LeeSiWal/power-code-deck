@@ -12,6 +12,15 @@ conversation IDs, model selection, streamed text/tool events, usage metadata,
 bounded stderr diagnostics, interruption, process-failure reporting, execution
 mode, terminal sandboxing, and an optional final-result JSON schema.
 
+Each process also receives `--add-dir` with its validated absolute working
+directory. Merely setting the process cwd did not reliably make disposable
+worktrees available to headless file tools in local validation. This explicitly
+registers the execution workspace; it is not an exclusive filesystem sandbox or
+a command allow-rule. Existing CLI permission policy still applies, including
+explicit denials. The adapter does not edit global settings or select another
+project implicitly. See the [CLI workspace reference](https://antigravity.google/docs/cli/reference/)
+and [permission policy](https://antigravity.google/docs/cli/permissions).
+
 Antigravity headless mode is intentionally modeled as a single-turn execution.
 The upstream CLI can keep a stream session open, but its documented stdin
 protocol accepts text user events only and rejects control request/response

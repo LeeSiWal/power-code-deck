@@ -55,7 +55,7 @@ func TestAGYHelper(t *testing.T) {
 		os.Exit(0)
 	}
 	cwd, _ := os.Getwd()
-	observation, _ := json.Marshal(map[string]string{"prompt": prompt, "model": value("--model"), "mode": value("--mode"), "schema": value("--json-schema"), "resume": value("--conversation"), "cwd": cwd, "sandbox": fmt.Sprint(present("--sandbox")), "bypass": fmt.Sprint(present("--dangerously-skip-permissions"))})
+	observation, _ := json.Marshal(map[string]string{"prompt": prompt, "model": value("--model"), "mode": value("--mode"), "schema": value("--json-schema"), "resume": value("--conversation"), "cwd": cwd, "workspace": value("--add-dir"), "sandbox": fmt.Sprint(present("--sandbox")), "bypass": fmt.Sprint(present("--dangerously-skip-permissions"))})
 	message, _ := json.Marshal(map[string]any{"event": "step_update", "step_update": map[string]any{"step_type": "agent_response", "step_index": 1, "state": "DONE", "conversation_id": "agy-conversation", "text_delta": string(observation)}})
 	fmt.Println(string(message))
 	fmt.Println(`{"event":"step_update","step_update":{"conversation_id":"agy-conversation","step_index":2,"step_type":"tool","state":"DONE","tool_name":"run_command","tool_info":{"parameters":{"CommandLine":"test"},"output":"denied"}}}`)
@@ -73,7 +73,11 @@ func helperExecution(t *testing.T) *Execution {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := New("agy-execution", Config{Command: bin, PrefixArgs: []string{"-test.run=^TestAGYHelper$", "--"}, Cwd: t.TempDir(), Model: "chosen-model", Mode: "plan", JSONSchema: `{"type":"object"}`, Sandbox: true, ResumeID: "explicit-session", Env: append(os.Environ(), "PCD_AGY_TEST_HELPER=1")})
+	cwd := filepath.Join(t.TempDir(), "workspace with spaces")
+	if err := os.Mkdir(cwd, 0700); err != nil {
+		t.Fatal(err)
+	}
+	e, err := New("agy-execution", Config{Command: bin, PrefixArgs: []string{"-test.run=^TestAGYHelper$", "--"}, Cwd: cwd, Model: "chosen-model", Mode: "plan", JSONSchema: `{"type":"object"}`, Sandbox: true, ResumeID: "explicit-session", Env: append(os.Environ(), "PCD_AGY_TEST_HELPER=1")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +149,7 @@ func TestHeadlessArgsEventsResumeAndUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	cwd, _ := filepath.EvalSymlinks(e.cfg.Cwd)
-	want := map[string]string{"prompt": prompt, "model": "chosen-model", "mode": "plan", "schema": `{"type":"object"}`, "resume": "explicit-session", "cwd": cwd, "sandbox": "true", "bypass": "false"}
+	want := map[string]string{"prompt": prompt, "model": "chosen-model", "mode": "plan", "schema": `{"type":"object"}`, "resume": "explicit-session", "cwd": cwd, "workspace": e.cfg.Cwd, "sandbox": "true", "bypass": "false"}
 	if !reflect.DeepEqual(observed, want) {
 		t.Fatalf("argv/cwd: got %v want %v", observed, want)
 	}

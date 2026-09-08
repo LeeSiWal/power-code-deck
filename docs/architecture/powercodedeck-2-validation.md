@@ -1,5 +1,38 @@
 # Runtime extraction validation
 
+## Antigravity workspace and permission follow-up — 2026-09-08
+
+The adapter now passes its validated absolute cwd as `--add-dir`, including for
+resumed executions. The subprocess regression fixture uses a directory with
+spaces and verifies the exact workspace argument, cwd, explicit resume, sandbox
+flag and absence of a permission bypass together. Existing execution modes and
+global CLI configuration are unchanged.
+
+Validation with installed/authenticated `agy 1.1.27` in a disposable repository:
+
+- Explicit workspace + default policy: reading `tracked.txt` succeeded and
+  returned its original contents with no stderr.
+- Production `TestAntigravityRunLive` with the new workspace argument: failed
+  after 22.47 seconds on headless `command` permission, correctly surfaced as
+  `permission_denied`. Implementation/test/review success is **not established**.
+- File-tool-only write under default policy: `write_file` was denied; no output
+  file was created. The CLI returned empty `SUCCESS`, stderr denial and a
+  structured `denied_actions` list, confirming that exit zero alone is unsafe.
+- The same disposable file-tool-only probe with explicit `--mode accept-edits`
+  succeeded: exact `PCD_AGY_FILE_OK\n` contents, `DONE` response, no stderr, and
+  the original tracked file unchanged. This mode was used only for the probe,
+  not made the production default. The probe file was then removed.
+
+`TMPDIR=/private/tmp go test -race ./...`, `go vet ./...` and `git diff --check`
+passed. UI sources were unchanged. No global permission rules were written.
+
+Next: explicitly configure implementation editing mode and narrowly scoped
+read-only Git command permissions for live review, then rerun the production
+worker test through all gates. Workspace registration alone does not grant
+command permissions or prove isolation from every other configured workspace.
+The adapter's empty-success denial fallback currently recognizes the observed
+stderr notice; decoding structured `denied_actions` remains a separate follow-up.
+
 Host: macOS arm64, Go 1.26.1. Baseline: `de39831` (VERSION 0.6.1).
 
 ## Baseline observations

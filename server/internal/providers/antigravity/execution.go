@@ -124,6 +124,10 @@ func (e *Execution) Send(prompt string) error {
 	args := append([]string(nil), e.cfg.PrefixArgs...)
 	// One argv element preserves prompt whitespace and shell metacharacters.
 	args = append(args, "--output-format", "stream-json", "--prompt", prompt)
+	// A process cwd alone does not reliably register a newly created worktree
+	// with the CLI workspace. Scope file access to this execution's directory;
+	// keep explicit CLI permission rules and sandbox policy in force.
+	args = append(args, "--add-dir", e.cfg.Cwd)
 	if e.cfg.Model != "" {
 		args = append(args, "--model", e.cfg.Model)
 	}
