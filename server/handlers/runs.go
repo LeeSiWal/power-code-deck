@@ -11,9 +11,13 @@ import (
 	"powercodedeck/internal/orchestration"
 )
 
-// RegisterRunRoutes must receive the authenticated API router. No route starts
-// a process or accepts a client assertion that a check/execution succeeded.
-func RegisterRunRoutes(api *mux.Router, store *orchestration.Store) {
+// RegisterRunRoutes receives the authenticated API router. Explicit start uses
+// the worker; clients cannot assert that checks or executions succeeded.
+func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*orchestration.Worker) {
+	var worker *orchestration.Worker
+	if len(workers) > 0 {
+		worker = workers[0]
+	}
 	fail := func(w http.ResponseWriter, err error) {
 		switch {
 		case errors.Is(err, orchestration.ErrInvalid):
@@ -25,6 +29,18 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store) {
 		default:
 			jsonError(w, "work storage unavailable", 500)
 		}
+	}
+	if worker != nil {
+		api.HandleFunc("/v2/runs/{id}/start", func(w http.ResponseWriter, r *http.Request) {
+			execution, err := worker.Start(mux.Vars(r)["id"])
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{"executionId": execution})
+		}).Methods("POST")
 	}
 	api.HandleFunc("/v2/runs", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -71,7 +87,11 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store) {
 			fail(w, err)
 			return
 		}
-		if err := store.Cancel(id); err != nil {
+		cancel := store.Cancel
+		if worker != nil {
+			cancel = worker.Cancel
+		}
+		if err := cancel(id); err != nil {
 			fail(w, err)
 			return
 		}

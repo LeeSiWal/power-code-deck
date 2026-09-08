@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -22,6 +23,8 @@ import (
 	"powercodedeck/handlers"
 	"powercodedeck/internal/history"
 	"powercodedeck/internal/orchestration"
+	"powercodedeck/internal/providers"
+	"powercodedeck/internal/providers/antigravity"
 	"powercodedeck/middleware"
 	"powercodedeck/services"
 	"powercodedeck/version"
@@ -216,6 +219,7 @@ func main() {
 	// Protected API endpoints
 	api := r.PathPrefix("/api").Subrouter()
 	api.Use(auth.Middleware(authSvc))
+	var runWorker *orchestration.Worker
 	if os.Getenv("PCD_V2_ENABLED") == "1" {
 		runs, err := orchestration.New(database)
 		if err != nil {
@@ -224,7 +228,23 @@ func main() {
 		if err := runs.Recover(); err != nil {
 			log.Fatalf("Recover v2 work: %v", err)
 		}
-		handlers.RegisterRunRoutes(api, runs)
+		root := os.Getenv("PCD_V2_WORK_ROOT")
+		if root == "" {
+			cache, err := os.UserCacheDir()
+			if err != nil {
+				log.Fatal(err)
+			}
+			root = filepath.Join(cache, "powercodedeck", "runs")
+		}
+		runWorker, err = orchestration.NewWorker(runs, root, map[string]orchestration.Factory{
+			"antigravity": func(id, cwd string) (providers.Execution, error) {
+				return antigravity.New(id, antigravity.Config{Cwd: cwd})
+			},
+		})
+		if err != nil {
+			log.Fatalf("Initialize v2 worker: %v", err)
+		}
+		handlers.RegisterRunRoutes(api, runs, runWorker)
 	}
 
 	// Agents
@@ -417,6 +437,13 @@ func main() {
 	fmt.Println()
 	log.Printf("Shutting down %s...", version.AppName)
 
+	if runWorker != nil {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := runWorker.Close(stopCtx); err != nil {
+			log.Printf("Run worker shutdown: %v", err)
+		}
+		stopCancel()
+	}
 	// Stop accepting new connections and let in-flight requests finish (up to 5s).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

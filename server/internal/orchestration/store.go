@@ -16,20 +16,22 @@ var ErrInvalid = errors.New("invalid work request")
 
 type Store struct{ db *sql.DB }
 type Run struct {
-	ID          string      `json:"id"`
-	WorkspaceID string      `json:"workspaceId"`
-	Path        string      `json:"path"`
-	Prompt      string      `json:"prompt"`
-	Provider    string      `json:"provider"`
-	State       string      `json:"state"`
-	TaskID      string      `json:"taskId"`
-	Executions  []Execution `json:"executions"`
+	RequiredChecks []string    `json:"requiredChecks"`
+	ID             string      `json:"id"`
+	WorkspaceID    string      `json:"workspaceId"`
+	Path           string      `json:"path"`
+	Prompt         string      `json:"prompt"`
+	Provider       string      `json:"provider"`
+	State          string      `json:"state"`
+	TaskID         string      `json:"taskId"`
+	Executions     []Execution `json:"executions"`
 }
 type Execution struct {
-	ID     string  `json:"id"`
-	State  string  `json:"state"`
-	Detail string  `json:"detail"`
-	Checks []Check `json:"checks"`
+	Artifacts []Artifact `json:"artifacts"`
+	ID        string     `json:"id"`
+	State     string     `json:"state"`
+	Detail    string     `json:"detail"`
+	Checks    []Check    `json:"checks"`
 }
 
 type Check struct {
@@ -44,6 +46,8 @@ CREATE TABLE IF NOT EXISTS v2_runs(id TEXT PRIMARY KEY,workspace_id TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS v2_tasks(id TEXT PRIMARY KEY,run_id TEXT NOT NULL UNIQUE REFERENCES v2_runs(id),state TEXT NOT NULL,active_execution TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS v2_executions(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES v2_tasks(id),state TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',ordinal INTEGER NOT NULL UNIQUE);
 CREATE INDEX IF NOT EXISTS v2_executions_task ON v2_executions(task_id,ordinal);
+CREATE TABLE IF NOT EXISTS v2_requirements(run_id TEXT NOT NULL REFERENCES v2_runs(id),name TEXT NOT NULL,PRIMARY KEY(run_id,name));
+CREATE TABLE IF NOT EXISTS v2_artifacts(execution_id TEXT NOT NULL REFERENCES v2_executions(id),kind TEXT NOT NULL,path TEXT NOT NULL,base_commit TEXT NOT NULL,PRIMARY KEY(execution_id,kind));
 CREATE TABLE IF NOT EXISTS v2_checks(execution_id TEXT NOT NULL REFERENCES v2_executions(id),name TEXT NOT NULL,passed INTEGER NOT NULL,detail TEXT NOT NULL,PRIMARY KEY(execution_id,name));
 `
 
@@ -150,6 +154,46 @@ func (s *Store) Get(id string) (Run, error) {
 				return Run{}, err
 			}
 			e.Checks = append(e.Checks, c)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return Run{}, err
+		}
+	}
+
+	r.RequiredChecks = []string{}
+	rows, err = tx.Query(`SELECT name FROM v2_requirements WHERE run_id=? ORDER BY name`, id)
+	if err != nil {
+		return Run{}, err
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return Run{}, err
+		}
+		r.RequiredChecks = append(r.RequiredChecks, name)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return Run{}, err
+	}
+	for i := range r.Executions {
+		e := &r.Executions[i]
+		e.Artifacts = []Artifact{}
+		rows, err = tx.Query(`SELECT kind,path,base_commit FROM v2_artifacts WHERE execution_id=? ORDER BY kind`, e.ID)
+		if err != nil {
+			return Run{}, err
+		}
+		for rows.Next() {
+			var a Artifact
+			if err := rows.Scan(&a.Kind, &a.Path, &a.BaseCommit); err != nil {
+				rows.Close()
+				return Run{}, err
+			}
+			e.Artifacts = append(e.Artifacts, a)
 		}
 		err = rows.Err()
 		rows.Close()
@@ -264,7 +308,7 @@ func (s *Store) Complete(run string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err = changed(tx.Exec(`UPDATE v2_tasks SET state='succeeded' WHERE run_id=? AND state='awaiting_checks' AND EXISTS(SELECT 1 FROM v2_checks WHERE execution_id=active_execution) AND NOT EXISTS(SELECT 1 FROM v2_checks WHERE execution_id=active_execution AND passed=0)`, run)); err != nil {
+	if err = changed(tx.Exec(`UPDATE v2_tasks SET state='succeeded' WHERE run_id=? AND state='awaiting_checks' AND NOT EXISTS(SELECT 1 FROM v2_requirements req WHERE req.run_id=v2_tasks.run_id AND NOT EXISTS(SELECT 1 FROM v2_checks c WHERE c.execution_id=active_execution AND c.name=req.name AND c.passed=1)) AND EXISTS(SELECT 1 FROM v2_checks WHERE execution_id=active_execution) AND NOT EXISTS(SELECT 1 FROM v2_checks WHERE execution_id=active_execution AND passed=0)`, run)); err != nil {
 		return err
 	}
 	if err = changed(tx.Exec(`UPDATE v2_runs SET state='succeeded' WHERE id=? AND state='awaiting_checks'`, run)); err != nil {
