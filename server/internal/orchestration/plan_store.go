@@ -30,9 +30,10 @@ type PlannedTask struct {
 	Checks    []Check         `json:"checks"`
 }
 type PlanSnapshot struct {
-	Concurrency int                 `json:"concurrency"`
-	Tasks       []PlannedTask       `json:"tasks"`
-	Selection   taskgraph.Selection `json:"selection"`
+	Integrations []Execution         `json:"integrations"`
+	Concurrency  int                 `json:"concurrency"`
+	Tasks        []PlannedTask       `json:"tasks"`
+	Selection    taskgraph.Selection `json:"selection"`
 }
 
 // SavePlan freezes a validated plan before any execution. Identical retries are
@@ -153,6 +154,10 @@ func readPlan(tx *sql.Tx, run string) (PlanSnapshot, error) {
 			}
 		}
 		p.Tasks = append(p.Tasks, t)
+	}
+	p.Integrations, err = readIntegrations(tx, run)
+	if err != nil {
+		return p, err
 	}
 	p.Selection, err = g.Select(states, p.Concurrency)
 	return p, err

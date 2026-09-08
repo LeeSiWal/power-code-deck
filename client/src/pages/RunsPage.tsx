@@ -5,7 +5,7 @@ import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack, IconCheck, IconClose, IconPlay, IconRocket, IconSpinner } from '../components/icons';
 import { useGoUp } from '../hooks/useGoUp';
 
-const activeStates = new Set(['queued', 'running', 'awaiting_checks']);
+const activeStates = new Set(['queued', 'running', 'awaiting_checks', 'plan_running', 'integrating']);
 
 function stateLabel(state: string) {
   switch (state) {
@@ -14,6 +14,8 @@ function stateLabel(state: string) {
     case 'planned': return '계획 저장됨';
     case 'plan_running': return 'Task 실행 중';
     case 'awaiting_integration': return '결과 통합 대기';
+    case 'integrating': return '결과 통합·최종 검증 중';
+    case 'integration_failed': return '결과 통합·검증 실패';
     case 'verifying': return '검증 중';
     case 'running': return '작업 중';
     case 'awaiting_checks': return '검증 중';
@@ -27,8 +29,8 @@ function stateLabel(state: string) {
 
 function stateClass(state: string) {
   if (state === 'succeeded') return 'border-emerald-500/50 text-emerald-400 bg-emerald-500/10';
-  if (state === 'failed' || state === 'canceled') return 'border-red-500/50 text-red-400 bg-red-500/10';
-  if (state === 'running' || state === 'awaiting_checks') return 'border-amber-500/50 text-amber-300 bg-amber-500/10';
+  if (state === 'failed' || state === 'canceled' || state === 'integration_failed') return 'border-red-500/50 text-red-400 bg-red-500/10';
+  if (activeStates.has(state)) return 'border-amber-500/50 text-amber-300 bg-amber-500/10';
   return 'border-deck-border text-deck-text-dim bg-deck-surface';
 }
 
@@ -36,6 +38,7 @@ function artifactLabel(artifact: RunArtifact) {
   if (artifact.kind === 'changes.patch') return '변경 내용';
   if (artifact.kind === 'status.txt') return '변경 파일';
   if (artifact.kind === 'review_log') return '독립 리뷰';
+  if (artifact.kind === 'integration_log') return '통합 오류 로그';
   if (artifact.kind.startsWith('check_log:')) return `${artifact.kind.slice('check_log:'.length)} 로그`;
   return artifact.kind;
 }
@@ -115,7 +118,7 @@ export function RunsPage() {
   }, [id, loadRun]);
 
   useEffect(() => {
-    if (!id || run?.id !== id || !['planned', 'plan_running', 'awaiting_integration', 'canceled'].includes(run.state)) return;
+    if (!id || run?.id !== id || !['planned', 'plan_running', 'awaiting_integration', 'integrating', 'integration_failed', 'succeeded', 'canceled'].includes(run.state)) return;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -125,7 +128,7 @@ export function RunsPage() {
       } catch (err) {
         if (!disposed && !(err instanceof ApiError && err.status === 404)) setError('작업 계획을 불러오지 못했습니다');
       } finally {
-        if (!disposed && run.state === 'plan_running') timer = setTimeout(poll, 1500);
+        if (!disposed && ['plan_running', 'integrating'].includes(run.state)) timer = setTimeout(poll, 1500);
       }
     };
     poll();
@@ -164,7 +167,7 @@ export function RunsPage() {
   };
 
   useEffect(() => {
-    if (!id || !run || (!activeStates.has(run.state) && run.state !== 'plan_running')) return;
+    if (!id || !run || !activeStates.has(run.state)) return;
     const timer = window.setInterval(async () => {
       const next = await loadRun(id);
       if (next && !activeStates.has(next.state)) loadList();
@@ -334,7 +337,7 @@ export function RunsPage() {
                       <IconPlay size={13} color="#fff" /> {run.state === 'queued' ? '시작' : '다시 실행'}
                     </button>
                   )}
-                  {(['running', 'awaiting_checks', 'planned', 'plan_running', 'awaiting_integration'].includes(run.state)) && (
+                  {(['running', 'awaiting_checks', 'planned', 'plan_running', 'awaiting_integration', 'integrating', 'integration_failed'].includes(run.state)) && (
                     <button onClick={cancel} disabled={submitting} className="px-2.5 py-1.5 rounded-lg border border-red-500/40 text-red-300 text-xs disabled:opacity-40">중단</button>
                   )}
                 </div>
@@ -343,7 +346,18 @@ export function RunsPage() {
               {plan && (
                 <div className="rounded-xl border border-deck-border bg-deck-surface p-4 space-y-3">
                   <div className="text-sm font-semibold">작업 계획 · {plan.tasks.length}개 Task</div>
-                  <p className="text-xs text-deck-text-dim">검증된 선행 변경을 전달해 Task를 실행합니다. 전체 완료 후 결과 통합과 최종 검증이 필요합니다.</p>
+                  <p className="text-xs text-deck-text-dim">Task가 모두 통과하면 결과를 통합하고 최종 검증합니다. 완료된 결과는 별도 작업 공간에 보관되며 원본 브랜치에 적용하려면 후속 작업이 필요합니다.</p>
+                  {['awaiting_integration', 'integration_failed'].includes(run.state) && <button className="btn-primary" disabled={submitting} onClick={async () => {
+                    setSubmitting(true); setError('');
+                    try {
+                      await api.integrateRunPlan(run.id);
+                      await loadRun(run.id);
+                      const snapshot = await api.getRunPlan(run.id);
+                      if (selectedID.current === run.id) setPlan(snapshot);
+                      await loadList();
+                    } catch (err) { setError(err instanceof Error ? err.message : '결과 통합을 시작하지 못했습니다'); }
+                    finally { setSubmitting(false); }
+                  }}>{run.state === 'integration_failed' ? '결과 통합 다시 시도' : '결과 통합·최종 검증'}</button>}
                   {run.state === 'planned' && plan.selection.ready.length > 0 && <button className="btn-primary" disabled={submitting} onClick={() => start(run.id, true)}>계획 실행</button>}
                   {plan.tasks.map((task) => (
                     <div key={task.id} className="border-t border-deck-border pt-3">
@@ -366,6 +380,15 @@ export function RunsPage() {
                         catch (err) { setError(err instanceof Error ? err.message : '재시도 준비 실패'); }
                         finally { setSubmitting(false); }
                       }}>재시도 준비</button>}
+                    </div>
+                  ))}
+                  {plan.integrations.map((attempt, index) => (
+                    <div key={attempt.id} className="border-t border-deck-border pt-3 space-y-2">
+                      <div className="text-sm font-semibold">최종 통합 #{index + 1} · {stateLabel(attempt.state)}</div>
+                      <p className="text-xs whitespace-pre-wrap break-words">{attempt.detail}</p>
+                      {attempt.checks.map((check) => <p key={check.name} className="text-xs whitespace-pre-wrap break-words">{check.passed ? '✓' : '✕'} {check.name}: {check.detail}</p>)}
+                      <div className="flex gap-2 flex-wrap">{attempt.artifacts.filter((a) => a.kind !== 'workspace' && a.kind !== 'result_commit').map((a) => <button key={a.kind} className="text-xs underline" onClick={() => openArtifact(a, attempt.id)}>{artifactLabel(a)}</button>)}</div>
+                      {attempt.artifacts.filter((a) => a.kind === 'result_commit').map((a) => <p key={a.kind} className="text-xs font-mono break-all">검증 결과: {a.baseCommit}</p>)}
                     </div>
                   ))}
                 </div>

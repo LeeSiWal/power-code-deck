@@ -259,6 +259,14 @@ func TestWorkerCheckHelper(t *testing.T) {
 		return
 	}
 	fmt.Println("literal argument:", os.Args[len(os.Args)-1])
+	if os.Args[len(os.Args)-1] == "reject-combined" {
+		_, a := os.Stat("a.txt")
+		_, b := os.Stat("b.txt")
+		if a == nil && b == nil {
+			fmt.Println("combined changes incompatible")
+			os.Exit(6)
+		}
+	}
 	if os.Args[len(os.Args)-1] == "verify-change" {
 		data, err := os.ReadFile("tracked.txt")
 		if err != nil || string(data) != "PCD_RUN_LIVE_OK\n" {

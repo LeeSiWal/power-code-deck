@@ -52,6 +52,7 @@ export interface RunApproval {
 }
 
 export interface PlanSnapshot {
+  integrations: RunExecution[];
   concurrency: number;
   tasks: { id: string; prompt: string; provider: string; dependsOn: string[]; state: string; attemptId: string; detail: string; artifacts: RunArtifact[]; checks: RunCheck[] }[];
   selection: { ready: { id: string }[]; blocked: string[]; complete: boolean };
@@ -226,6 +227,7 @@ export const api = {
   listRuns: () => apiFetch<{ runs: RunSummary[] }>('/v2/runs'),
   getRunPlan: (id: string) => apiFetch<PlanSnapshot>(`/v2/runs/${encodeURIComponent(id)}/plan`),
   startRunPlan: (id: string) => apiFetch(`/v2/runs/${encodeURIComponent(id)}/plan/start`, { method: 'POST' }),
+  integrateRunPlan: (id: string) => apiFetch<{ executionId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/integrate`, { method: 'POST' }),
   retryRunTask: (id: string, task: string) => apiFetch(`/v2/runs/${encodeURIComponent(id)}/plan/tasks/${encodeURIComponent(task)}/retry`, { method: 'POST' }),
   runApprovals: (id: string) => apiFetch<RunApproval[]>(`/v2/runs/${encodeURIComponent(id)}/approvals`),
   decideRunApproval: (run: string, id: string, behavior: 'allow' | 'deny') =>

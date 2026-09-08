@@ -57,7 +57,8 @@ Provider success enters `verifying`; independent `tests` and `review` records
 must both pass before the task succeeds. A failing check is immutable evidence.
 Explicit retry of a failed task keeps old attempts/checks and allocates a fresh
 attempt with no reused evidence. Stale results after cancellation/retry are rejected.
-After all tasks succeed, the Run enters `awaiting_integration`, never `succeeded`.
+After all tasks succeed, task dispatch leaves the Run `awaiting_integration`.
+Only a separate successful final integration can mark the Run `succeeded`.
 
 Recovery marks active attempts interrupted and their tasks failed, keeping
 partial evidence. The plan returns to `planned`; interrupted tasks require
@@ -104,13 +105,45 @@ Retrying a conflict repeats preparation in a fresh worktree and preserves the
 old one; it does not automatically resolve the conflict. Cancel stops active
 providers and rejects late results. Runtime worktrees are not OS sandboxes.
 
-Remaining integration steps:
+## Final integration and completion
 
-1. Combine all terminal branch results in a dedicated integration worktree and
-   run final checks/review before allowing Run completion. Sibling branches with
-   no common downstream task have not yet been combined.
-2. Add automatic plan generation and plan creation/editing before saving in the UI.
-3. Add prior-attempt browsing, conflict resolution and explicit retained worktree/
+`POST /v2/runs/{id}/plan/integrate` explicitly starts final integration, using the
+same single active Run slot. All tasks must have succeeded and have retained
+result commits. The source must still be clean at the pinned revision, with a
+nonempty project check manifest and a configured independent reviewer.
+
+`integration_worker.go` creates a fresh detached worktree and applies every task
+result in dependency order, including disconnected terminal branches. Shared
+ancestors are applied once. Conflicts preserve the failed worktree and an error
+log; there is no automatic resolution or source branch mutation.
+
+The complete diff is checked, every check from the original source manifest is
+run again, and a fresh reviewer evaluates the combined changes against the
+original Run request. Source mutation by checks/review fails verification. The
+original task checks cannot substitute for this final evidence. Success retains
+a single combined result with the pinned Run base as its parent under
+`refs/powercodedeck/integrations/{attemptId}`, then marks the Run `succeeded`.
+This means a verified result is ready; it does not mean it has been applied to
+the source branch or deployed.
+
+Additive `v2_integrations`, `v2_integration_requirements`,
+`v2_integration_checks` and `v2_integration_artifacts` tables preserve each
+attempt and its frozen required checks. Completion requires every required
+check and a retained result in that exact attempt. Clients cannot submit
+checks or directly complete integrations. Cancellation rejects late evidence;
+recovery marks an active integration interrupted and returns the Run to
+`awaiting_integration` without launching a CLI. A failed integration leaves
+`integration_failed`. Explicit retry creates a new attempt and workspace,
+preserving all verified tasks and old integration evidence.
+
+The Run UI exposes integration start/retry, cancellation, all integration
+attempts, check results, combined patches, logs and the final result commit.
+
+Remaining steps:
+
+1. Add automatic plan generation and plan creation/editing before saving in the UI.
+2. Add an explicit workflow for applying a verified result to the user's branch.
+3. Add prior-task-attempt browsing, conflict resolution and retained worktree/
    ref cleanup, plus multi-server leases if deployment requires them.
 4. Finish authenticated live provider/browser validation. The previous Antigravity
    headless permission denial remains unresolved; fake-provider tests do not

@@ -104,3 +104,25 @@ warnings. No authenticated live provider or browser E2E run was performed in
 this slice. The earlier Antigravity headless permission issue remains open.
 Final integration/verification of terminal branch results is still required;
 all verified tasks move the parent Run only to `awaiting_integration`.
+
+## Final Run integration — 2026-09-08
+
+Added a separate integration worker/store and an explicit Run UI action. All
+verified task results are combined in a new worktree. Original project checks
+and an independent review run against that complete result. Only the current
+integration's checks and retained result can mark the Run complete; the source
+branch remains unchanged.
+
+Automated regression cases cover disconnected branches, a diamond graph with
+one shared ancestor, source HEAD/index preservation, retained result refs,
+cross-Run artifact isolation, conflicting branches, combined-only check
+failure, failed/mutating final review, cancellation during review, duplicate
+dispatch, missing required evidence, immutable checks, changed source revision,
+explicit retries and restart recovery without inherited evidence.
+
+Passed: `go test -race ./...`, `go vet ./...`, `npm run build` and
+`git diff --check`. Existing frontend dependency/chunk warnings remain.
+
+Live provider permissions and browser end-to-end behavior remain unverified in
+this slice. Applying a verified result to the user's source branch, conflict
+resolution and cleanup remain separate work.

@@ -197,6 +197,20 @@ func TestPlanWorkerDiamondTransfersNewFilesOnce(t *testing.T) {
 	if strings.TrimSpace(head) != got.BaseCommit {
 		t.Fatal("source HEAD moved")
 	}
+	integration, err := w.StartIntegration(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitWorker(t, w)
+	got, _ = s.Get(r.ID)
+	if got.State != "succeeded" {
+		p, _ := s.GetPlan(r.ID)
+		t.Fatal(got, p.Integrations)
+	}
+	patch, err := w.ReadArtifact(r.ID, integration, "changes.patch")
+	if err != nil || strings.Count(string(patch), "diff --git a/root.txt b/root.txt") != 1 {
+		t.Fatal("final integration repeated diamond ancestor", string(patch), err)
+	}
 }
 
 func TestPlanWorkerConflictingDependenciesStopBeforeProvider(t *testing.T) {

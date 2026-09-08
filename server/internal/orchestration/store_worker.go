@@ -17,7 +17,8 @@ func (s *Store) Artifact(run, execution, kind string) (Artifact, error) {
 		JOIN v2_executions e ON e.id=a.execution_id
 		JOIN v2_tasks t ON t.id=e.task_id
 		WHERE t.run_id=? AND e.id=? AND a.kind=?
-		UNION ALL SELECT a.kind,a.path,a.base_commit FROM v2_plan_artifacts a JOIN v2_plan_attempts e ON e.id=a.attempt_id WHERE e.run_id=? AND e.id=? AND a.kind=?`, run, execution, kind, run, execution, kind).
+		UNION ALL SELECT a.kind,a.path,a.base_commit FROM v2_plan_artifacts a JOIN v2_plan_attempts e ON e.id=a.attempt_id WHERE e.run_id=? AND e.id=? AND a.kind=?
+		UNION ALL SELECT a.kind,a.path,a.base_commit FROM v2_integration_artifacts a JOIN v2_integrations e ON e.id=a.attempt_id WHERE e.run_id=? AND e.id=? AND a.kind=?`, run, execution, kind, run, execution, kind, run, execution, kind).
 		Scan(&artifact.Kind, &artifact.Path, &artifact.BaseCommit)
 	if err != nil {
 		return Artifact{}, err

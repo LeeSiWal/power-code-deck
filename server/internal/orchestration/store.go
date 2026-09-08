@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS v2_checks(execution_id TEXT NOT NULL REFERENCES v2_ex
 `
 
 func New(database *sql.DB) (*Store, error) {
-	if _, err := database.Exec(schema + planSchema); err != nil {
+	if _, err := database.Exec(schema + planSchema + integrationSchema); err != nil {
 		return nil, err
 	}
 	// Upgrade databases created by the first opt-in Run slice. The feature has not
@@ -339,7 +339,10 @@ func (s *Store) Cancel(run string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err = changed(tx.Exec(`UPDATE v2_runs SET state='canceled' WHERE id=? AND state IN ('queued','running','awaiting_checks','failed','interrupted','planned','plan_running','awaiting_integration')`, run)); err != nil {
+	if err = changed(tx.Exec(`UPDATE v2_runs SET state='canceled' WHERE id=? AND state IN ('queued','running','awaiting_checks','failed','interrupted','planned','plan_running','awaiting_integration','integrating','integration_failed')`, run)); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE v2_integrations SET state='canceled' WHERE run_id=? AND state='running'`, run); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(`UPDATE v2_executions SET state='canceled' WHERE task_id=(SELECT id FROM v2_tasks WHERE run_id=?) AND state='running'`, run); err != nil {
@@ -365,6 +368,8 @@ func (s *Store) Recover() error {
 	}
 	defer tx.Rollback()
 	for _, query := range []string{
+		`UPDATE v2_integrations SET state='interrupted',detail='server restarted; integration outcome unknown' WHERE state='running'`,
+		`UPDATE v2_runs SET state='awaiting_integration' WHERE state='integrating'`,
 		`UPDATE v2_plan_attempts SET state='interrupted',detail='server restarted; outcome unknown' WHERE state IN ('running','verifying')`,
 		`UPDATE v2_plan_tasks SET state='failed' WHERE state IN ('running','verifying')`,
 		`UPDATE v2_runs SET state='planned' WHERE state='plan_running'`,

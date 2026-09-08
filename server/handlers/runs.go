@@ -31,6 +31,16 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 		}
 	}
 	if worker != nil {
+		api.HandleFunc("/v2/runs/{id}/plan/integrate", func(w http.ResponseWriter, r *http.Request) {
+			attempt, err := worker.StartIntegration(mux.Vars(r)["id"])
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{"executionId": attempt})
+		}).Methods("POST")
 		api.HandleFunc("/v2/runs/{id}/plan/start", func(w http.ResponseWriter, r *http.Request) {
 			if err := worker.StartPlan(mux.Vars(r)["id"]); err != nil {
 				fail(w, err)
