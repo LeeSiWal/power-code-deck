@@ -276,8 +276,8 @@ The combined result must pass fresh diff checks, the pinned project checks and
 an independent review. Cancellation and restart recovery use the existing
 integration lifecycle. Success retains a reviewed result; source application
 remains a separate action. Source revision/cleanliness guards still apply.
-Task dependency conflicts and unsupported files retain comparison and new-plan
-workflows. Old conflict reports without a fingerprint remain readable but cannot
+Unsupported files retain comparison and new-plan workflows. Task dependency
+repair is described below. Old conflict reports without a fingerprint remain readable but cannot
 seed direct repair. A repair rejected during replay retains its recipe and error;
 normal integration can capture fresh evidence again.
 
@@ -298,12 +298,38 @@ Manual editor changes are not generation history. Refreshing reloads the latest
 page; changing Run state also refreshes open history. Late responses from a
 closed or switched view are ignored.
 
+## Task dependency text repair
+
+The current failed Task attempt can accept a complete text resolution through
+`POST /v2/runs/{id}/plan/tasks/{task}/attempts/{attempt}/resolve`. The Runs UI
+offers this action while the plan is idle. The shared editor and evidence
+validation enforce the same limits and fingerprint checks as final integration.
+`task_resolution_store.go` atomically replaces only the matching failed attempt,
+checks successful dependencies and rejects existing active tasks. An intervening
+normal retry or cancellation invalidates the request. Source pinning, clean-tree
+checks, reviewer requirements and shared worker capacity still apply.
+
+The worker saves the resolution recipe in a fresh attempt and reconstructs all
+dependency commits. Earlier resolutions carry forward when another dependency
+conflicts. Only after the complete input is resolved does the Task provider run.
+The input/result parent relationship remains incremental for graph replay.
+Project checks run again, and repaired attempts use the original Run base for
+diff checks, displayed changes and independent review, covering manual repairs
+and implementation together. No prior passing checks are copied.
+
+Recipes apply to the repaired Task's input only. Later Tasks and final integration
+reconstruct their own inputs and may require explicit conflict resolution again;
+Task-local choices are not silently imposed on other branches. A normal Task retry
+also starts without a repair recipe. If implementation or verification fails after
+repair, its recipe remains available as evidence; retry can recapture the conflict
+for a new submission. Old attempts and the user's source checkout remain intact.
+Cancellation and restart recovery follow the existing planned-task lifecycle.
+
 Remaining steps:
 
-1. Extend repair to Task dependency conflicts if needed.
-2. Add an explicit undo workflow for applied results if required.
-3. Add retained worktree/ref cleanup, plus multi-server leases if deployment
+1. Add retained worktree/ref cleanup, plus multi-server leases if deployment
    requires them.
-4. Finish authenticated live provider/browser validation. The previous Antigravity
+2. Add an explicit undo workflow for applied results if required.
+3. Finish authenticated live provider/browser validation. The previous Antigravity
    headless permission denial remains unresolved; fake-provider tests do not
    establish live CLI permissions or browser end-to-end behavior.

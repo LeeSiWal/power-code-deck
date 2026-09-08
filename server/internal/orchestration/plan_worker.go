@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -17,6 +18,17 @@ import (
 // StartPlan shares the single Run slot with Start. Concurrency is bounded by the
 // frozen plan; reservations remain internal and never accept client evidence.
 func (w *Worker) StartPlan(id string) error {
+	return w.startPlan(id, "", nil)
+}
+
+func (w *Worker) StartTaskResolution(id, task string, request ResolutionRequest) error {
+	if task == "" {
+		return ErrInvalid
+	}
+	return w.startPlan(id, task, &request)
+}
+
+func (w *Worker) startPlan(id, repairTask string, request *ResolutionRequest) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed || w.cancel != nil {
@@ -33,7 +45,23 @@ func (w *Worker) StartPlan(id string) error {
 	if err != nil {
 		return err
 	}
-	if len(plan.Selection.Ready) == 0 {
+	var repairs *resolutionPlan
+	if request != nil {
+		found := false
+		for _, task := range plan.Tasks {
+			if task.ID == repairTask && task.State == taskgraph.Failed && task.AttemptID == request.SourceAttempt {
+				found = true
+			}
+		}
+		if !found {
+			return ErrConflict
+		}
+		repairs, err = w.resolutionFromEvidence(id, *request)
+		if err != nil {
+			return err
+		}
+	}
+	if request == nil && len(plan.Selection.Ready) == 0 {
 		return ErrConflict
 	}
 	if w.reviewer == nil {
@@ -76,10 +104,21 @@ func (w *Worker) StartPlan(id string) error {
 		cancel()
 		return err
 	}
-	tasks, err := w.store.ClaimTasks(id)
+	var tasks []PlannedTask
+	if request == nil {
+		tasks, err = w.store.ClaimTasks(id)
+	} else {
+		var task PlannedTask
+		task, err = w.store.claimTaskResolution(id, repairTask, request.SourceAttempt)
+		tasks = []PlannedTask{task}
+	}
 	if err != nil {
 		cancel()
 		return err
+	}
+	repairAttempt := ""
+	if request != nil {
+		repairAttempt = tasks[0].AttemptID
 	}
 	reviewer := w.reviewer
 	w.run, w.cancel, w.done = id, cancel, make(chan struct{})
@@ -95,7 +134,14 @@ func (w *Worker) StartPlan(id string) error {
 			var group sync.WaitGroup
 			for _, task := range tasks {
 				group.Add(1)
-				go func(t PlannedTask) { defer group.Done(); w.executePlanned(ctx, run, t, checks, reviewer) }(task)
+				go func(t PlannedTask) {
+					defer group.Done()
+					if t.AttemptID == repairAttempt {
+						w.executePlanned(ctx, run, t, checks, reviewer, repairs)
+					} else {
+						w.executePlanned(ctx, run, t, checks, reviewer)
+					}
+				}(task)
 			}
 			group.Wait()
 			if ctx.Err() != nil {
@@ -175,7 +221,7 @@ func snapshot(ctx context.Context, cwd, parent string) (string, error) {
 	return strings.TrimSpace(commit), err
 }
 
-func (w *Worker) executePlanned(ctx context.Context, run Run, task PlannedTask, checks []CheckSpec, reviewer Factory) {
+func (w *Worker) executePlanned(ctx context.Context, run Run, task PlannedTask, checks []CheckSpec, reviewer Factory, resolutions ...*resolutionPlan) {
 	id := task.AttemptID
 	verifying := false
 	fail := func(err error) {
@@ -193,6 +239,26 @@ func (w *Worker) executePlanned(ctx context.Context, run Run, task PlannedTask, 
 	if err := os.Mkdir(dir, 0700); err != nil {
 		fail(err)
 		return
+	}
+	var repairs *resolutionPlan
+	if len(resolutions) > 0 {
+		repairs = resolutions[0]
+	}
+	if repairs != nil {
+		raw, err := json.Marshal(repairs)
+		if err != nil {
+			fail(err)
+			return
+		}
+		path := filepath.Join(dir, "resolution-plan.json")
+		if err := writeExclusive(path, raw); err != nil {
+			fail(err)
+			return
+		}
+		if err := w.store.AddPlannedArtifact(id, "resolution_plan", path, run.BaseCommit); err != nil {
+			fail(err)
+			return
+		}
 	}
 	hooks := filepath.Join(dir, "empty-hooks")
 	if err := os.Mkdir(hooks, 0700); err != nil {
@@ -213,14 +279,36 @@ func (w *Worker) executePlanned(ctx context.Context, run Run, task PlannedTask, 
 		fail(err)
 		return
 	}
+	appliedRepairs := 0
 	for _, commit := range commits {
 		if _, err := git(ctx, cwd, "-c", "core.hooksPath="+hooks, "cherry-pick", "--no-commit", commit); err != nil {
+			resolved := false
+			if repairs != nil {
+				for _, repair := range repairs.Resolutions {
+					if repair.IncomingCommit == commit {
+						if err := applyConflictResolution(ctx, cwd, repair); err != nil {
+							fail(err)
+							return
+						}
+						appliedRepairs++
+						resolved = true
+						break
+					}
+				}
+			}
+			if resolved {
+				continue
+			}
 			if captureErr := captureConflict(ctx, cwd, dir, id, run.BaseCommit, commit, err.Error(), w.store.AddPlannedArtifact); captureErr != nil {
 				err = fmt.Errorf("%w; conflict evidence: %v", err, captureErr)
 			}
 			fail(fmt.Errorf("dependency integration failed: %w", err))
 			return
 		}
+	}
+	if repairs != nil && appliedRepairs != len(repairs.Resolutions) {
+		fail(fmt.Errorf("%w: not all submitted conflict resolutions were applied", ErrConflict))
+		return
 	}
 	base, err := snapshot(ctx, cwd, run.BaseCommit)
 	if err != nil {
@@ -287,7 +375,11 @@ func (w *Worker) executePlanned(ctx context.Context, run Run, task PlannedTask, 
 		fail(err)
 		return
 	}
-	patch, err := git(ctx, cwd, "diff", "--no-ext-diff", "--no-textconv", "--binary", base, result, "--")
+	verificationBase := base
+	if repairs != nil {
+		verificationBase = run.BaseCommit
+	}
+	patch, err := git(ctx, cwd, "diff", "--no-ext-diff", "--no-textconv", "--binary", verificationBase, result, "--")
 	if err != nil {
 		fail(err)
 		return
@@ -297,11 +389,11 @@ func (w *Worker) executePlanned(ctx context.Context, run Run, task PlannedTask, 
 		fail(err)
 		return
 	}
-	if err := w.store.AddPlannedArtifact(id, "changes.patch", path, base); err != nil {
+	if err := w.store.AddPlannedArtifact(id, "changes.patch", path, verificationBase); err != nil {
 		fail(err)
 		return
 	}
-	_, err = git(ctx, cwd, "diff", "--no-ext-diff", "--no-textconv", "--check", base, result, "--")
+	_, err = git(ctx, cwd, "diff", "--no-ext-diff", "--no-textconv", "--check", verificationBase, result, "--")
 	detail := "project checks passed"
 	for _, check := range checks {
 		if err != nil {
@@ -342,7 +434,10 @@ func (w *Worker) executePlanned(ctx context.Context, run Run, task PlannedTask, 
 	}
 	reviewRun := run
 	reviewRun.Prompt = task.Prompt
-	passed, detail, err := reviewExecution(ctx, reviewRun, id, cwd, base, dir, reviewer, w.store.AddPlannedArtifact)
+	if repairs != nil {
+		reviewRun.Prompt = run.Prompt + "\n\nReview dependency conflict resolutions and task implementation together. Task: " + task.Prompt
+	}
+	passed, detail, err := reviewExecution(ctx, reviewRun, id, cwd, verificationBase, dir, reviewer, w.store.AddPlannedArtifact)
 	if err != nil {
 		passed = false
 		detail = err.Error()

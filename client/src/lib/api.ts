@@ -255,6 +255,7 @@ export const api = {
   getDraftHistory: (id: string, before = '') => apiFetch<DraftHistory>(`/v2/runs/${encodeURIComponent(id)}/plan/drafts?before=${encodeURIComponent(before)}`),
   getTaskHistory: (id: string, task: string, before = '') => apiFetch<TaskHistory>(`/v2/runs/${encodeURIComponent(id)}/plan/tasks/${encodeURIComponent(task)}/attempts?${new URLSearchParams({ before })}`),
   resolveIntegration: (id: string, attempt: string, fingerprint: string, files: ResolvedFile[]) => apiFetch<{ executionId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/integrations/${encodeURIComponent(attempt)}/resolve`, { method: 'POST', body: JSON.stringify({ fingerprint, files }) }),
+  resolveTask: (id: string, task: string, attempt: string, fingerprint: string, files: ResolvedFile[]) => apiFetch<void>(`/v2/runs/${encodeURIComponent(id)}/plan/tasks/${encodeURIComponent(task)}/attempts/${encodeURIComponent(attempt)}/resolve`, { method: 'POST', body: JSON.stringify({ fingerprint, files }) }),
   saveRunPlan: (id: string, plan: TaskPlan) => apiFetch(`/v2/runs/${encodeURIComponent(id)}/plan`, { method: 'PUT', body: JSON.stringify(plan) }),
   integrateRunPlan: (id: string) => apiFetch<{ executionId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/integrate`, { method: 'POST' }),
   previewRunApplication: (id: string) => apiFetch<ApplyPreview>(`/v2/runs/${encodeURIComponent(id)}/plan/apply`),

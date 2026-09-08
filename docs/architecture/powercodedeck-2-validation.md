@@ -228,3 +228,31 @@ Validation: targeted draft history tests and full server `go test -race ./...`,
 `go vet ./...`, client `npm run build`, and `git diff --check`. Existing frontend
 dependency/import/chunk warnings remain. No browser E2E or live provider call
 was run. Task dependency repair, workspace cleanup and live validation remain.
+
+## Task dependency text repair — 2026-09-08
+
+Extended explicit resolution to the current failed Task's dependency input.
+The shared editor posts a bounded recipe; atomic reservation preserves the old
+attempt and the provider runs anew only after input reconstruction. Repaired
+attempts review and diff-check the full result against the original Run base,
+while retained result commits stay incremental against their resolved input.
+
+Tests cover repaired input reaching implementation, complete repair/implementation
+diff evidence, incremental parentage, retained failures, later final integration
+with explicit resolution, stale/foreign Task attempts, invalid fingerprints and
+paths, intervening normal retries, independent review failure, cancellation and
+late success, shared capacity, and chained dependency conflicts before provider
+execution. Existing final integration repair tests also pass.
+
+After binding recipes to the specifically reserved attempt ID, targeted Task
+repair/capacity tests and static checks were rerun successfully.
+
+Validation: targeted repair tests, full server `go test -race ./...`, `go vet ./...`,
+client `npm run build`, and `git diff --check`. Existing frontend build warnings
+remain. Tests use temporary Git repositories and fake providers. Browser E2E and
+authenticated Antigravity validation remain outstanding.
+
+Task-local resolutions are not automatically reused by later Tasks or final
+integration. Those stages may need a new explicit resolution. Retained workspace
+cleanup is the next structural step; optional undo and multi-server ownership are
+separate extensions.

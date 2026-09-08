@@ -7,11 +7,12 @@ type EvidenceActions = {
   onArtifact: (artifact: RunArtifact, attempt: string) => void;
   onResolve: (report: ConflictReport, attempt: string) => void;
   onRepairStarted?: () => Promise<unknown>;
+  repairTaskId?: string;
 };
 export function visibleArtifact(a: RunArtifact) {
   return a.kind !== 'workspace' && !a.kind.endsWith('_commit') && a.kind !== 'conflicts' && !a.kind.startsWith('conflict:');
 }
-export function ConflictDetails({ attempt, runId, onArtifact, onResolve, onRepairStarted }: EvidenceActions & { attempt: RunExecution }) {
+export function ConflictDetails({ attempt, runId, onArtifact, onResolve, onRepairStarted, repairTaskId }: EvidenceActions & { attempt: RunExecution }) {
   const [open, setOpen] = useState(false);
   const [report, setReport] = useState<ConflictReport | null>(null);
   const [error, setError] = useState('');
@@ -45,7 +46,7 @@ export function ConflictDetails({ attempt, runId, onArtifact, onResolve, onRepai
         <button className="btn-primary" onClick={() => onResolve(report, attempt.id)}>새 해결 요청 작성</button>
         {onRepairStarted && report.fingerprint && !report.truncated && report.files.every((f) => [f.base, f.current, f.incoming].every((v) => (!v.unavailable || v.unavailable === 'deleted_or_absent') && (!v.mode || ['100644', '100755'].includes(v.mode)))) && <div className="space-y-2">
           <button className="text-xs underline" onClick={() => setEditing(!editing)}>{editing ? '수정 편집기 닫기' : '텍스트 충돌 직접 수정'}</button>
-          {editing && <ResolutionEditor runId={runId} attemptId={attempt.id} report={report} onStarted={onRepairStarted} />}
+          {editing && <ResolutionEditor runId={runId} attemptId={attempt.id} taskId={repairTaskId} report={report} onStarted={onRepairStarted} />}
         </div>}
       </>}
     </div>}

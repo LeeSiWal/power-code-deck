@@ -73,6 +73,14 @@ func (w *Worker) loadResolution(run string, request ResolutionRequest) (*resolut
 	if latest != request.SourceAttempt || state != "failed" {
 		return nil, ErrConflict
 	}
+	return w.resolutionFromEvidence(run, request)
+}
+
+func (w *Worker) resolutionFromEvidence(run string, request ResolutionRequest) (*resolutionPlan, error) {
+	if err := validResolutionFiles(request.Files); err != nil {
+		return nil, err
+	}
+	latest := request.SourceAttempt
 	raw, err := w.ReadArtifact(run, latest, "conflicts")
 	if err != nil {
 		return nil, err

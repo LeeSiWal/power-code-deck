@@ -460,7 +460,7 @@ export function RunsPage() {
                       {task.detail && <p className="text-xs mt-1 whitespace-pre-wrap break-words">{task.detail}</p>}
                       {task.checks.map((check) => <p key={check.name} className="text-xs mt-1">{check.passed ? '✓' : '✕'} {check.name}: {check.detail}</p>)}
                       <div className="flex gap-2 flex-wrap mt-2">{task.artifacts.filter(visibleArtifact).map((a) => <button key={a.kind} className="text-xs underline" onClick={() => openArtifact(a, task.attemptId)}>{artifactLabel(a)}</button>)}</div>
-                      <ConflictDetails key={task.attemptId} runId={run.id} attempt={{ id: task.attemptId, state: task.state, detail: task.detail, checks: task.checks, artifacts: task.artifacts }} onArtifact={openArtifact} onResolve={prepareResolution} />
+                      <ConflictDetails key={task.attemptId} runId={run.id} attempt={{ id: task.attemptId, state: task.state, detail: task.detail, checks: task.checks, artifacts: task.artifacts }} onArtifact={openArtifact} onResolve={prepareResolution} repairTaskId={task.id} onRepairStarted={run.state === 'planned' && task.state === 'failed' ? refreshRepair : undefined} />
                       <AttemptHistory key={`${run.id}:${task.id}`} runId={run.id} taskId={task.id} refreshKey={`${task.attemptId}:${task.state}`} onArtifact={openArtifact} onResolve={prepareResolution} />
                       {task.state === 'failed' && run.state === 'planned' && <button className="btn-primary mt-2" disabled={submitting} onClick={async () => {
                         setSubmitting(true);

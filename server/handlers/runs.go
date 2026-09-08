@@ -31,6 +31,30 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 		}
 	}
 	if worker != nil {
+		api.HandleFunc("/v2/runs/{id}/plan/tasks/{task}/attempts/{attempt}/resolve", func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Fingerprint string                       `json:"fingerprint"`
+				Files       []orchestration.ResolvedFile `json:"files"`
+			}
+			d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 6*1024*1024))
+			d.DisallowUnknownFields()
+			if err := d.Decode(&body); err != nil {
+				jsonError(w, "invalid conflict resolution", 400)
+				return
+			}
+			if d.Decode(new(any)) != io.EOF {
+				jsonError(w, "one resolution object required", 400)
+				return
+			}
+			vars := mux.Vars(r)
+			if err := worker.StartTaskResolution(vars["id"], vars["task"], orchestration.ResolutionRequest{SourceAttempt: vars["attempt"], Fingerprint: body.Fingerprint, Files: body.Files}); err != nil {
+				fail(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]bool{"started": true})
+		}).Methods("POST")
 		api.HandleFunc("/v2/runs/{id}/plan/integrations/{attempt}/resolve", func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
 				Fingerprint string                       `json:"fingerprint"`
