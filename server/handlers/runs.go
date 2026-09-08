@@ -162,6 +162,14 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 		}
 		jsonResponse(w, history)
 	}).Methods("GET")
+	api.HandleFunc("/v2/runs/{id}/plan/drafts", func(w http.ResponseWriter, r *http.Request) {
+		history, err := store.DraftHistory(mux.Vars(r)["id"], r.URL.Query().Get("before"))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		jsonResponse(w, history)
+	}).Methods("GET")
 	api.HandleFunc("/v2/runs/{id}/plan/draft", func(w http.ResponseWriter, r *http.Request) {
 		draft, err := store.GetPlanDraft(mux.Vars(r)["id"])
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 const plannerSchema = `
 CREATE TABLE IF NOT EXISTS v2_plan_drafts(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES v2_runs(id),state TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',plan TEXT NOT NULL DEFAULT '',workspace TEXT NOT NULL DEFAULT '',ordinal INTEGER NOT NULL UNIQUE);
 CREATE UNIQUE INDEX IF NOT EXISTS v2_draft_active ON v2_plan_drafts(run_id) WHERE state='running';
+CREATE INDEX IF NOT EXISTS v2_draft_history ON v2_plan_drafts(run_id,ordinal DESC);
 `
 
 type PlanDraft struct {

@@ -7,12 +7,51 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
 	_ "modernc.org/sqlite"
 	"powercodedeck/internal/orchestration"
 )
+
+func TestDraftHistoryRoute(t *testing.T) {
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+	store, err := orchestration.New(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.Create("draft-history-api", t.TempDir(), "plan", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := mux.NewRouter()
+	RegisterRunRoutes(router, store)
+	base := "/v2/runs/" + run.ID + "/plan/drafts"
+	for _, tc := range []struct {
+		path   string
+		status int
+	}{
+		{base, 200}, {base + "?before=missing", 400}, {base + "?before=" + strings.Repeat("x", 129), 400}, {"/v2/runs/missing/plan/drafts", 404},
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest("GET", tc.path, nil))
+		if response.Code != tc.status {
+			t.Fatal(tc.path, response.Code, response.Body.String())
+		}
+		if tc.status == 200 {
+			var history orchestration.DraftHistory
+			if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil || history.Drafts == nil || len(history.Drafts) != 0 {
+				t.Fatal(history, err)
+			}
+		}
+	}
+}
 
 func TestRunAPIQueuesAndRejectsClientExecutionClaims(t *testing.T) {
 	database, err := sql.Open("sqlite", ":memory:")

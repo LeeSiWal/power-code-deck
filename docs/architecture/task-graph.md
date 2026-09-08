@@ -281,10 +281,26 @@ workflows. Old conflict reports without a fingerprint remain readable but cannot
 seed direct repair. A repair rejected during replay retains its recipe and error;
 normal integration can capture fresh evidence again.
 
+## Plan generation history
+
+`GET /v2/runs/{id}/plan/drafts?before={draftId}` returns up to ten generation
+attempts, newest first, with a Run-scoped cursor. The response includes state,
+detail and the original generated plan, excluding the internal workspace field.
+Existing Runs with no drafts return an empty array; unknown Runs return 404 and
+invalid or foreign cursors return 400. An index supports pagination by Run and
+ordinal. New generations do not shift pages already being browsed.
+
+The Runs page offers expandable history before and after plan confirmation,
+including failed, canceled and interrupted generations. Successful drafts show
+task prompts, providers, dependencies and concurrency. History is read-only:
+browsing does not replace unsaved editor content or change the frozen plan.
+Manual editor changes are not generation history. Refreshing reloads the latest
+page; changing Run state also refreshes open history. Late responses from a
+closed or switched view are ignored.
+
 Remaining steps:
 
-1. Add previous draft attempt browsing; extend repair to Task dependency conflicts
-   if needed.
+1. Extend repair to Task dependency conflicts if needed.
 2. Add an explicit undo workflow for applied results if required.
 3. Add retained worktree/ref cleanup, plus multi-server leases if deployment
    requires them.

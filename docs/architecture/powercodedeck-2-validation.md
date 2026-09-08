@@ -210,3 +210,21 @@ warnings remain. Browser E2E and authenticated provider validation remain
 pending, including the previous Antigravity headless permission denial.
 Task dependency repair, draft history browsing and retained workspace cleanup
 remain separate work.
+
+## Plan generation history — 2026-09-08
+
+Added a read-only paginated draft history endpoint and Runs panel. Existing
+generation records need no conversion; an additive index supports scoped paging.
+Generated plans remain separate from edits made before confirmation.
+
+Coverage includes empty/missing Runs, more than one page, new generation between
+page reads, invalid and foreign cursors, success/failure payloads, hidden workspace
+fields, active/canceled/interrupted records, rejected late completion, and preserved
+draft content after plan editing and confirmation. HTTP tests check empty JSON
+arrays and 400/404 boundaries. The UI ignores obsolete requests and supports
+explicit refresh and retry after fetch errors.
+
+Validation: targeted draft history tests and full server `go test -race ./...`,
+`go vet ./...`, client `npm run build`, and `git diff --check`. Existing frontend
+dependency/import/chunk warnings remain. No browser E2E or live provider call
+was run. Task dependency repair, workspace cleanup and live validation remain.
