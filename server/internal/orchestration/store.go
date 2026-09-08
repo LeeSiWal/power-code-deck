@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS v2_checks(execution_id TEXT NOT NULL REFERENCES v2_ex
 `
 
 func New(database *sql.DB) (*Store, error) {
-	if _, err := database.Exec(schema + planSchema + integrationSchema + applicationSchema); err != nil {
+	if _, err := database.Exec(schema + planSchema + integrationSchema + applicationSchema + plannerSchema); err != nil {
 		return nil, err
 	}
 	// Upgrade databases created by the first opt-in Run slice. The feature has not
@@ -339,7 +339,10 @@ func (s *Store) Cancel(run string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err = changed(tx.Exec(`UPDATE v2_runs SET state='canceled' WHERE id=? AND state IN ('queued','running','awaiting_checks','failed','interrupted','planned','plan_running','awaiting_integration','integrating','integration_failed')`, run)); err != nil {
+	if err = changed(tx.Exec(`UPDATE v2_runs SET state='canceled' WHERE id=? AND state IN ('queued','planning','running','awaiting_checks','failed','interrupted','planned','plan_running','awaiting_integration','integrating','integration_failed')`, run)); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE v2_plan_drafts SET state='canceled',detail='planning canceled' WHERE run_id=? AND state='running'`, run); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(`UPDATE v2_integrations SET state='canceled' WHERE run_id=? AND state='running'`, run); err != nil {
@@ -368,6 +371,8 @@ func (s *Store) Recover() error {
 	}
 	defer tx.Rollback()
 	for _, query := range []string{
+		`UPDATE v2_plan_drafts SET state='interrupted',detail='server restarted; generate a new draft explicitly' WHERE state='running'`,
+		`UPDATE v2_runs SET state='queued' WHERE state='planning'`,
 		`UPDATE v2_result_applications SET state='needs_attention',detail='server restarted during application; inspect source before retrying' WHERE state='applying'`,
 		`UPDATE v2_integrations SET state='interrupted',detail='server restarted; integration outcome unknown' WHERE state='running'`,
 		`UPDATE v2_runs SET state='awaiting_integration' WHERE state='integrating'`,

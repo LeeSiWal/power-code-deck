@@ -255,6 +255,9 @@ func main() {
 		runWorker.SetReviewer(func(id, cwd string) (providers.Execution, error) {
 			return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "plan", JSONSchema: orchestration.ReviewJSONSchema, Sandbox: true})
 		})
+		runWorker.SetPlanner(func(id, cwd string) (providers.Execution, error) {
+			return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "plan", JSONSchema: orchestration.PlanJSONSchema, Sandbox: true})
+		})
 		handlers.RegisterRunRoutes(api, runs, runWorker)
 		handlers.RegisterRunApprovalRoutes(api, runs, runProviders.Broker)
 	}

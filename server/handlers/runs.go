@@ -31,6 +31,16 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 		}
 	}
 	if worker != nil {
+		api.HandleFunc("/v2/runs/{id}/plan/draft/generate", func(w http.ResponseWriter, r *http.Request) {
+			id, err := worker.StartPlanning(mux.Vars(r)["id"])
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{"draftId": id})
+		}).Methods("POST")
 		api.HandleFunc("/v2/runs/{id}/plan/apply", func(w http.ResponseWriter, r *http.Request) {
 			preview, err := worker.PreviewApplication(mux.Vars(r)["id"])
 			if err != nil {
@@ -113,6 +123,14 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 			w.Write(content)
 		}).Methods("GET")
 	}
+	api.HandleFunc("/v2/runs/{id}/plan/draft", func(w http.ResponseWriter, r *http.Request) {
+		draft, err := store.GetPlanDraft(mux.Vars(r)["id"])
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		jsonResponse(w, draft)
+	}).Methods("GET")
 	api.HandleFunc("/v2/runs/{id}/plan", func(w http.ResponseWriter, r *http.Request) {
 		plan, err := store.GetPlan(mux.Vars(r)["id"])
 		if err != nil {

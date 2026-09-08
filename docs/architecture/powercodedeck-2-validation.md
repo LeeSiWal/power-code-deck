@@ -148,3 +148,23 @@ The feature does not coordinate with external Git processes or multiple server
 owners. No authenticated live provider or browser E2E check was run here.
 Automatic plan generation/editing, conflict resolution and retained artifact
 cleanup remain open.
+
+## Request-to-plan generation and editor — 2026-09-08
+
+Added an Antigravity plan-mode draft generator, durable generation attempts,
+bounded strict plan validation, isolated repository inspection, and a separate
+editable plan component. The Runs form supports plan-first and existing direct
+execution. Finalizing a plan does not dispatch implementation tasks.
+
+Server tests cover draft generation without execution/freeze, editing before
+save, source isolation, invalid JSON/graphs/provider selection, forged state,
+source mutation, identity mismatch, cancellation, shared worker capacity,
+restart recovery, and pinned/dirty source behavior. Full server race tests pass.
+`go vet ./...`, `npm run build`, and `git diff --check` also pass; existing
+frontend dependency/chunk warnings remain.
+
+No authenticated Antigravity planning call or browser E2E was run in this slice.
+Existing Antigravity permission failures are not bypassed. Manual planning is
+available when generation fails; CLI/provider availability and live planning
+quality remain to be checked. Local manual edits are not persisted until plan
+confirmation; generated drafts are persisted separately.

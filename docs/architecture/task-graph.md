@@ -177,12 +177,51 @@ by that lock; avoid concurrent Git operations during application. Post-operation
 inspection reports uncertain outcomes without reverting possible user edits.
 Sparse/hidden-change index setups must be normalized before using this action.
 
+## Request-to-plan drafts and editing
+
+The Runs form now defaults to creating a plan draft from the request. The
+existing direct single-task path remains selectable. `PlanEditor.tsx` provides
+task add/remove, prompt/provider editing, dependency checkboxes and concurrency
+editing. Removing a task also removes references to that task. `계획 확정` uses
+the existing validated PUT plan route; it freezes the edited plan without
+starting tasks. The saved plan's execution action remains separate.
+
+`POST /v2/runs/{id}/plan/draft/generate` starts an asynchronous planner only for a
+queued Run without a saved plan or previous execution. It shares the existing
+worker slot, pins a clean source revision and creates a detached inspection
+worktree. Production uses Antigravity in plan mode with sandbox enabled and
+`PlanJSONSchema`. The preferred implementation provider and configured adapter
+names are supplied as planning context; actual CLI installation/authentication
+are not established by having a configured adapter.
+
+`planner_worker.go` requires a matching successful provider outcome, rejects
+source mutations, strictly decodes bounded JSON, and applies the same task graph
+validation as saved plans. Cycles, unknown dependencies/providers, forged state
+fields, trailing content and size/concurrency violations fail generation.
+A valid draft is a proposal, not verification evidence or task execution.
+
+`v2_plan_drafts` retains generation attempts and validated output. The Run moves
+`queued → planning → queued` on either success or failure. The UI reads the
+latest attempt from `GET /v2/runs/{id}/plan/draft` and polls during generation,
+including after temporary network errors. Generated drafts survive reload;
+manual edits remain local until the user confirms the plan. Repeated reads of
+the same generated draft do not overwrite in-progress edits. New generation
+explicitly replaces the editable draft after success. Generation failure leaves
+manual editing available.
+
+Cancel stops the planner and rejects late drafts. Startup marks unfinished
+drafts interrupted, returns planning Runs to queued and never restarts a CLI.
+Regeneration requires explicit action and the same pinned source revision.
+Generated worktrees/history remain retained for later cleanup. Plan mode plus
+fingerprinting is not a replacement for OS isolation, and live Antigravity
+permission behavior remains an outstanding validation item.
+
 Remaining steps:
 
-1. Add automatic plan generation and plan creation/editing before saving in the UI.
+1. Add previous Task/draft attempt browsing and richer conflict resolution.
 2. Add an explicit undo workflow for applied results if required.
-3. Add prior-task-attempt browsing, conflict resolution and retained worktree/
-   ref cleanup, plus multi-server leases if deployment requires them.
+3. Add retained worktree/ref cleanup, plus multi-server leases if deployment
+   requires them.
 4. Finish authenticated live provider/browser validation. The previous Antigravity
    headless permission denial remains unresolved; fake-provider tests do not
    establish live CLI permissions or browser end-to-end behavior.

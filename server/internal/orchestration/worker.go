@@ -26,6 +26,7 @@ type Worker struct {
 	root      string
 	factories map[string]Factory
 	reviewer  Factory
+	planner   Factory
 	mu        sync.Mutex
 	run       string
 	cancel    context.CancelFunc

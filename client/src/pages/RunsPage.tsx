@@ -4,14 +4,16 @@ import { ApiError, api, Run, RunApproval, RunArtifact, RunSummary, PlanSnapshot,
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack, IconCheck, IconClose, IconPlay, IconRocket, IconSpinner } from '../components/icons';
 import { useGoUp } from '../hooks/useGoUp';
+import { PlanEditor } from '../components/runs/PlanEditor';
 
-const activeStates = new Set(['queued', 'running', 'awaiting_checks', 'plan_running', 'integrating']);
+const activeStates = new Set(['queued', 'planning', 'running', 'awaiting_checks', 'plan_running', 'integrating']);
 
 function stateLabel(state: string) {
   switch (state) {
     case 'queued': return '실행 대기';
     case 'pending': return '실행 대기';
     case 'planned': return '계획 저장됨';
+    case 'planning': return '계획 초안 생성 중';
     case 'plan_running': return 'Task 실행 중';
     case 'awaiting_integration': return '결과 통합 대기';
     case 'integrating': return '결과 통합·최종 검증 중';
@@ -61,6 +63,7 @@ export function RunsPage() {
   const [path, setPath] = useState('');
   const [prompt, setPrompt] = useState('');
   const [provider, setProvider] = useState('antigravity');
+  const [creationMode, setCreationMode] = useState<'plan' | 'direct'>('plan');
   const [approvals, setApprovals] = useState<RunApproval[]>([]);
   const [deciding, setDeciding] = useState('');
   const [plan, setPlan] = useState<PlanSnapshot | null>(null);
@@ -183,6 +186,11 @@ export function RunsPage() {
 
   const latest = useMemo(() => run?.executions[run.executions.length - 1], [run]);
 
+  const refreshPlanEditor = useCallback(async () => {
+    if (id) await loadRun(id);
+    await loadList();
+  }, [id, loadRun, loadList]);
+
   const start = useCallback(async (runId: string, planned = false) => {
     setSubmitting(true);
     setError('');
@@ -214,7 +222,8 @@ export function RunsPage() {
       const created = await api.createRun({ path: path.trim(), prompt: prompt.trim(), provider }, key);
       setPrompt('');
       navigate(`/runs/${created.id}`);
-      await api.startRun(created.id);
+      if (creationMode === 'plan') await api.generateRunPlan(created.id);
+      else await api.startRun(created.id);
       await Promise.all([loadRun(created.id), loadList()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Run을 만들지 못했습니다');
@@ -308,7 +317,7 @@ export function RunsPage() {
               </div>
             )}
             <label className="block">
-              <span className="text-[11px] text-deck-text-dim">구현 에이전트</span>
+              <span className="text-[11px] text-deck-text-dim">선호 구현 에이전트</span>
               <select value={provider} onChange={(event) => setProvider(event.target.value)} className="input w-full mt-1">
                 <option value="antigravity">Antigravity</option>
                 <option value="claude">Claude Code</option>
@@ -321,8 +330,11 @@ export function RunsPage() {
             </label>
             <button type="submit" disabled={disabled || submitting || !path.trim() || !prompt.trim()} className="btn-primary w-full justify-center disabled:opacity-40">
               {submitting ? <IconSpinner size={14} className="animate-spin" /> : <IconPlay size={14} color="#fff" />}
-              작업 시작
+              {creationMode === 'plan' ? '계획 초안 만들기' : '바로 작업 시작'}
             </button>
+            <label className="block text-xs">진행 방식 <select value={creationMode} onChange={(e) => setCreationMode(e.target.value as 'plan' | 'direct')} className="input w-full mt-1">
+              <option value="plan">계획을 확인한 뒤 실행</option><option value="direct">기존 단일 작업 바로 실행</option>
+            </select></label>
           </form>
 
           <div className="mt-5 mb-2 text-[11px] font-medium uppercase tracking-wider text-deck-text-dim">최근 Runs</div>
@@ -368,14 +380,16 @@ export function RunsPage() {
                   </div>
                   {(run.state === 'queued' || run.state === 'failed' || run.state === 'interrupted') && (
                     <button onClick={() => start(run.id)} disabled={submitting} className="btn-primary shrink-0 disabled:opacity-40">
-                      <IconPlay size={13} color="#fff" /> {run.state === 'queued' ? '시작' : '다시 실행'}
+                      <IconPlay size={13} color="#fff" /> {run.state === 'queued' ? '단일 작업 실행' : '다시 실행'}
                     </button>
                   )}
-                  {(['running', 'awaiting_checks', 'planned', 'plan_running', 'awaiting_integration', 'integrating', 'integration_failed'].includes(run.state)) && (
+                  {(['planning', 'running', 'awaiting_checks', 'planned', 'plan_running', 'awaiting_integration', 'integrating', 'integration_failed'].includes(run.state)) && (
                     <button onClick={cancel} disabled={submitting} className="px-2.5 py-1.5 rounded-lg border border-red-500/40 text-red-300 text-xs disabled:opacity-40">중단</button>
                   )}
                 </div>
               </div>
+
+              {['queued', 'planning'].includes(run.state) && run.executions.length === 0 && <PlanEditor key={run.id} run={run} refresh={refreshPlanEditor} />}
 
               {plan && (
                 <div className="rounded-xl border border-deck-border bg-deck-surface p-4 space-y-3">
