@@ -36,6 +36,41 @@ export class ApiError extends Error {
   }
 }
 
+export interface RunSummary {
+  id: string;
+  path: string;
+  prompt: string;
+  provider: string;
+  state: string;
+}
+
+export interface RunArtifact {
+  kind: string;
+  baseCommit: string;
+}
+
+export interface RunCheck {
+  name: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface RunExecution {
+  id: string;
+  state: string;
+  detail: string;
+  checks: RunCheck[];
+  artifacts: RunArtifact[];
+}
+
+export interface Run extends RunSummary {
+  workspaceId: string;
+  baseCommit: string;
+  taskId: string;
+  requiredChecks: string[];
+  executions: RunExecution[];
+}
+
 async function refreshToken(): Promise<boolean> {
   const rt = getRefreshToken();
   if (!rt) return false;
@@ -172,6 +207,29 @@ export const api = {
   // Stop a session but KEEP the agent (reversible "정지"), unlike deleteAgent which
   // removes the record. Stops both the native session and the PTY.
   stopAgent: (id: string) => apiFetch(`/agents/${id}/stop`, { method: 'POST' }),
+
+  // Durable 2.0 Runs. These routes remain opt-in on the server until the runtime
+  // is ready to replace the legacy session-first flow.
+  listRuns: () => apiFetch<{ runs: RunSummary[] }>('/v2/runs'),
+  getRun: (id: string) => apiFetch<Run>(`/v2/runs/${encodeURIComponent(id)}`),
+  createRun: (data: { path: string; prompt: string; provider: string }, key: string) =>
+    apiFetch<Run>('/v2/runs', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': key },
+      body: JSON.stringify(data),
+    }),
+  startRun: (id: string) =>
+    apiFetch<{ executionId: string }>(`/v2/runs/${encodeURIComponent(id)}/start`, { method: 'POST' }),
+  cancelRun: (id: string) =>
+    apiFetch(`/v2/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  readRunArtifact: async (runId: string, executionId: string, kind: string): Promise<string> => {
+    const query = new URLSearchParams({ kind });
+    const res = await apiRequest(
+      `/v2/runs/${encodeURIComponent(runId)}/executions/${encodeURIComponent(executionId)}/artifact?${query}`,
+    );
+    if (!res.ok) throw new ApiError('결과 파일을 불러오지 못했습니다', res.status);
+    return res.text();
+  },
 
   // Past-session history (Claude Code transcripts for the agent's project).
   listSessions: (id: string) =>

@@ -9,7 +9,8 @@ and [headless protocol](https://antigravity.google/docs/cli/headless/).
 The implementation is in `server/internal/providers/antigravity`. It launches an
 explicit `agy` executable, passes prompts as one argument, supports explicit
 conversation IDs, model selection, streamed text/tool events, usage metadata,
-bounded stderr diagnostics, interruption, and process-failure reporting.
+bounded stderr diagnostics, interruption, process-failure reporting, execution
+mode, terminal sandboxing, and an optional final-result JSON schema.
 
 Antigravity headless mode is intentionally modeled as a single-turn execution.
 The upstream CLI can keep a stream session open, but its documented stdin

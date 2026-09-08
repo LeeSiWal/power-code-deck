@@ -155,3 +155,28 @@ func TestOnlyOneConcurrentClaim(t *testing.T) {
 		t.Fatalf("claims=%d", success)
 	}
 }
+
+func TestRetryCannotMovePinnedBaseCommit(t *testing.T) {
+	s := openTest(t, filepath.Join(t.TempDir(), "work.db"))
+	run := createTest(t, s, "pinned-base")
+	first, err := s.StartAttempt(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BindBase(run.ID, "commit-one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishAttempt(first, false, "retry"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StartAttempt(run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BindBase(run.ID, "commit-two"); !errors.Is(err, ErrConflict) {
+		t.Fatal("retry moved the pinned source revision", err)
+	}
+	got, err := s.Get(run.ID)
+	if err != nil || got.BaseCommit != "commit-one" {
+		t.Fatal("pinned source revision was lost", got.BaseCommit, err)
+	}
+}

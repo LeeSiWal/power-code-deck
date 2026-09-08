@@ -22,9 +22,18 @@ type Run struct {
 	Path           string      `json:"path"`
 	Prompt         string      `json:"prompt"`
 	Provider       string      `json:"provider"`
+	BaseCommit     string      `json:"baseCommit"`
 	State          string      `json:"state"`
 	TaskID         string      `json:"taskId"`
 	Executions     []Execution `json:"executions"`
+}
+
+type RunSummary struct {
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Prompt   string `json:"prompt"`
+	Provider string `json:"provider"`
+	State    string `json:"state"`
 }
 type Execution struct {
 	Artifacts []Artifact `json:"artifacts"`
@@ -42,7 +51,7 @@ type Check struct {
 
 const schema = `
 CREATE TABLE IF NOT EXISTS v2_workspaces(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE);
-CREATE TABLE IF NOT EXISTS v2_runs(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES v2_workspaces(id),request_key TEXT NOT NULL UNIQUE,prompt TEXT NOT NULL,provider TEXT NOT NULL,state TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS v2_runs(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES v2_workspaces(id),request_key TEXT NOT NULL UNIQUE,prompt TEXT NOT NULL,provider TEXT NOT NULL,state TEXT NOT NULL,base_commit TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS v2_tasks(id TEXT PRIMARY KEY,run_id TEXT NOT NULL UNIQUE REFERENCES v2_runs(id),state TEXT NOT NULL,active_execution TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS v2_executions(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES v2_tasks(id),state TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',ordinal INTEGER NOT NULL UNIQUE);
 CREATE INDEX IF NOT EXISTS v2_executions_task ON v2_executions(task_id,ordinal);
@@ -53,6 +62,11 @@ CREATE TABLE IF NOT EXISTS v2_checks(execution_id TEXT NOT NULL REFERENCES v2_ex
 
 func New(database *sql.DB) (*Store, error) {
 	if _, err := database.Exec(schema); err != nil {
+		return nil, err
+	}
+	// Upgrade databases created by the first opt-in Run slice. The feature has not
+	// shipped a version table yet, so duplicate-column is the only benign outcome.
+	if _, err := database.Exec(`ALTER TABLE v2_runs ADD COLUMN base_commit TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 		return nil, err
 	}
 	return &Store{db: database}, nil
@@ -119,7 +133,7 @@ func (s *Store) Get(id string) (Run, error) {
 	}
 	defer tx.Rollback()
 	r := Run{Executions: []Execution{}}
-	err = tx.QueryRow(`SELECT r.id,r.workspace_id,w.path,r.prompt,r.provider,r.state,t.id FROM v2_runs r JOIN v2_workspaces w ON w.id=r.workspace_id JOIN v2_tasks t ON t.run_id=r.id WHERE r.id=?`, id).Scan(&r.ID, &r.WorkspaceID, &r.Path, &r.Prompt, &r.Provider, &r.State, &r.TaskID)
+	err = tx.QueryRow(`SELECT r.id,r.workspace_id,w.path,r.prompt,r.provider,r.base_commit,r.state,t.id FROM v2_runs r JOIN v2_workspaces w ON w.id=r.workspace_id JOIN v2_tasks t ON t.run_id=r.id WHERE r.id=?`, id).Scan(&r.ID, &r.WorkspaceID, &r.Path, &r.Prompt, &r.Provider, &r.BaseCommit, &r.State, &r.TaskID)
 	if err != nil {
 		return Run{}, err
 	}
@@ -204,21 +218,23 @@ func (s *Store) Get(id string) (Run, error) {
 	return r, tx.Commit()
 }
 
-func (s *Store) List() ([]string, error) {
-	rows, err := s.db.Query(`SELECT id FROM v2_runs ORDER BY rowid DESC LIMIT 100`)
+func (s *Store) List() ([]RunSummary, error) {
+	rows, err := s.db.Query(`SELECT r.id,w.path,r.prompt,r.provider,r.state
+		FROM v2_runs r JOIN v2_workspaces w ON w.id=r.workspace_id
+		ORDER BY r.rowid DESC LIMIT 100`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	ids := []string{}
+	runs := []RunSummary{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var run RunSummary
+		if err := rows.Scan(&run.ID, &run.Path, &run.Prompt, &run.Provider, &run.State); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		runs = append(runs, run)
 	}
-	return ids, rows.Err()
+	return runs, rows.Err()
 }
 
 func changed(result sql.Result, err error) error {

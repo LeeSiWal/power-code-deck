@@ -41,6 +41,17 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 			w.WriteHeader(http.StatusAccepted)
 			json.NewEncoder(w).Encode(map[string]string{"executionId": execution})
 		}).Methods("POST")
+		api.HandleFunc("/v2/runs/{id}/executions/{execution}/artifact", func(w http.ResponseWriter, r *http.Request) {
+			vars := mux.Vars(r)
+			content, err := worker.ReadArtifact(vars["id"], vars["execution"], r.URL.Query().Get("kind"))
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Write(content)
+		}).Methods("GET")
 	}
 	api.HandleFunc("/v2/runs", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -66,12 +77,12 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 		jsonResponse(w, run)
 	}).Methods("POST")
 	api.HandleFunc("/v2/runs", func(w http.ResponseWriter, r *http.Request) {
-		ids, err := store.List()
+		runs, err := store.List()
 		if err != nil {
 			fail(w, err)
 			return
 		}
-		jsonResponse(w, map[string]any{"ids": ids})
+		jsonResponse(w, map[string]any{"runs": runs})
 	}).Methods("GET")
 	api.HandleFunc("/v2/runs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		run, err := store.Get(mux.Vars(r)["id"])

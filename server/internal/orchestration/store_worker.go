@@ -4,8 +4,33 @@ import "strings"
 
 type Artifact struct {
 	Kind       string `json:"kind"`
-	Path       string `json:"path"`
+	Path       string `json:"-"`
 	BaseCommit string `json:"baseCommit"`
+}
+
+// Artifact returns only evidence registered for this exact Run and execution.
+// Reading and root-containment checks remain Worker responsibilities.
+func (s *Store) Artifact(run, execution, kind string) (Artifact, error) {
+	var artifact Artifact
+	err := s.db.QueryRow(`SELECT a.kind,a.path,a.base_commit
+		FROM v2_artifacts a
+		JOIN v2_executions e ON e.id=a.execution_id
+		JOIN v2_tasks t ON t.id=e.task_id
+		WHERE t.run_id=? AND e.id=? AND a.kind=?`, run, execution, kind).
+		Scan(&artifact.Kind, &artifact.Path, &artifact.BaseCommit)
+	if err != nil {
+		return Artifact{}, err
+	}
+	return artifact, nil
+}
+
+// BindBase pins the source revision on the first prepared attempt. Retries must
+// review the same code; advancing the user's branch requires a new Run/key.
+func (s *Store) BindBase(run, commit string) error {
+	if strings.TrimSpace(commit) == "" {
+		return ErrInvalid
+	}
+	return changed(s.db.Exec(`UPDATE v2_runs SET base_commit=? WHERE id=? AND state='running' AND (base_commit='' OR base_commit=?)`, commit, run, commit))
 }
 
 func (s *Store) RequireChecks(run string, names ...string) error {
@@ -29,5 +54,9 @@ func (s *Store) RequireChecks(run string, names ...string) error {
 }
 
 func (s *Store) AddArtifact(execution, kind, path, base string) error {
-	return changed(s.db.Exec(`INSERT INTO v2_artifacts(execution_id,kind,path,base_commit) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM v2_executions WHERE id=? AND state='running')`, execution, kind, path, base, execution))
+	return changed(s.db.Exec(`INSERT INTO v2_artifacts(execution_id,kind,path,base_commit)
+		SELECT ?,?,?,? WHERE EXISTS(
+			SELECT 1 FROM v2_executions e JOIN v2_tasks t ON t.id=e.task_id
+			WHERE e.id=? AND (e.state='running' OR (e.state='succeeded' AND t.active_execution=e.id AND t.state='awaiting_checks'))
+		)`, execution, kind, path, base, execution))
 }

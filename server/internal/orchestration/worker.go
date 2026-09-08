@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -24,11 +25,20 @@ type Worker struct {
 	store     *Store
 	root      string
 	factories map[string]Factory
+	reviewer  Factory
 	mu        sync.Mutex
 	run       string
 	cancel    context.CancelFunc
 	done      chan struct{}
 	closed    bool
+}
+
+// SetReviewer installs a fresh-context reviewer factory. The application should
+// configure a provider-specific read-only/plan mode factory before dispatch.
+func (w *Worker) SetReviewer(factory Factory) {
+	w.mu.Lock()
+	w.reviewer = factory
+	w.mu.Unlock()
 }
 
 func NewWorker(store *Store, root string, factories map[string]Factory) (*Worker, error) {
@@ -37,6 +47,10 @@ func NewWorker(store *Store, root string, factories map[string]Factory) (*Worker
 		return nil, err
 	}
 	if err := os.MkdirAll(root, 0700); err != nil {
+		return nil, err
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
 		return nil, err
 	}
 	copy := map[string]Factory{}
@@ -60,9 +74,18 @@ func (w *Worker) Start(id string) (string, error) {
 	if factory == nil {
 		return "", fmt.Errorf("%w: provider worker not connected", ErrInvalid)
 	}
-	if err := w.store.RequireChecks(id, "diff_check", "review"); err != nil {
+	plan, err := loadVerificationPlan(run.Path)
+	if err != nil {
 		return "", err
 	}
+	required := []string{"diff_check", "review"}
+	for _, check := range plan {
+		required = append(required, check.Name)
+	}
+	if err := w.store.RequireChecks(id, required...); err != nil {
+		return "", err
+	}
+	reviewer := w.reviewer
 	attempt, err := w.store.StartAttempt(id)
 	if err != nil {
 		return "", err
@@ -71,7 +94,7 @@ func (w *Worker) Start(id string) (string, error) {
 	w.run, w.cancel, w.done = id, cancel, make(chan struct{})
 	go func() {
 		defer func() { cancel(); w.mu.Lock(); w.cancel = nil; close(w.done); w.mu.Unlock() }()
-		w.execute(ctx, run, attempt, factory)
+		w.execute(ctx, run, attempt, factory, reviewer, plan)
 	}()
 	return attempt, nil
 }
@@ -86,6 +109,34 @@ func (w *Worker) Cancel(id string) error {
 		w.cancel()
 	}
 	return nil
+}
+
+// ReadArtifact serves bounded text evidence without exposing arbitrary host
+// paths. The workspace artifact is deliberately metadata-only.
+func (w *Worker) ReadArtifact(run, execution, kind string) ([]byte, error) {
+	if strings.TrimSpace(kind) == "" || kind == "workspace" {
+		return nil, ErrInvalid
+	}
+	artifact, err := w.store.Artifact(run, execution, kind)
+	if err != nil {
+		return nil, err
+	}
+	path, err := filepath.EvalSymlinks(artifact.Path)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(w.root, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, ErrInvalid
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 8*1024*1024 {
+		return nil, ErrInvalid
+	}
+	return os.ReadFile(path)
 }
 
 // Close stops dispatch, cancels the owned process, and waits with a caller budget.
@@ -134,7 +185,23 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 	return output.String(), nil
 }
 
-func (w *Worker) execute(ctx context.Context, run Run, id string, factory Factory) {
+func writeExclusive(path string, content []byte) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	written, writeErr := file.Write(content)
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if written != len(content) {
+		return io.ErrShortWrite
+	}
+	return closeErr
+}
+
+func (w *Worker) execute(ctx context.Context, run Run, id string, factory, reviewer Factory, plan []CheckSpec) {
 	fail := func(err error) {
 		if saveErr := w.store.FinishAttempt(id, false, err.Error()); saveErr != nil && !errors.Is(saveErr, ErrConflict) {
 			log.Printf("run %s failed to persist failure: %v", run.ID, saveErr)
@@ -165,6 +232,10 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory Factor
 		return
 	}
 	base = strings.TrimSpace(base)
+	if err := w.store.BindBase(run.ID, base); err != nil {
+		fail(fmt.Errorf("source revision changed since the first attempt: %w", err))
+		return
+	}
 	dir := filepath.Join(w.root, id)
 	if err := os.Mkdir(dir, 0700); err != nil {
 		fail(err)
@@ -237,7 +308,7 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory Factor
 	}
 	for name, content := range map[string]string{"changes.patch": patch, "status.txt": status} {
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		if err := writeExclusive(path, []byte(content)); err != nil {
 			fail(err)
 			return
 		}
@@ -269,6 +340,64 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory Factor
 		}
 		if saveErr := w.store.RecordCheck(id, "diff_check", err == nil, checkDetail); saveErr != nil && !errors.Is(saveErr, ErrConflict) {
 			log.Printf("run %s failed to persist check: %v", run.ID, saveErr)
+		}
+		if err != nil {
+			return
+		}
+		for _, check := range plan {
+			beforeCheck, snapshotErr := reviewFingerprint(ctx, worktree)
+			if snapshotErr != nil {
+				if saveErr := w.store.RecordCheck(id, check.Name, false, "failed to snapshot worktree before check: "+snapshotErr.Error()); saveErr != nil && !errors.Is(saveErr, ErrConflict) {
+					log.Printf("run %s failed to persist project check: %v", run.ID, saveErr)
+				}
+				return
+			}
+			passed, detail, logPath, runErr := runCheck(ctx, worktree, dir, check)
+			if runErr != nil {
+				passed, detail = false, runErr.Error()
+			}
+			afterCheck, snapshotErr := reviewFingerprint(ctx, worktree)
+			if snapshotErr != nil {
+				passed, detail = false, "failed to snapshot worktree after check: "+snapshotErr.Error()
+			} else if beforeCheck != afterCheck {
+				passed, detail = false, "check changed tracked or untracked source files; verification rejected"
+			}
+			if logPath != "" {
+				if saveErr := w.store.AddArtifact(id, "check_log:"+check.Name, logPath, ""); saveErr != nil {
+					if !errors.Is(saveErr, ErrConflict) {
+						log.Printf("run %s failed to persist check artifact: %v", run.ID, saveErr)
+						_ = w.store.RecordCheck(id, check.Name, false, "failed to persist check artifact: "+saveErr.Error())
+					}
+					return
+				}
+			}
+			if saveErr := w.store.RecordCheck(id, check.Name, passed, detail); saveErr != nil {
+				if !errors.Is(saveErr, ErrConflict) {
+					log.Printf("run %s failed to persist project check: %v", run.ID, saveErr)
+				}
+				return
+			}
+			if !passed {
+				return
+			}
+		}
+		if reviewer == nil {
+			return
+		}
+		passed, detail, reviewErr := w.review(ctx, run, id, worktree, base, dir, reviewer)
+		if reviewErr != nil {
+			passed, detail = false, reviewErr.Error()
+		}
+		if saveErr := w.store.RecordCheck(id, "review", passed, detail); saveErr != nil {
+			if !errors.Is(saveErr, ErrConflict) {
+				log.Printf("run %s failed to persist review: %v", run.ID, saveErr)
+			}
+			return
+		}
+		if passed {
+			if completeErr := w.store.Complete(run.ID); completeErr != nil && !errors.Is(completeErr, ErrConflict) {
+				log.Printf("run %s failed to complete: %v", run.ID, completeErr)
+			}
 		}
 	}
 }

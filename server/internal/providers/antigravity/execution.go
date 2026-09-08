@@ -7,6 +7,7 @@ package antigravity
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -25,6 +26,9 @@ type Config struct {
 	PrefixArgs []string // optional executable-wrapper arguments
 	Cwd        string
 	Model      string   // empty lets the installed CLI choose its configured model
+	Mode       string   // empty uses CLI policy; plan is used by read-only reviewers
+	JSONSchema string   // optional final-result schema; passed as one argv element
+	Sandbox    bool     // ask the CLI to restrict terminal access
 	ResumeID   string   // explicit ID only; never implicitly resume another user's latest
 	Env        []string // nil inherits the host environment; authentication stays with CLI
 }
@@ -48,6 +52,12 @@ func New(executionID string, cfg Config) (*Execution, error) {
 	}
 	if cfg.ResumeID == "latest" {
 		return nil, fmt.Errorf("Antigravity resume requires an explicit session ID")
+	}
+	if cfg.Mode != "" && cfg.Mode != "plan" && cfg.Mode != "accept-edits" {
+		return nil, fmt.Errorf("unsupported Antigravity execution mode %q", cfg.Mode)
+	}
+	if len(cfg.JSONSchema) > 64*1024 || (cfg.JSONSchema != "" && !json.Valid([]byte(cfg.JSONSchema))) {
+		return nil, fmt.Errorf("Antigravity JSON schema must be valid JSON up to 64 KiB")
 	}
 	if cfg.Cwd == "" {
 		return nil, fmt.Errorf("Antigravity working directory is required")
@@ -116,6 +126,15 @@ func (e *Execution) Send(prompt string) error {
 	args = append(args, "--output-format", "stream-json", "--prompt", prompt)
 	if e.cfg.Model != "" {
 		args = append(args, "--model", e.cfg.Model)
+	}
+	if e.cfg.Mode != "" {
+		args = append(args, "--mode", e.cfg.Mode)
+	}
+	if e.cfg.JSONSchema != "" {
+		args = append(args, "--json-schema", e.cfg.JSONSchema)
+	}
+	if e.cfg.Sandbox {
+		args = append(args, "--sandbox")
 	}
 	if e.cfg.ResumeID != "" {
 		args = append(args, "--conversation", e.cfg.ResumeID)

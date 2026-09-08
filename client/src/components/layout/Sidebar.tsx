@@ -1,10 +1,11 @@
 import { Link, useLocation } from 'react-router-dom';
-import { IconHome, IconLog, IconSettings, IconLogout } from '../icons';
+import { IconHome, IconLog, IconSettings, IconLogout, IconRocket } from '../icons';
 import { NotificationBadge } from '../notification/NotificationBadge';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Projects', Icon: IconHome },
   { href: '/dashboard', label: 'Dashboard', Icon: IconHome },
+  { href: '/runs', label: 'Runs', Icon: IconRocket },
   { href: '/logs', label: 'Logs', Icon: IconLog },
   { href: '/settings', label: 'Settings', Icon: IconSettings },
 ];
@@ -25,7 +26,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
 
       <nav className="flex-1 py-2">
         {NAV_ITEMS.map((item) => {
-          const active = pathname === item.href;
+          const active = pathname === item.href || (item.href === '/runs' && pathname.startsWith('/runs/'));
           return (
             <Link
               key={item.href}

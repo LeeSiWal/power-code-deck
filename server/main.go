@@ -244,6 +244,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("Initialize v2 worker: %v", err)
 		}
+		runWorker.SetReviewer(func(id, cwd string) (providers.Execution, error) {
+			return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "plan", JSONSchema: orchestration.ReviewJSONSchema, Sandbox: true})
+		})
 		handlers.RegisterRunRoutes(api, runs, runWorker)
 	}
 

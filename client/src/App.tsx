@@ -13,6 +13,7 @@ import { TerminalPage } from './pages/TerminalPage';
 import { LogsPage } from './pages/LogsPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { RunsPage } from './pages/RunsPage';
 import { CommandPalette } from './components/CommandPalette';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import { NotificationToaster } from './components/notification/NotificationToaster';
@@ -182,6 +183,8 @@ export default function App() {
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/runs" element={<RunsPage />} />
+            <Route path="/runs/:id" element={<RunsPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/control" replace />} />
