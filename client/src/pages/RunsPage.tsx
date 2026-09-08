@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ApiError, api, Run, RunApproval, RunArtifact, RunSummary } from '../lib/api';
+import { ApiError, api, Run, RunApproval, RunArtifact, RunSummary, PlanSnapshot } from '../lib/api';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack, IconCheck, IconClose, IconPlay, IconRocket, IconSpinner } from '../components/icons';
 import { useGoUp } from '../hooks/useGoUp';
@@ -10,6 +10,11 @@ const activeStates = new Set(['queued', 'running', 'awaiting_checks']);
 function stateLabel(state: string) {
   switch (state) {
     case 'queued': return '실행 대기';
+    case 'pending': return '실행 대기';
+    case 'planned': return '계획 저장됨';
+    case 'plan_running': return 'Task 배정 중';
+    case 'awaiting_integration': return '결과 통합 대기';
+    case 'verifying': return '검증 중';
     case 'running': return '작업 중';
     case 'awaiting_checks': return '검증 중';
     case 'succeeded': return '완료';
@@ -52,6 +57,7 @@ export function RunsPage() {
   const [provider, setProvider] = useState('antigravity');
   const [approvals, setApprovals] = useState<RunApproval[]>([]);
   const [deciding, setDeciding] = useState('');
+  const [plan, setPlan] = useState<PlanSnapshot | null>(null);
   const selectedID = useRef(id);
   selectedID.current = id;
   const [loading, setLoading] = useState(true);
@@ -98,6 +104,7 @@ export function RunsPage() {
 
   useEffect(() => {
     setArtifact(null);
+    setPlan(null);
     setApprovals([]);
     if (!id) {
       setRun(null);
@@ -106,6 +113,24 @@ export function RunsPage() {
     setRun(null);
     loadRun(id);
   }, [id, loadRun]);
+
+  useEffect(() => {
+    if (!id || run?.id !== id || !['planned', 'plan_running', 'awaiting_integration', 'canceled'].includes(run.state)) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const next = await api.getRunPlan(id);
+        if (!disposed) setPlan(next);
+      } catch (err) {
+        if (!disposed && !(err instanceof ApiError && err.status === 404)) setError('작업 계획을 불러오지 못했습니다');
+      } finally {
+        if (!disposed && run.state === 'plan_running') timer = setTimeout(poll, 1500);
+      }
+    };
+    poll();
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [id, run?.id, run?.state]);
 
   useEffect(() => {
     if (!id || run?.id !== id || run.state !== 'running') { setApprovals([]); return; }
@@ -139,7 +164,7 @@ export function RunsPage() {
   };
 
   useEffect(() => {
-    if (!id || !run || !activeStates.has(run.state)) return;
+    if (!id || !run || (!activeStates.has(run.state) && run.state !== 'plan_running')) return;
     const timer = window.setInterval(async () => {
       const next = await loadRun(id);
       if (next && !activeStates.has(next.state)) loadList();
@@ -304,11 +329,28 @@ export function RunsPage() {
                       <IconPlay size={13} color="#fff" /> {run.state === 'queued' ? '시작' : '다시 실행'}
                     </button>
                   )}
-                  {(run.state === 'running' || run.state === 'awaiting_checks') && (
+                  {(['running', 'awaiting_checks', 'planned', 'plan_running', 'awaiting_integration'].includes(run.state)) && (
                     <button onClick={cancel} disabled={submitting} className="px-2.5 py-1.5 rounded-lg border border-red-500/40 text-red-300 text-xs disabled:opacity-40">중단</button>
                   )}
                 </div>
               </div>
+
+              {plan && (
+                <div className="rounded-xl border border-deck-border bg-deck-surface p-4 space-y-3">
+                  <div className="text-sm font-semibold">작업 계획 · {plan.tasks.length}개 Task</div>
+                  <p className="text-xs text-deck-text-dim">계획 저장과 배정 상태를 확인할 수 있습니다. 다중 Task의 실제 실행과 결과 통합은 아직 연결 중입니다.</p>
+                  {plan.tasks.map((task) => (
+                    <div key={task.id} className="border-t border-deck-border pt-3">
+                      <div className="flex gap-2 items-center text-xs">
+                        <strong>{task.id}</strong><span>{task.provider}</span>
+                        <span className="ml-auto">{plan.selection.blocked.includes(task.id) ? '선행 작업 실패로 대기' : stateLabel(task.state)}</span>
+                      </div>
+                      <p className="text-xs mt-1 whitespace-pre-wrap break-words">{task.prompt}</p>
+                      {task.dependsOn.length > 0 && <p className="text-[11px] mt-1 text-deck-text-dim">선행 작업: {task.dependsOn.join(', ')}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {approvals.length > 0 && (
                 <div className="rounded-xl border border-amber-500/40 bg-deck-surface p-4 space-y-3">

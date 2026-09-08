@@ -53,6 +53,37 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 			w.Write(content)
 		}).Methods("GET")
 	}
+	api.HandleFunc("/v2/runs/{id}/plan", func(w http.ResponseWriter, r *http.Request) {
+		plan, err := store.GetPlan(mux.Vars(r)["id"])
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		jsonResponse(w, plan)
+	}).Methods("GET")
+	api.HandleFunc("/v2/runs/{id}/plan", func(w http.ResponseWriter, r *http.Request) {
+		var plan orchestration.TaskPlan
+		d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512*1024))
+		d.DisallowUnknownFields()
+		if err := d.Decode(&plan); err != nil {
+			jsonError(w, "invalid plan", 400)
+			return
+		}
+		if d.Decode(new(any)) != io.EOF {
+			jsonError(w, "one plan object required", 400)
+			return
+		}
+		id := mux.Vars(r)["id"]
+		if _, err := store.Get(id); err != nil {
+			fail(w, err)
+			return
+		}
+		if err := store.SavePlan(id, plan); err != nil {
+			fail(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}).Methods("PUT")
 	api.HandleFunc("/v2/runs", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Path     string `json:"path"`

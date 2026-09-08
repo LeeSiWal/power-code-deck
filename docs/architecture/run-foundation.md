@@ -101,7 +101,7 @@ One worker slot is available, with a 30-minute attempt timeout. Cancel sends
 context cancellation through the event reader and calls provider Stop. Server
 shutdown stops accepting dispatch and gives worker cleanup five seconds. Abrupt
 server death cannot guarantee child-process termination; recovered work is never
-automatically retried and old worktrees remain available. Multiple tasks and dependencies, scheduling
+automatically retried and old worktrees remain available. Multi-task CLI dispatch, scheduling
 budgets, automatic merge, worktree retention/cleanup, execution-history controls
 in the UI and approval audit are not implemented.
 
@@ -134,7 +134,10 @@ coding tasks can complete under the installed CLI policy. Host CLI permissions
 were not modified by this check. Revalidation after suitable narrowly scoped CLI
 permissions are configured remains required.
 
-The first multi-task selection module is described in [Task graph foundation](task-graph.md).
+Multi-task plan persistence, atomic reservations, verification and recovery are
+described in [Task graph foundation](task-graph.md). Plans can be saved and inspected
+through the authenticated plan API; the Run UI displays them. Actual multi-task
+CLI dispatch and result integration are still separate follow-up work.
 
 Rollback: disable `PCD_V2_ENABLED` and restart. The additive tables remain for
 future re-enablement; existing chat data and routes remain unchanged.

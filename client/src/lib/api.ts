@@ -51,6 +51,12 @@ export interface RunApproval {
   input: unknown;
 }
 
+export interface PlanSnapshot {
+  concurrency: number;
+  tasks: { id: string; prompt: string; provider: string; dependsOn: string[]; state: string; attemptId: string }[];
+  selection: { ready: { id: string }[]; blocked: string[]; complete: boolean };
+}
+
 export interface RunArtifact {
   kind: string;
   baseCommit: string;
@@ -218,6 +224,7 @@ export const api = {
   // Durable 2.0 Runs. These routes remain opt-in on the server until the runtime
   // is ready to replace the legacy session-first flow.
   listRuns: () => apiFetch<{ runs: RunSummary[] }>('/v2/runs'),
+  getRunPlan: (id: string) => apiFetch<PlanSnapshot>(`/v2/runs/${encodeURIComponent(id)}/plan`),
   runApprovals: (id: string) => apiFetch<RunApproval[]>(`/v2/runs/${encodeURIComponent(id)}/approvals`),
   decideRunApproval: (run: string, id: string, behavior: 'allow' | 'deny') =>
     apiFetch(`/v2/runs/${encodeURIComponent(run)}/approvals`, { method: 'POST', body: JSON.stringify({ id, behavior }) }),
