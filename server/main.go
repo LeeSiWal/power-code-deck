@@ -21,6 +21,7 @@ import (
 	"powercodedeck/db"
 	"powercodedeck/handlers"
 	"powercodedeck/internal/history"
+	"powercodedeck/internal/orchestration"
 	"powercodedeck/middleware"
 	"powercodedeck/services"
 	"powercodedeck/version"
@@ -215,6 +216,16 @@ func main() {
 	// Protected API endpoints
 	api := r.PathPrefix("/api").Subrouter()
 	api.Use(auth.Middleware(authSvc))
+	if os.Getenv("PCD_V2_ENABLED") == "1" {
+		runs, err := orchestration.New(database)
+		if err != nil {
+			log.Fatalf("Initialize v2 work storage: %v", err)
+		}
+		if err := runs.Recover(); err != nil {
+			log.Fatalf("Recover v2 work: %v", err)
+		}
+		handlers.RegisterRunRoutes(api, runs)
+	}
 
 	// Agents
 	api.HandleFunc("/agents/slash-commands", handlers.SlashCommands(agentSvc)).Methods("GET")
