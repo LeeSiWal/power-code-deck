@@ -20,6 +20,7 @@ import (
 	"powercodedeck/config"
 	"powercodedeck/db"
 	"powercodedeck/handlers"
+	"powercodedeck/internal/history"
 	"powercodedeck/middleware"
 	"powercodedeck/services"
 	"powercodedeck/version"
@@ -111,6 +112,7 @@ func main() {
 	// Remember Claude's own conversation id per agent so reopening (or a server
 	// restart) continues the conversation instead of starting a blank one.
 	nativeSvc.SetPersistence(agentSvc.SetClaudeSessionID, agentSvc.ClaudeSessionID)
+	nativeSvc.SetHistoryStore(history.New(database))
 	nativeSvc.SetConfigPersistence(agentSvc.SetNativeConfig, agentSvc.NativeConfig)
 	nativeSvc.SetOptionsPersistence(agentSvc.SetNativeOptions, agentSvc.NativeOptions)
 	nativeSvc.SetApprovalRules(approvalRules)

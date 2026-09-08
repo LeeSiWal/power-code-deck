@@ -123,6 +123,10 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
   let lastSessionKey = '';
 
   for (const ev of events) {
+    if (ev.type === 'storage_warning') {
+      items.push({ kind: 'result', id: `warning-${items.length}`, text: ev.result ?? '', denied: [], notice: true });
+      continue;
+    }
     if (ev.type === 'stream_event') {
       const inner = ev.event;
       if (inner?.type === 'content_block_delta' && inner.delta?.type === 'text_delta') {

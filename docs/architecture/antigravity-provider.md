@@ -68,9 +68,23 @@ settings. Its chat uses the CLI model and permission configuration; Claude-only
 mode, effort, options, plugin management and transcript-history controls are not
 offered. Concurrent prompts are rejected while a turn is active.
 
-The existing in-memory history supports reconnecting devices while the server
-runs. Across server restarts only the conversation ID is persisted; importing
-Antigravity transcripts into the scrollback remains future work. The CLI must
+The application now persists the latest 2,000 Antigravity chat events per agent
+in the additive `native_history` SQLite table. The opaque JSON journal lives in
+`internal/history`; `services/native_history.go` owns compatibility decoding and
+replay. Event and explicit resume ID updates commit together. Agent deletion
+cascades to journal rows, and providers cannot read each other's event namespace.
+
+Native open restores the journal before publishing the session. An unfinished
+saved turn receives one durable "completion unknown" result, preventing a stale
+working indicator without asserting that the CLI completed the task. Failed
+loads abort opening rather than silently replacing history. Failed writes keep
+the live chat available and show one storage warning for the session. Simultaneous
+Antigravity opens serialize preparation/replay so they cannot duplicate recovery
+markers or publish competing chat adapters.
+
+Records created before this journal was enabled cannot be reconstructed from the
+old database, and events beyond the 2,000-event retention window are removed.
+Importing older CLI transcripts remains separate future work. The CLI must
 already be installed and authenticated on the server host. No installer, login
 automation, permission bypass, or browser approval bridge is added.
 

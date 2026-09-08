@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"powercodedeck/db"
+	"powercodedeck/internal/history"
 	"powercodedeck/internal/providers"
 	"powercodedeck/internal/providers/antigravity"
 )
@@ -217,7 +218,13 @@ func TestNativeStartSelectsAntigravity(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("PCD_CHAT_TEST_BIN", bin)
 	t.Setenv("PCD_CHAT_AGY_HELPER", "1")
+	dbPath := filepath.Join(dir, "history.db")
+	database := openHistoryDB(t, dbPath)
+	if _, err := database.Exec(`INSERT INTO agents(id,preset,name,tmux_session,working_dir,command) VALUES('native-agy','antigravity','a','a',?,'agy')`, dir); err != nil {
+		t.Fatal(err)
+	}
 	s := NewNativeService("")
+	s.SetHistoryStore(history.New(database))
 	done := make(chan *StreamEvent, 1)
 	s.SetHandlers(func(_ string, ev *StreamEvent) {
 		if ev.Type == "result" {
@@ -241,5 +248,51 @@ func TestNativeStartSelectsAntigravity(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("native launch did not complete")
+	}
+	s.Stop("native-agy")
+	deadline := time.Now().Add(5 * time.Second)
+	for s.Running("native-agy") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if s.Running("native-agy") {
+		t.Fatal("native stop did not finish")
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database = openHistoryDB(t, dbPath)
+	agents := &AgentService{db: database}
+	reopened := NewNativeService("")
+	reopened.SetPersistence(agents.SetClaudeSessionID, agents.ClaudeSessionID)
+	reopened.SetHistoryStore(history.New(database))
+	reopened.SetHandlers(func(_ string, ev *StreamEvent) {
+		if ev.Type == "result" {
+			done <- ev
+		}
+	}, nil)
+	if err := reopened.Start("native-agy", "antigravity", dir, "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Stop("native-agy")
+	previous := reopened.History("native-agy")
+	if len(previous) < 3 || previous[0].Message.Content[0].Text != "hello" || previous[len(previous)-1].Type != "result" {
+		t.Fatal("completed history not restored at native open")
+	}
+	if err := reopened.Send("native-agy", "follow-up"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("resumed request did not complete")
+	}
+	found := false
+	for _, ev := range reopened.History("native-agy")[len(previous):] {
+		if strings.Contains(string(ev.Raw), "resume=chat-owned") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("cold reopen lost provider conversation ID")
 	}
 }

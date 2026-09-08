@@ -28,6 +28,14 @@ CREATE TABLE IF NOT EXISTS recent_projects (
     open_count INTEGER DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS native_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    event TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_native_history_agent_provider ON native_history(agent_id,provider,id);
+
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id TEXT NOT NULL,

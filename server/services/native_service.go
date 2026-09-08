@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 
@@ -76,10 +77,12 @@ type sessionPolicy struct {
 // has no PTY, no viewers-with-a-screen, and no replay. What it has is a
 // conversation and a queue of questions waiting on a human.
 type NativeService struct {
-	broker  *PermissionBroker
-	tokens  *approveTokens
-	baseURL string // e.g. http://127.0.0.1:33033 — where the bridge calls back
-	selfBin string // the pcd binary, spawned by claude as its MCP server
+	historyStore NativeHistoryStore
+	agyStartMu   sync.Mutex // Antigravity preparation/replay; no model runs under this lock.
+	broker       *PermissionBroker
+	tokens       *approveTokens
+	baseURL      string // e.g. http://127.0.0.1:33033 — where the bridge calls back
+	selfBin      string // the pcd binary, spawned by claude as its MCP server
 
 	mu       sync.RWMutex
 	sessions map[string]*nativeSession
@@ -127,15 +130,16 @@ type NativeService struct {
 }
 
 type nativeSession struct {
-	id     string
-	driver nativeExecution
-	kind   string // claude | codex | antigravity
-	sendMu sync.Mutex
-	cwd    string
-	model  string        // remembered so a mode switch keeps the model, and vice-versa
-	mode   string        // permission mode: "" | acceptEdits | plan | bypassPermissions
-	effort string        // low | medium | high | xhigh | max — fixed for the process's lifetime
-	opts   NativeOptions // set-once session options, also fixed for the process's lifetime
+	id            string
+	driver        nativeExecution
+	kind          string // claude | codex | antigravity
+	sendMu        sync.Mutex
+	storageFailed bool
+	cwd           string
+	model         string        // remembered so a mode switch keeps the model, and vice-versa
+	mode          string        // permission mode: "" | acceptEdits | plan | bypassPermissions
+	effort        string        // low | medium | high | xhigh | max — fixed for the process's lifetime
+	opts          NativeOptions // set-once session options, also fixed for the process's lifetime
 	// history keeps the events already emitted, so a device that connects late (or
 	// reconnects from another device) can render the conversation so far. This is
 	// the native track's answer to terminal replay — and it needs no serializer,
@@ -362,6 +366,10 @@ func (s *NativeService) autoDecision(req PermissionRequest) (PermissionDecision,
 // starting one that already runs is a no-op, so a second device opening the page
 // doesn't spawn a second agent.
 func (s *NativeService) Start(sessionID, kind, cwd, model, resumeID, mode, effort string) error {
+	if kind == "antigravity" {
+		s.agyStartMu.Lock()
+		defer s.agyStartMu.Unlock()
+	}
 	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, effort, true)
 }
 
@@ -507,6 +515,11 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	}
 
 	sess := &nativeSession{id: sessionID, driver: d, kind: kind, cwd: cwd, model: model, mode: mode, effort: effort, opts: opts}
+	if err := s.restoreNativeHistory(sess); err != nil {
+		d.Stop()
+		s.tokens.Revoke(sessionID)
+		return err
+	}
 	// A resumed session's PRIOR conversation is not re-emitted as events by
 	// `claude --resume` — it just continues. So seed history from the transcript on
 	// disk, or the chat opens blank until the next reply. (Only when we actually
@@ -611,7 +624,7 @@ func (s *NativeService) pump(sess *nativeSession) {
 			s.mu.RLock()
 			save := s.onSessionID
 			s.mu.RUnlock()
-			if save != nil {
+			if save != nil && !(sess.kind == "antigravity" && s.historyStore != nil) {
 				save(sess.id, ev.SessionID)
 			}
 		}
@@ -791,21 +804,33 @@ func (s *NativeService) applyMode(sess *nativeSession, mode string) {
 // turns go through, so history order and what's on screen never disagree.
 func (s *NativeService) emit(sess *nativeSession, ev *StreamEvent) {
 	sess.mu.Lock()
-	sess.history = append(sess.history, ev)
+	events := []*StreamEvent{ev}
+	if sess.kind == "antigravity" && s.historyStore != nil {
+		if err := s.historyStore.Append(sess.id, sess.kind, ev.Raw, ev.SessionID); err != nil {
+			log.Printf("native history save failed for %s: %v", sess.id, err)
+			if !sess.storageFailed {
+				sess.storageFailed = true
+				warning, _ := ParseStreamEvent([]byte(`{"type":"storage_warning","result":"대화 기록을 저장하지 못했습니다. 현재 화면은 유지되지만 재접속 후 일부 기록이 사라질 수 있습니다."}`))
+				events = append(events, warning)
+			}
+		}
+	}
+	sess.history = append(sess.history, events...)
 	if len(sess.history) > maxNativeHistory {
 		sess.history = sess.history[len(sess.history)-maxNativeHistory:]
 	}
 	sess.mu.Unlock()
-
 	s.mu.RLock()
 	fn := s.onEvent
 	observers := append([]func(string, *StreamEvent){}, s.observers...)
 	s.mu.RUnlock()
-	if fn != nil {
-		fn(sess.id, ev)
-	}
-	for _, observe := range observers {
-		observe(sess.id, ev)
+	for _, event := range events {
+		if fn != nil {
+			fn(sess.id, event)
+		}
+		for _, observe := range observers {
+			observe(sess.id, event)
+		}
 	}
 }
 
