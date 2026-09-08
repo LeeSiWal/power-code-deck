@@ -126,3 +126,25 @@ Passed: `go test -race ./...`, `go vet ./...`, `npm run build` and
 Live provider permissions and browser end-to-end behavior remain unverified in
 this slice. Applying a verified result to the user's source branch, conflict
 resolution and cleanup remain separate work.
+
+## Explicit branch application — 2026-09-08
+
+Added preview/confirm application of the exact verified integration, an additive
+application journal and read-only reconciliation after uncertain outcomes.
+Tests use real throwaway Git repositories; no user's project was targeted by
+the application feature during validation.
+
+Coverage includes successful fast-forward, retained base, disabled merge/ref
+hooks, idempotent repeated requests, foreign Run rejection, stale payload,
+branch/HEAD changes, detached HEAD, ongoing merge, dirty/staged/untracked files,
+assume-unchanged/skip-worktree flags, tampered result refs, ignored-file collision,
+strict request decoding, and restart before/after Git mutation without replay.
+
+Passed: server-wide `go test -race ./...`, targeted application regression tests
+after the final hook change, `go vet ./...`, `npm run build`, and
+`git diff --check`. Existing frontend dependency/chunk warnings remain.
+
+The feature does not coordinate with external Git processes or multiple server
+owners. No authenticated live provider or browser E2E check was run here.
+Automatic plan generation/editing, conflict resolution and retained artifact
+cleanup remain open.

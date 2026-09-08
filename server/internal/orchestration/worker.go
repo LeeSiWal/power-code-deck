@@ -20,7 +20,7 @@ import (
 type Factory func(id, cwd string) (providers.Execution, error)
 
 // Worker has one active slot. Worktrees isolate Git changes, not OS permissions.
-// No merge, cleanup of modified files, or automatic retries occur.
+// Source application is explicit; modified files are never cleaned automatically.
 type Worker struct {
 	store     *Store
 	root      string

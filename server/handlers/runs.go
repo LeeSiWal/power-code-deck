@@ -31,6 +31,41 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 		}
 	}
 	if worker != nil {
+		api.HandleFunc("/v2/runs/{id}/plan/apply", func(w http.ResponseWriter, r *http.Request) {
+			preview, err := worker.PreviewApplication(mux.Vars(r)["id"])
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			jsonResponse(w, preview)
+		}).Methods("GET")
+		api.HandleFunc("/v2/runs/{id}/plan/apply", func(w http.ResponseWriter, r *http.Request) {
+			var target orchestration.ApplyTarget
+			d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+			d.DisallowUnknownFields()
+			if err := d.Decode(&target); err != nil {
+				jsonError(w, "invalid application target", 400)
+				return
+			}
+			if d.Decode(new(any)) != io.EOF || target.IntegrationID == "" || target.Branch == "" || target.BaseCommit == "" || target.ResultCommit == "" {
+				jsonError(w, "complete reviewed target required", 400)
+				return
+			}
+			record, err := worker.ApplyResult(mux.Vars(r)["id"], target)
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			jsonResponse(w, record)
+		}).Methods("POST")
+		api.HandleFunc("/v2/runs/{id}/plan/apply/reconcile", func(w http.ResponseWriter, r *http.Request) {
+			record, err := worker.ReconcileApplication(mux.Vars(r)["id"])
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			jsonResponse(w, record)
+		}).Methods("POST")
 		api.HandleFunc("/v2/runs/{id}/plan/integrate", func(w http.ResponseWriter, r *http.Request) {
 			attempt, err := worker.StartIntegration(mux.Vars(r)["id"])
 			if err != nil {

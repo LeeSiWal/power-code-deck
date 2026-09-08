@@ -52,11 +52,21 @@ export interface RunApproval {
 }
 
 export interface PlanSnapshot {
+  applications: RunApplication[];
   integrations: RunExecution[];
   concurrency: number;
   tasks: { id: string; prompt: string; provider: string; dependsOn: string[]; state: string; attemptId: string; detail: string; artifacts: RunArtifact[]; checks: RunCheck[] }[];
   selection: { ready: { id: string }[]; blocked: string[]; complete: boolean };
 }
+
+export interface ApplyTarget {
+  integrationId: string;
+  branch: string;
+  baseCommit: string;
+  resultCommit: string;
+}
+export interface ApplyPreview extends ApplyTarget { summary: string }
+export interface RunApplication extends ApplyTarget { id: string; state: string; detail: string }
 
 export interface RunArtifact {
   kind: string;
@@ -228,6 +238,9 @@ export const api = {
   getRunPlan: (id: string) => apiFetch<PlanSnapshot>(`/v2/runs/${encodeURIComponent(id)}/plan`),
   startRunPlan: (id: string) => apiFetch(`/v2/runs/${encodeURIComponent(id)}/plan/start`, { method: 'POST' }),
   integrateRunPlan: (id: string) => apiFetch<{ executionId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/integrate`, { method: 'POST' }),
+  previewRunApplication: (id: string) => apiFetch<ApplyPreview>(`/v2/runs/${encodeURIComponent(id)}/plan/apply`),
+  applyRunResult: (id: string, target: ApplyTarget) => apiFetch<RunApplication>(`/v2/runs/${encodeURIComponent(id)}/plan/apply`, { method: 'POST', body: JSON.stringify(target) }),
+  reconcileRunApplication: (id: string) => apiFetch<RunApplication>(`/v2/runs/${encodeURIComponent(id)}/plan/apply/reconcile`, { method: 'POST' }),
   retryRunTask: (id: string, task: string) => apiFetch(`/v2/runs/${encodeURIComponent(id)}/plan/tasks/${encodeURIComponent(task)}/retry`, { method: 'POST' }),
   runApprovals: (id: string) => apiFetch<RunApproval[]>(`/v2/runs/${encodeURIComponent(id)}/approvals`),
   decideRunApproval: (run: string, id: string, behavior: 'allow' | 'deny') =>

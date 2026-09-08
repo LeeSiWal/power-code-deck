@@ -139,10 +139,48 @@ preserving all verified tasks and old integration evidence.
 The Run UI exposes integration start/retry, cancellation, all integration
 attempts, check results, combined patches, logs and the final result commit.
 
+## Explicit source branch application
+
+`GET /v2/runs/{id}/plan/apply` previews the exact verified integration, current
+local branch, pinned base, result commit and diff summary. The UI also links to
+the full verified patch. `POST` to the same route requires that exact reviewed
+tuple; it accepts no client-supplied repository path or arbitrary result.
+
+`application_worker.go` rechecks the completed integration, retained result ref,
+single-parent ancestry and source state immediately before applying. Detached
+HEAD, changed branch/revision, ongoing Git operations, uncommitted tracked or
+untracked files, dirty submodules and hidden-change index flags are rejected.
+Git uses fast-forward only, with autostash and repository hooks disabled and
+ignored-file overwrite prohibited. There is no force reset, merge commit or
+push. A backup base ref remains under
+`refs/powercodedeck/applications/{applicationId}/base`.
+
+The additive `v2_result_applications` journal records intent before source
+mutation and distinguishes `applying`, `applied`, `failed`, and
+`needs_attention`. Identical retries after success return the original record;
+failed attempts remain visible and may be retried after resolving their cause.
+A completed Run continues to describe verification, while the application
+journal separately describes whether its result was applied.
+
+Git and SQLite do not share a transaction. A timeout or interrupted database
+write must not trigger an automatic repeat or rollback of source changes.
+Startup marks unfinished applications `needs_attention`. Explicit
+`POST /v2/runs/{id}/plan/apply/reconcile` reads the branch and clean worktree,
+then updates only the journal: the exact result confirms applied; the exact
+original base permits a fresh retry; anything else requires manual inspection.
+The same action can inspect an idle application whose final database write
+failed without restarting the server.
+
+Application shares the Worker's mutex with execution and integration. This is
+a single-server owner design. External editors and Git commands are not covered
+by that lock; avoid concurrent Git operations during application. Post-operation
+inspection reports uncertain outcomes without reverting possible user edits.
+Sparse/hidden-change index setups must be normalized before using this action.
+
 Remaining steps:
 
 1. Add automatic plan generation and plan creation/editing before saving in the UI.
-2. Add an explicit workflow for applying a verified result to the user's branch.
+2. Add an explicit undo workflow for applied results if required.
 3. Add prior-task-attempt browsing, conflict resolution and retained worktree/
    ref cleanup, plus multi-server leases if deployment requires them.
 4. Finish authenticated live provider/browser validation. The previous Antigravity

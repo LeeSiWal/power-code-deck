@@ -30,6 +30,7 @@ type PlannedTask struct {
 	Checks    []Check         `json:"checks"`
 }
 type PlanSnapshot struct {
+	Applications []Application       `json:"applications"`
 	Integrations []Execution         `json:"integrations"`
 	Concurrency  int                 `json:"concurrency"`
 	Tasks        []PlannedTask       `json:"tasks"`
@@ -156,6 +157,10 @@ func readPlan(tx *sql.Tx, run string) (PlanSnapshot, error) {
 		p.Tasks = append(p.Tasks, t)
 	}
 	p.Integrations, err = readIntegrations(tx, run)
+	if err != nil {
+		return p, err
+	}
+	p.Applications, err = readApplications(tx, run)
 	if err != nil {
 		return p, err
 	}

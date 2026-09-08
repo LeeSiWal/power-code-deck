@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ApiError, api, Run, RunApproval, RunArtifact, RunSummary, PlanSnapshot } from '../lib/api';
+import { ApiError, api, Run, RunApproval, RunArtifact, RunSummary, PlanSnapshot, ApplyPreview } from '../lib/api';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack, IconCheck, IconClose, IconPlay, IconRocket, IconSpinner } from '../components/icons';
 import { useGoUp } from '../hooks/useGoUp';
@@ -23,6 +23,9 @@ function stateLabel(state: string) {
     case 'failed': return '실패';
     case 'interrupted': return '중단됨';
     case 'canceled': return '취소됨';
+    case 'applied': return '브랜치 적용 완료';
+    case 'applying': return '브랜치 적용 중';
+    case 'needs_attention': return '적용 상태 확인 필요';
     default: return state;
   }
 }
@@ -61,6 +64,8 @@ export function RunsPage() {
   const [approvals, setApprovals] = useState<RunApproval[]>([]);
   const [deciding, setDeciding] = useState('');
   const [plan, setPlan] = useState<PlanSnapshot | null>(null);
+  const [applyPreview, setApplyPreview] = useState<ApplyPreview | null>(null);
+  const applicationPending = plan?.applications.some((a) => a.state === 'applying') ?? false;
   const selectedID = useRef(id);
   selectedID.current = id;
   const [loading, setLoading] = useState(true);
@@ -107,6 +112,7 @@ export function RunsPage() {
 
   useEffect(() => {
     setArtifact(null);
+    setApplyPreview(null);
     setPlan(null);
     setApprovals([]);
     if (!id) {
@@ -128,12 +134,12 @@ export function RunsPage() {
       } catch (err) {
         if (!disposed && !(err instanceof ApiError && err.status === 404)) setError('작업 계획을 불러오지 못했습니다');
       } finally {
-        if (!disposed && ['plan_running', 'integrating'].includes(run.state)) timer = setTimeout(poll, 1500);
+        if (!disposed && (['plan_running', 'integrating'].includes(run.state) || applicationPending)) timer = setTimeout(poll, 1500);
       }
     };
     poll();
     return () => { disposed = true; clearTimeout(timer); };
-  }, [id, run?.id, run?.state]);
+  }, [id, run?.id, run?.state, applicationPending]);
 
   useEffect(() => {
     if (!id || run?.id !== id || !['running', 'plan_running'].includes(run.state)) { setApprovals([]); return; }
@@ -241,6 +247,34 @@ export function RunsPage() {
     }
   };
 
+  const applicationAction = async (action: 'preview' | 'apply' | 'reconcile') => {
+    if (!run || submitting) return;
+    const runId = run.id;
+    setSubmitting(true); setError('');
+    try {
+      if (action === 'preview') {
+        const preview = await api.previewRunApplication(runId);
+        if (selectedID.current === runId) setApplyPreview(preview);
+      } else {
+        if (action === 'apply') {
+          if (!applyPreview) return;
+          const { integrationId, branch, baseCommit, resultCommit } = applyPreview;
+          await api.applyRunResult(runId, { integrationId, branch, baseCommit, resultCommit });
+        } else await api.reconcileRunApplication(runId);
+        if (selectedID.current === runId) setApplyPreview(null);
+        const snapshot = await api.getRunPlan(runId);
+        if (selectedID.current === runId) setPlan(snapshot);
+      }
+    } catch (err) {
+      if (selectedID.current === runId) {
+        setApplyPreview(null);
+        setError(err instanceof Error ? err.message : '브랜치 적용을 처리하지 못했습니다');
+        // A lost HTTP response does not prove Git failed; show the saved journal.
+        try { const snapshot = await api.getRunPlan(runId); if (selectedID.current === runId) setPlan(snapshot); } catch { /* retain the original error */ }
+      }
+    } finally { setSubmitting(false); }
+  };
+
   return (
     <div className="flex flex-col h-full safe-top bg-deck-bg overflow-hidden">
       <header className="flex items-center gap-2 px-4 py-2 bg-deck-surface border-b border-deck-border shrink-0">
@@ -346,7 +380,21 @@ export function RunsPage() {
               {plan && (
                 <div className="rounded-xl border border-deck-border bg-deck-surface p-4 space-y-3">
                   <div className="text-sm font-semibold">작업 계획 · {plan.tasks.length}개 Task</div>
-                  <p className="text-xs text-deck-text-dim">Task가 모두 통과하면 결과를 통합하고 최종 검증합니다. 완료된 결과는 별도 작업 공간에 보관되며 원본 브랜치에 적용하려면 후속 작업이 필요합니다.</p>
+                  <p className="text-xs text-deck-text-dim">Task가 모두 통과하면 결과를 통합하고 최종 검증합니다. 검증 후 대상 브랜치와 변경 내용을 확인해 결과를 적용할 수 있습니다.</p>
+                  {run.state === 'succeeded' && !plan.applications.some((a) => ['applying', 'needs_attention', 'applied'].includes(a.state)) && !applyPreview && <button className="btn-primary" disabled={submitting} onClick={() => applicationAction('preview')}>브랜치 적용 내용 확인</button>}
+                  {applyPreview && <div className="rounded-lg border border-amber-500/40 p-3 space-y-2">
+                    <p className="text-sm font-semibold">적용 대상: {applyPreview.branch.replace(/^refs\/heads\//, '')}</p>
+                    <p className="text-xs font-mono break-all">{applyPreview.baseCommit} → {applyPreview.resultCommit}</p>
+                    <pre className="text-xs whitespace-pre-wrap break-words max-h-48 overflow-auto">{applyPreview.summary || '파일 내용 변경 없음'}</pre>
+                    <button className="text-xs underline" onClick={() => openArtifact({ kind: 'changes.patch', baseCommit: applyPreview.baseCommit }, applyPreview.integrationId)}>전체 변경 내용 열기</button>
+                    <p className="text-xs">이 브랜치의 파일과 커밋을 검증된 결과로 진행합니다. 적용 중에는 다른 Git 작업을 실행하지 마세요.</p>
+                    <div className="flex gap-2"><button className="btn-primary" disabled={submitting} onClick={() => applicationAction('apply')}>확인한 결과 적용</button><button disabled={submitting} className="text-xs underline" onClick={() => setApplyPreview(null)}>닫기</button></div>
+                  </div>}
+                  {plan.applications.map((a) => <div key={a.id} className="border-t border-deck-border pt-3 space-y-1">
+                    <p className="text-sm font-semibold">{stateLabel(a.state)} · {a.branch.replace(/^refs\/heads\//, '')}</p>
+                    <p className="text-xs whitespace-pre-wrap break-words">{a.detail}</p>
+                    {['needs_attention', 'applying'].includes(a.state) && <button className="btn-primary" disabled={submitting} onClick={() => applicationAction('reconcile')}>실제 브랜치 상태 확인</button>}
+                  </div>)}
                   {['awaiting_integration', 'integration_failed'].includes(run.state) && <button className="btn-primary" disabled={submitting} onClick={async () => {
                     setSubmitting(true); setError('');
                     try {

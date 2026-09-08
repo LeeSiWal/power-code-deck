@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS v2_checks(execution_id TEXT NOT NULL REFERENCES v2_ex
 `
 
 func New(database *sql.DB) (*Store, error) {
-	if _, err := database.Exec(schema + planSchema + integrationSchema); err != nil {
+	if _, err := database.Exec(schema + planSchema + integrationSchema + applicationSchema); err != nil {
 		return nil, err
 	}
 	// Upgrade databases created by the first opt-in Run slice. The feature has not
@@ -368,6 +368,7 @@ func (s *Store) Recover() error {
 	}
 	defer tx.Rollback()
 	for _, query := range []string{
+		`UPDATE v2_result_applications SET state='needs_attention',detail='server restarted during application; inspect source before retrying' WHERE state='applying'`,
 		`UPDATE v2_integrations SET state='interrupted',detail='server restarted; integration outcome unknown' WHERE state='running'`,
 		`UPDATE v2_runs SET state='awaiting_integration' WHERE state='integrating'`,
 		`UPDATE v2_plan_attempts SET state='interrupted',detail='server restarted; outcome unknown' WHERE state IN ('running','verifying')`,
