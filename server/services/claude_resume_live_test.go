@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -101,8 +100,6 @@ func liveApprovalDeck(t *testing.T, sessionID string) (url, token string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var once sync.Once
-	_ = once
 	broker.SetAskHandler(func(req PermissionRequest) {
 		go broker.Resolve(req.ID, PermissionDecision{Behavior: "allow"})
 	})
