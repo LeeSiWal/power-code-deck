@@ -1,10 +1,15 @@
 package services
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
+
+	"powercodedeck/internal/providers"
+	"powercodedeck/internal/providers/native"
 )
 
 // nativeTextEvent builds a synthetic user/assistant StreamEvent with its Raw JSON
@@ -93,9 +98,10 @@ type NativeService struct {
 	rules *ApprovalRuleStore
 
 	// onEvent/onApproval are set by the hub at wiring time.
-	onEvent    func(sessionID string, ev *StreamEvent)
-	onApproval func(PermissionRequest)
-	observers  []func(sessionID string, ev *StreamEvent)
+	onEvent            func(sessionID string, ev *StreamEvent)
+	onApproval         func(PermissionRequest)
+	observers          []func(sessionID string, ev *StreamEvent)
+	executionObservers []func(providers.Event)
 
 	// onSessionID records Claude's own conversation id when a session announces it,
 	// so a later open can --resume instead of starting from nothing. Injected
@@ -121,7 +127,7 @@ type NativeService struct {
 
 type nativeSession struct {
 	id     string
-	driver NativeDriver
+	driver *native.Adapter
 	kind   string // claude | codex
 	cwd    string
 	model  string        // remembered so a mode switch keeps the model, and vice-versa
@@ -435,7 +441,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	// One constructor for both attempts below, so the retry can never drift from the
 	// first try — and so the retry is not silently Claude-only, which is what used to
 	// leave a Codex agent permanently unopenable once a bad resume id was stored.
-	newDriver := func(resume string) NativeDriver {
+	newWireDriver := func(resume string) NativeDriver {
 		if kind == "codex" {
 			// Codex maps "auto" to its default (on-request) approval policy, so gated calls
 			// still reach the broker and the same policy applies.
@@ -451,7 +457,19 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			ApproveToken: token, SelfPath: s.selfBin,
 		})
 	}
-	d := newDriver(resumeID)
+	newDriver := func(resume string) (*native.Adapter, error) {
+		// Each process attempt has its own ID, including a fresh-start retry.
+		provider := providers.Claude
+		if kind == "codex" {
+			provider = providers.Codex
+		}
+		return native.New(providers.Identity{ExecutionID: rand.Text(), Provider: provider}, newWireDriver(resume))
+	}
+	d, err := newDriver(resumeID)
+	if err != nil {
+		s.tokens.Revoke(sessionID)
+		return err
+	}
 	if err := d.Start(); err != nil {
 		// A stale resume id (its transcript was deleted, or the CLI rejects it)
 		// must not lock the agent out of ever starting. Drop it and try fresh
@@ -461,7 +479,12 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			return err
 		}
 		d.Stop() // the first attempt may have left a live CLI process behind
-		d = newDriver("")
+		replacement, buildErr := newDriver("")
+		if buildErr != nil {
+			s.tokens.Revoke(sessionID)
+			return buildErr
+		}
+		d = replacement
 		if err2 := d.Start(); err2 != nil {
 			s.tokens.Revoke(sessionID)
 			return err
@@ -517,9 +540,52 @@ func seedNativeHistory(sess *nativeSession, cwd, sid string) {
 	}
 }
 
+// ExecutionIdentity maps a legacy agent/session ID to its current process attempt.
+func (s *NativeService) ExecutionIdentity(sessionID string) (providers.Identity, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess := s.sessions[sessionID]
+	if sess == nil || sess.driver == nil {
+		return providers.Identity{}, false
+	}
+	return sess.driver.Identity(), true
+}
+
+// AddExecutionObserver receives provider-neutral live events. It does not replay
+// history or synthesize user turns. Callbacks run synchronously, outside locks,
+// and must return promptly. Events include a unique process-attempt identity so
+// consumers can reject stale work. EOF is not synthesized into task success.
+func (s *NativeService) AddExecutionObserver(fn func(providers.Event)) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	s.executionObservers = append(s.executionObservers, fn)
+	s.mu.Unlock()
+}
+
+func (s *NativeService) emitExecution(sess *nativeSession, event providers.Event) {
+	s.mu.RLock()
+	current := s.sessions[sess.id] == sess
+	observers := append([]func(providers.Event){}, s.executionObservers...)
+	s.mu.RUnlock()
+	if !current {
+		return
+	}
+	for _, observe := range observers {
+		observe(event)
+	}
+}
+
 // pump forwards the driver's events and cleans up when the process exits.
 func (s *NativeService) pump(sess *nativeSession) {
-	for ev := range sess.driver.Events() {
+	for {
+		envelope, err := sess.driver.NextEnvelope(context.Background())
+		if err != nil {
+			break
+		} // Background cannot cancel; channel EOF ends the pump.
+		s.emitExecution(sess, envelope.Event)
+		ev := envelope.Wire
 		if ev.Type == StreamTypeSystem && ev.Subtype == "init" && ev.SessionID != "" {
 			s.mu.RLock()
 			save := s.onSessionID

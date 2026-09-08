@@ -16,11 +16,12 @@ func TestOldPumpDoesNotRevokeReplacementToken(t *testing.T) {
 
 	// The session being replaced. Its driver never starts — only its events
 	// channel matters, closed to make pump run straight to cleanup.
-	oldSess := &nativeSession{id: "agent-1", driver: NewClaudeDriver(ClaudeConfig{SessionID: "agent-1"})}
+	oldDriver := NewClaudeDriver(ClaudeConfig{SessionID: "agent-1"})
+	oldSess := &nativeSession{id: "agent-1", driver: testProviderAdapter(t, oldDriver)}
 
 	// The restart has already happened: the map points at the replacement, and its
 	// token is the one the live bridge holds.
-	newSess := &nativeSession{id: "agent-1", driver: NewClaudeDriver(ClaudeConfig{SessionID: "agent-1"})}
+	newSess := &nativeSession{id: "agent-1", driver: testProviderAdapter(t, NewClaudeDriver(ClaudeConfig{SessionID: "agent-1"}))}
 	tok, err := s.tokens.Issue("agent-1")
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +50,7 @@ func TestOldPumpDoesNotRevokeReplacementToken(t *testing.T) {
 	}
 
 	// The old driver exits; its pump drains and cleans up.
-	close(oldSess.driver.(*ClaudeDriver).events)
+	close(oldDriver.events)
 	s.pump(oldSess)
 
 	if !s.tokens.Valid("agent-1", tok) {

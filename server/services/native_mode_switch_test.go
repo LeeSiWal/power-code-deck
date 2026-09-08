@@ -117,7 +117,7 @@ func TestSetModeSwitchesInPlaceWithoutKillingTheProcess(t *testing.T) {
 
 	fd := newFakeNativeDriver()
 	s.mu.Lock()
-	s.sessions["a1"] = &nativeSession{id: "a1", driver: fd, kind: "claude", cwd: "/tmp/proj", model: "claude-opus-5", effort: "high"}
+	s.sessions["a1"] = &nativeSession{id: "a1", driver: testProviderAdapter(t, fd), kind: "claude", cwd: "/tmp/proj", model: "claude-opus-5", effort: "high"}
 	s.policies["a1"] = sessionPolicy{mode: "", cwd: "/tmp/proj"}
 	s.mu.Unlock()
 
@@ -179,7 +179,7 @@ func TestSetModeFallsBackToRestartWhenTheDriverCannotSwitch(t *testing.T) {
 	fd.modeErr = errors.New("this CLI build cannot switch modes")
 
 	s.mu.Lock()
-	s.sessions["a1"] = &nativeSession{id: "a1", driver: fd, kind: "claude", cwd: "/nonexistent-pcd-mode-test"}
+	s.sessions["a1"] = &nativeSession{id: "a1", driver: testProviderAdapter(t, fd), kind: "claude", cwd: "/nonexistent-pcd-mode-test"}
 	s.policies["a1"] = sessionPolicy{cwd: "/nonexistent-pcd-mode-test"}
 	s.mu.Unlock()
 
