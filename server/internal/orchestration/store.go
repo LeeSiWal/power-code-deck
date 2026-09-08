@@ -358,7 +358,7 @@ func (s *Store) Recover() error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, query := range []string{`UPDATE v2_executions SET state='interrupted',detail='server restarted; outcome unknown' WHERE state='running'`, `UPDATE v2_tasks SET state='interrupted' WHERE state='running'`, `UPDATE v2_runs SET state='interrupted' WHERE state='running'`} {
+	for _, query := range []string{`UPDATE v2_executions SET state='interrupted',detail='server restarted; outcome unknown' WHERE state='running'`, `UPDATE v2_tasks SET state='interrupted' WHERE state IN ('running','awaiting_checks')`, `UPDATE v2_runs SET state='interrupted' WHERE state IN ('running','awaiting_checks')`} {
 		if _, err = tx.Exec(query); err != nil {
 			return err
 		}

@@ -180,3 +180,41 @@ func TestRetryCannotMovePinnedBaseCommit(t *testing.T) {
 		t.Fatal("pinned source revision was lost", got.BaseCommit, err)
 	}
 }
+
+func TestRecoveryDuringVerificationPreservesEvidenceAndAllowsRetry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "work.db")
+	s := openTest(t, path)
+	r := createTest(t, s, "verification-recovery")
+	if err := s.RequireChecks(r.ID, "tests", "review"); err != nil {
+		t.Fatal(err)
+	}
+	e, err := s.StartAttempt(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishAttempt(e, true, "implementation done"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordCheck(e, "tests", true, "passed"); err != nil {
+		t.Fatal(err)
+	}
+	s.db.Close()
+	s = openTest(t, path)
+	if err := s.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(r.ID)
+	if err != nil || got.State != "interrupted" || got.Executions[0].State != "succeeded" || len(got.Executions[0].Checks) != 1 {
+		t.Fatal(got, err)
+	}
+	if err := s.Complete(r.ID); !errors.Is(err, ErrConflict) {
+		t.Fatal("recovered run completed without review", err)
+	}
+	if err := s.RecordCheck(e, "review", true, "late"); !errors.Is(err, ErrConflict) {
+		t.Fatal("stale review accepted", err)
+	}
+	retry, err := s.StartAttempt(r.ID)
+	if err != nil || retry == e {
+		t.Fatal("retry unavailable", err)
+	}
+}

@@ -28,7 +28,9 @@ A failing check fails the Run and allows a new attempt; its evidence remains
 attached to the previous execution. Checks cannot be overwritten.
 
 Recovery runs once before routes/workers start. Previously running attempts,
-tasks and Runs become interrupted; no retry or CLI spawn occurs. Queued work and
+tasks and Runs become interrupted; tasks/Runs awaiting verification also become
+interrupted so they can be retried after a restart. Completed implementation
+attempts and already-recorded check evidence remain intact. No retry or CLI spawn occurs. Queued work and
 completed evidence remain available. Single-server ownership is assumed; leases
 for multiple server processes are not implemented.
 
@@ -114,6 +116,25 @@ the Run integration. All three providers currently use a fresh Antigravity
 execution for independent review, so Antigravity must also be installed and
 authenticated for Claude/Codex Runs to pass review. Live model/browser validation
 is still required; automated tests use local fixtures and fake executions.
+
+## Live worker check
+
+`PCD_RUN_LIVE=1 go test ./internal/orchestration -run '^TestAntigravityRunLive$' -v -count=1 -timeout=7m`
+explicitly enables a model-consuming integration test. It creates a disposable
+repository, asks the production Worker to change one tracked file, validates its
+exact contents with a project check, then requests independent review. It also
+checks that the source checkout stayed unchanged and the patch contains the edit.
+It is skipped in normal test runs and is not a browser E2E test.
+
+The 2026-09-08 run on this host failed at the project check: Antigravity reported
+that a command permission required an interactive prompt and was auto-denied in
+headless mode; it produced no edit. The Run correctly remained failed and review
+was not reached. Headless connectivity alone therefore does not establish that
+coding tasks can complete under the installed CLI policy. Host CLI permissions
+were not modified by this check. Revalidation after suitable narrowly scoped CLI
+permissions are configured remains required.
+
+The first multi-task selection module is described in [Task graph foundation](task-graph.md).
 
 Rollback: disable `PCD_V2_ENABLED` and restart. The additive tables remain for
 future re-enablement; existing chat data and routes remain unchanged.

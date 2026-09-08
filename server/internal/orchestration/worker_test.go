@@ -259,6 +259,13 @@ func TestWorkerCheckHelper(t *testing.T) {
 		return
 	}
 	fmt.Println("literal argument:", os.Args[len(os.Args)-1])
+	if os.Args[len(os.Args)-1] == "verify-change" {
+		data, err := os.ReadFile("tracked.txt")
+		if err != nil || string(data) != "PCD_RUN_LIVE_OK\n" {
+			fmt.Println("expected exact live test marker")
+			os.Exit(5)
+		}
+	}
 	if os.Args[len(os.Args)-1] == "mutate" {
 		if err := os.WriteFile("tracked.txt", []byte("check mutation\n"), 0600); err != nil {
 			os.Exit(4)
