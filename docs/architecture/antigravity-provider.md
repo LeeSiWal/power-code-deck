@@ -93,3 +93,10 @@ including sequential prompts, identity/usage preservation, interruption, user
 message ordering, diagnostics, and rejection of unsupported settings. Browser
 event-folding tests execute separately from the TypeScript production build.
 Live authenticated model execution is not part of these tests.
+
+Manual connection check on 2026-09-08: installed `agy 1.1.27` completed one
+short marker-only request in an isolated working directory, returning exit code
+0, a `SUCCESS` result, the requested `PCD_AGY_SMOKE_OK` marker, and no stderr.
+This verifies basic authenticated headless connectivity; it does not replace
+the fake-process cancellation/permission tests or prove an end-to-end browser
+workflow against a live coding task.
