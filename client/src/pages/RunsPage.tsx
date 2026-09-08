@@ -6,6 +6,7 @@ import { IconBack, IconCheck, IconClose, IconPlay, IconRocket, IconSpinner } fro
 import { useGoUp } from '../hooks/useGoUp';
 import { PlanEditor } from '../components/runs/PlanEditor';
 import { DraftHistory } from '../components/runs/DraftHistory';
+import { WorkspaceCleanup } from '../components/runs/WorkspaceCleanup';
 import { AttemptHistory, ConflictDetails, visibleArtifact } from '../components/runs/AttemptEvidence';
 
 const activeStates = new Set(['queued', 'planning', 'running', 'awaiting_checks', 'plan_running', 'integrating']);
@@ -418,6 +419,7 @@ export function RunsPage() {
 
               {['queued', 'planning'].includes(run.state) && run.executions.length === 0 && <PlanEditor key={run.id} run={run} refresh={refreshPlanEditor} />}
               <DraftHistory key={`draft-history-${run.id}`} runId={run.id} refreshKey={run.state} />
+              <WorkspaceCleanup key={`cleanup-${run.id}`} runId={run.id} state={run.state} />
 
               {plan && (
                 <div className="rounded-xl border border-deck-border bg-deck-surface p-4 space-y-3">

@@ -325,10 +325,49 @@ repair, its recipe remains available as evidence; retry can recapture the confli
 for a new submission. Old attempts and the user's source checkout remain intact.
 Cancellation and restart recovery follow the existing planned-task lifecycle.
 
+## Explicit retained workspace cleanup
+
+`cleanup.go` provides `GET /v2/runs/{id}/cleanup?before={attemptId}` and
+`POST /v2/runs/{id}/cleanup/{attemptId}` with a preview fingerprint. The UI lists
+ten candidates per page in stable ID order and requires selection and explicit
+confirmation for each deletion. There is no scheduled or bulk cleanup.
+
+Candidates come from registered single execution, Task, integration and draft
+workspaces. Paths are not accepted from the client or returned in JSON. The
+worker checks the exact owned path, canonical directory, linked-worktree marker,
+source repository and worktree registration. Active workers/Runs, unfinished
+attempts and applying/needs-attention application records block cleanup. Locked
+or branch-attached worktrees, Git operations, unmerged index entries, submodules,
+hidden index flags and all untracked files (including ignored files) are excluded.
+
+The index must match the saved result commit, or HEAD when there is no result;
+the worktree must independently match the index. This protects opposing staged
+and local edits. File mode checking is enabled and filesystem-monitor shortcuts
+disabled during the diff check. The POST repeats inspection and compares the
+preview fingerprint under the worker's shared lock. It retains HEAD and result
+under `refs/powercodedeck/retained/{attemptId}/{head,result}` before invoking
+`git worktree remove --force` once. This permits staged content already proven
+to match a retained commit, without overriding worktree locks.
+
+Only the workspace directory and its Git worktree registration are removed.
+Parent evidence files, draft JSON, execution/check history, resolution recipes,
+existing result refs and application backup refs are preserved. No schema
+conversion is required. A removed workspace remains in the registry and appears
+unavailable on subsequent previews; a repeated deletion is rejected. After a
+lost response or interrupted removal, refresh and inspect the new state rather
+than automatically replaying deletion. Partial Git failures may require manual
+inspection; the feature does not prune leftover Git metadata automatically.
+
+This serializes one server's workers, not external Git/editor processes or other
+server owners. It does not delete dirty conflict workspaces, extra files, evidence
+or retained refs, and it does not estimate reclaimed size. Tests exercise actual
+temporary-repository removal and subsequent integration/application, not live
+user workspace deletion.
+
 Remaining steps:
 
-1. Add retained worktree/ref cleanup, plus multi-server leases if deployment
-   requires them.
+1. Extend retention management to evidence/refs and dirty workspace handling if
+   needed; add multi-server leases if deployment requires them.
 2. Add an explicit undo workflow for applied results if required.
 3. Finish authenticated live provider/browser validation. The previous Antigravity
    headless permission denial remains unresolved; fake-provider tests do not

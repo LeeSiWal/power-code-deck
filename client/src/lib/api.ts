@@ -63,6 +63,7 @@ export interface PlanTask { id: string; prompt: string; provider: string; depend
 export interface TaskPlan { concurrency: number; tasks: PlanTask[] }
 export interface PlanDraft { id: string; state: string; detail: string; plan: TaskPlan | null }
 export interface DraftHistory { drafts: PlanDraft[]; nextCursor: string }
+export interface CleanupPreview { candidates: { id: string; kind: string; state: string; eligible: boolean; reason: string; fingerprint?: string }[]; nextCursor: string }
 export interface TaskHistory { attempts: RunExecution[]; nextCursor: string }
 export interface ConflictVersion { artifact?: string; unavailable?: string; mode?: string }
 export interface ConflictReport {
@@ -253,6 +254,8 @@ export const api = {
   generateRunPlan: (id: string) => apiFetch<{ draftId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/draft/generate`, { method: 'POST' }),
   getRunPlanDraft: (id: string) => apiFetch<PlanDraft>(`/v2/runs/${encodeURIComponent(id)}/plan/draft`),
   getDraftHistory: (id: string, before = '') => apiFetch<DraftHistory>(`/v2/runs/${encodeURIComponent(id)}/plan/drafts?before=${encodeURIComponent(before)}`),
+  previewCleanup: (id: string, before = '') => apiFetch<CleanupPreview>(`/v2/runs/${encodeURIComponent(id)}/cleanup?before=${encodeURIComponent(before)}`),
+  cleanupWorkspace: (id: string, attempt: string, fingerprint: string) => apiFetch<void>(`/v2/runs/${encodeURIComponent(id)}/cleanup/${encodeURIComponent(attempt)}`, { method: 'POST', body: JSON.stringify({ fingerprint }) }),
   getTaskHistory: (id: string, task: string, before = '') => apiFetch<TaskHistory>(`/v2/runs/${encodeURIComponent(id)}/plan/tasks/${encodeURIComponent(task)}/attempts?${new URLSearchParams({ before })}`),
   resolveIntegration: (id: string, attempt: string, fingerprint: string, files: ResolvedFile[]) => apiFetch<{ executionId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/integrations/${encodeURIComponent(attempt)}/resolve`, { method: 'POST', body: JSON.stringify({ fingerprint, files }) }),
   resolveTask: (id: string, task: string, attempt: string, fingerprint: string, files: ResolvedFile[]) => apiFetch<void>(`/v2/runs/${encodeURIComponent(id)}/plan/tasks/${encodeURIComponent(task)}/attempts/${encodeURIComponent(attempt)}/resolve`, { method: 'POST', body: JSON.stringify({ fingerprint, files }) }),

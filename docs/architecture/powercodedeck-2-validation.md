@@ -256,3 +256,25 @@ Task-local resolutions are not automatically reused by later Tasks or final
 integration. Those stages may need a new explicit resolution. Retained workspace
 cleanup is the next structural step; optional undo and multi-server ownership are
 separate extensions.
+
+## Explicit retained workspace cleanup — 2026-09-08
+
+Added an owned-workspace registry preview and fingerprint-bound, per-workspace
+cleanup. The UI requires a concrete selection and confirmation. The server keeps
+evidence files and pins input/result commits before removing only the worktree.
+No actual user Run workspace was deleted while implementing this feature.
+
+Tests remove Task and integration workspaces in temporary repositories, preserve
+their patch evidence, run final integration after Task cleanup, run Git GC and
+then apply the reviewed result successfully. Other coverage includes draft
+preservation, conflict exclusion, changed/forged previews, foreign attempts,
+path traversal, manual edits, opposing staged/local edits, ignored and untracked
+files, hidden index flags, locked worktrees, symlink replacement and active-worker
+exclusion. Missing workspaces remain visible as unavailable metadata.
+
+Validation: targeted cleanup tests, full server `go test -race ./...`,
+`go vet ./...`, client `npm run build`, and `git diff --check`. Existing frontend
+dependency/import/chunk warnings remain. Browser E2E and authenticated provider
+validation are still outstanding. Evidence/ref expiry, dirty-workspace removal,
+cleanup of interrupted Git metadata, and multiple server owners are not covered
+by this feature.

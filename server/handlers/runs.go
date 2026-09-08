@@ -31,6 +31,35 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 		}
 	}
 	if worker != nil {
+		api.HandleFunc("/v2/runs/{id}/cleanup", func(w http.ResponseWriter, r *http.Request) {
+			preview, err := worker.PreviewCleanup(mux.Vars(r)["id"], r.URL.Query().Get("before"))
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			jsonResponse(w, preview)
+		}).Methods("GET")
+		api.HandleFunc("/v2/runs/{id}/cleanup/{attempt}", func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Fingerprint string `json:"fingerprint"`
+			}
+			d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+			d.DisallowUnknownFields()
+			if err := d.Decode(&body); err != nil {
+				jsonError(w, "invalid cleanup request", 400)
+				return
+			}
+			if d.Decode(new(any)) != io.EOF {
+				jsonError(w, "one cleanup object required", 400)
+				return
+			}
+			vars := mux.Vars(r)
+			if err := worker.CleanupWorkspace(vars["id"], vars["attempt"], body.Fingerprint); err != nil {
+				fail(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}).Methods("POST")
 		api.HandleFunc("/v2/runs/{id}/plan/tasks/{task}/attempts/{attempt}/resolve", func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
 				Fingerprint string                       `json:"fingerprint"`
