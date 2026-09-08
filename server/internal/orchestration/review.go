@@ -125,7 +125,7 @@ func (w *Worker) review(ctx context.Context, run Run, execution, worktree, base,
 		return false, "", fmt.Errorf("review factory returned no execution")
 	}
 	defer reviewer.Stop()
-	if reviewer.Identity().ExecutionID != id || string(reviewer.Identity().Provider) != run.Provider {
+	if reviewer.Identity().ExecutionID != id || reviewer.Identity().Provider == "" {
 		return false, "", fmt.Errorf("review execution identity mismatch")
 	}
 	if err := reviewer.Start(); err != nil {

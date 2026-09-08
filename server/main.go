@@ -236,7 +236,15 @@ func main() {
 			}
 			root = filepath.Join(cache, "powercodedeck", "runs")
 		}
+		selfPath, err := os.Executable()
+		if err != nil {
+			log.Fatal(err)
+		}
+		runProviders := &services.RunProviders{Broker: services.NewPermissionBroker(), Tokens: services.NewApproveTokenStore(), SelfPath: selfPath, ApproveURL: "http://127.0.0.1:" + cfg.Port + "/internal/runs/approve"}
+		r.HandleFunc("/internal/runs/approve", handlers.NativeApprove(runProviders.Broker, runProviders.Tokens)).Methods("POST")
 		runWorker, err = orchestration.NewWorker(runs, root, map[string]orchestration.Factory{
+			"claude": func(id, cwd string) (providers.Execution, error) { return runProviders.New(providers.Claude, id, cwd) },
+			"codex":  func(id, cwd string) (providers.Execution, error) { return runProviders.New(providers.Codex, id, cwd) },
 			"antigravity": func(id, cwd string) (providers.Execution, error) {
 				return antigravity.New(id, antigravity.Config{Cwd: cwd})
 			},
@@ -248,6 +256,7 @@ func main() {
 			return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "plan", JSONSchema: orchestration.ReviewJSONSchema, Sandbox: true})
 		})
 		handlers.RegisterRunRoutes(api, runs, runWorker)
+		handlers.RegisterRunApprovalRoutes(api, runs, runProviders.Broker)
 	}
 
 	// Agents

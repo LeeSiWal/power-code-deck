@@ -44,6 +44,13 @@ export interface RunSummary {
   state: string;
 }
 
+export interface RunApproval {
+  id: string;
+  sessionId: string;
+  toolName: string;
+  input: unknown;
+}
+
 export interface RunArtifact {
   kind: string;
   baseCommit: string;
@@ -211,6 +218,9 @@ export const api = {
   // Durable 2.0 Runs. These routes remain opt-in on the server until the runtime
   // is ready to replace the legacy session-first flow.
   listRuns: () => apiFetch<{ runs: RunSummary[] }>('/v2/runs'),
+  runApprovals: (id: string) => apiFetch<RunApproval[]>(`/v2/runs/${encodeURIComponent(id)}/approvals`),
+  decideRunApproval: (run: string, id: string, behavior: 'allow' | 'deny') =>
+    apiFetch(`/v2/runs/${encodeURIComponent(run)}/approvals`, { method: 'POST', body: JSON.stringify({ id, behavior }) }),
   getRun: (id: string) => apiFetch<Run>(`/v2/runs/${encodeURIComponent(id)}`),
   createRun: (data: { path: string; prompt: string; provider: string }, key: string) =>
     apiFetch<Run>('/v2/runs', {

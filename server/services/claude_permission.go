@@ -136,6 +136,19 @@ func (b *PermissionBroker) Resolve(id string, d PermissionDecision) bool {
 	return true
 }
 
+// ResolveSession checks ownership and delivers the answer under the same lock.
+func (b *PermissionBroker) ResolveSession(sessionID, id string, d PermissionDecision) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	p := b.pending[id]
+	if p == nil || p.req.SessionID != sessionID {
+		return false
+	}
+	delete(b.pending, id)
+	p.answer <- d
+	return true
+}
+
 // Pending lists unanswered requests — what a device that just attached must show.
 // Without this, a phone that reconnects would sit in front of a stalled agent with
 // no idea it's waiting on a tap.

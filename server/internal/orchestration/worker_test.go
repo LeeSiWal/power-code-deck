@@ -16,6 +16,7 @@ import (
 )
 
 type fakeExecution struct {
+	provider     providers.ID
 	id           string
 	cwd          string
 	block        bool
@@ -27,7 +28,39 @@ type fakeExecution struct {
 }
 
 func (e *fakeExecution) Identity() providers.Identity {
+	if e.provider != "" {
+		return providers.Identity{ExecutionID: e.id, Provider: e.provider}
+	}
 	return providers.Identity{ExecutionID: e.id, Provider: providers.Antigravity}
+}
+
+func TestNativeRunWithIndependentAntigravityReview(t *testing.T) {
+	for _, provider := range []providers.ID{providers.Claude, providers.Codex} {
+		t.Run(string(provider), func(t *testing.T) {
+			store := openTest(t, filepath.Join(t.TempDir(), "runs.db"))
+			run, err := store.Create("native", testRepo(t), "edit tracked file", string(provider))
+			if err != nil {
+				t.Fatal(err)
+			}
+			worker, err := NewWorker(store, t.TempDir(), map[string]Factory{string(provider): func(id, cwd string) (providers.Execution, error) {
+				return &fakeExecution{id: id, cwd: cwd, provider: provider, stopped: make(chan struct{})}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			worker.SetReviewer(func(id, cwd string) (providers.Execution, error) {
+				return &fakeExecution{id: id, cwd: cwd, response: `{"verdict":"pass","summary":"independent review passed"}`, stopped: make(chan struct{})}, nil
+			})
+			if _, err := worker.Start(run.ID); err != nil {
+				t.Fatal(err)
+			}
+			waitWorker(t, worker)
+			got, err := store.Get(run.ID)
+			if err != nil || got.State != "succeeded" {
+				t.Fatal(got, err)
+			}
+		})
+	}
 }
 func (e *fakeExecution) Capabilities() providers.Capabilities { return providers.Capabilities{} }
 func (e *fakeExecution) Start() error                         { return nil }

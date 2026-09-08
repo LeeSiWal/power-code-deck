@@ -1,6 +1,6 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ApiError, api, Run, RunArtifact, RunSummary } from '../lib/api';
+import { ApiError, api, Run, RunApproval, RunArtifact, RunSummary } from '../lib/api';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack, IconCheck, IconClose, IconPlay, IconRocket, IconSpinner } from '../components/icons';
 import { useGoUp } from '../hooks/useGoUp';
@@ -49,6 +49,11 @@ export function RunsPage() {
   const [recentProjects, setRecentProjects] = useState<{ name: string; path: string }[]>([]);
   const [path, setPath] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [provider, setProvider] = useState('antigravity');
+  const [approvals, setApprovals] = useState<RunApproval[]>([]);
+  const [deciding, setDeciding] = useState('');
+  const selectedID = useRef(id);
+  selectedID.current = id;
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [disabled, setDisabled] = useState(false);
@@ -71,6 +76,7 @@ export function RunsPage() {
   const loadRun = useCallback(async (runId: string) => {
     try {
       const next = await api.getRun(runId);
+      if (selectedID.current !== runId) return null;
       setRun(next);
       setRuns((current) => current.map((item) => item.id === next.id
         ? { id: next.id, path: next.path, prompt: next.prompt, provider: next.provider, state: next.state }
@@ -92,6 +98,7 @@ export function RunsPage() {
 
   useEffect(() => {
     setArtifact(null);
+    setApprovals([]);
     if (!id) {
       setRun(null);
       return;
@@ -99,6 +106,37 @@ export function RunsPage() {
     setRun(null);
     loadRun(id);
   }, [id, loadRun]);
+
+  useEffect(() => {
+    if (!id || run?.id !== id || run.state !== 'running') { setApprovals([]); return; }
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const pending = await api.runApprovals(id);
+        if (!disposed) setApprovals(pending || []);
+      } catch (err) {
+        if (!disposed && !(err instanceof ApiError && err.status === 409)) {
+          setError('승인 요청을 불러오지 못했습니다. 연결을 확인하세요.');
+        }
+      } finally {
+        if (!disposed) timer = setTimeout(poll, 1500);
+      }
+    };
+    poll();
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [id, run?.id, run?.state]);
+
+  const decide = async (request: RunApproval, behavior: 'allow' | 'deny') => {
+    if (!run || deciding) return;
+    setDeciding(request.id);
+    try {
+      await api.decideRunApproval(run.id, request.id, behavior);
+      setApprovals((items) => items.filter((item) => item.id !== request.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '승인을 처리하지 못했습니다');
+    } finally { setDeciding(''); }
+  };
 
   useEffect(() => {
     if (!id || !run || !activeStates.has(run.state)) return;
@@ -134,7 +172,7 @@ export function RunsPage() {
       const key = typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
         : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const created = await api.createRun({ path: path.trim(), prompt: prompt.trim(), provider: 'antigravity' }, key);
+      const created = await api.createRun({ path: path.trim(), prompt: prompt.trim(), provider }, key);
       setPrompt('');
       navigate(`/runs/${created.id}`);
       await api.startRun(created.id);
@@ -186,7 +224,7 @@ export function RunsPage() {
           <form onSubmit={create} className="rounded-xl border border-deck-border bg-deck-surface p-3 space-y-3">
             <div>
               <div className="text-xs font-semibold">새 작업</div>
-              <div className="text-[11px] text-deck-text-dim mt-0.5">Antigravity가 별도 작업 공간에서 구현하고 검증합니다.</div>
+              <div className="text-[11px] text-deck-text-dim mt-0.5">선택한 에이전트가 구현하고 Antigravity가 독립 리뷰합니다.</div>
             </div>
             <label className="block">
               <span className="text-[11px] text-deck-text-dim">프로젝트 폴더</span>
@@ -202,6 +240,14 @@ export function RunsPage() {
                 ))}
               </div>
             )}
+            <label className="block">
+              <span className="text-[11px] text-deck-text-dim">구현 에이전트</span>
+              <select value={provider} onChange={(event) => setProvider(event.target.value)} className="input w-full mt-1">
+                <option value="antigravity">Antigravity</option>
+                <option value="claude">Claude Code</option>
+                <option value="codex">Codex</option>
+              </select>
+            </label>
             <label className="block">
               <span className="text-[11px] text-deck-text-dim">할 일</span>
               <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} placeholder="추가하거나 고칠 내용을 설명하세요" className="input w-full mt-1 resize-y text-sm" />
@@ -263,6 +309,22 @@ export function RunsPage() {
                   )}
                 </div>
               </div>
+
+              {approvals.length > 0 && (
+                <div className="rounded-xl border border-amber-500/40 bg-deck-surface p-4 space-y-3">
+                  <div className="text-sm font-semibold">승인이 필요합니다</div>
+                  {approvals.map((request) => (
+                    <div key={request.id} className="space-y-2">
+                      <div className="text-xs font-medium">{request.toolName}</div>
+                      <pre className="text-xs whitespace-pre-wrap break-words max-h-48 overflow-auto">{JSON.stringify(request.input, null, 2)}</pre>
+                      <div className="flex gap-2">
+                        <button disabled={!!deciding} onClick={() => decide(request, 'allow')} className="btn-primary disabled:opacity-40">이번 요청 허용</button>
+                        <button disabled={!!deciding} onClick={() => decide(request, 'deny')} className="px-3 py-2 text-xs border border-deck-border rounded-lg disabled:opacity-40">거부</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {latest && (
                 <>
