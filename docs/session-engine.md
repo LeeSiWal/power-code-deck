@@ -2,13 +2,20 @@
 
 ## Current phase
 
-PowerCodeDeck routes all terminal/agent session management through a single
-`SessionEngine` interface ([server/services/session_engine.go](../server/services/session_engine.go)).
-There is **one implementation**: `InternalPtySessionEngine`
-([code](../server/services/session_engine_internal.go)). `pcd` owns each
-session's process + PTY directly (go-pty) and keeps per-session scrollback in
-a bounded [ring buffer](../server/services/ring_buffer.go). **tmux is no longer
-used or required** anywhere.
+PowerCodeDeck routes terminal session management through the shared
+[`SessionEngine` contract](../server/internal/runtime/session/session.go).
+The implementation is [`pty.Engine`](../server/internal/runtime/pty/engine.go),
+which owns the process, PTY, viewers and bounded
+[replay buffer](../server/internal/runtime/pty/ring_buffer.go).
+
+The legacy `services.SessionEngine` and `InternalPtySessionEngine` names are
+aliases. The [service constructor](../server/services/session_engine_internal.go)
+uses the shared engine with the existing
+[CLI/platform launch policy](../server/services/session_launch.go).
+The runtime itself does not import the application or install model CLIs.
+This is the first [2.0 migration slice](architecture/powercodedeck-2-migration.md);
+HTTP/WS contracts, persisted sessions and the UI remain compatible. tmux is not
+required. Processes survive viewer detach, but do not survive a server restart.
 
 ```
 Browser / Mobile / iPad

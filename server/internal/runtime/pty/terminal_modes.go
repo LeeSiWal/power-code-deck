@@ -1,4 +1,4 @@
-package services
+package pty
 
 import (
 	"bytes"
@@ -20,6 +20,7 @@ import (
 //     is dead (the reported resume-scroll bug), and
 //   - the app is in alt-screen → the replay content is rendered into the normal
 //     buffer instead of the alternate screen → misrender.
+//
 // So we parse the output stream, remember which modes are on, and prepend them
 // to the replay on Attach. All tracked modes default to reset, so replaying only
 // the currently-set ones as `CSI ? n h` fully and correctly restores state.
@@ -38,7 +39,7 @@ func newTerminalModes() *terminalModes {
 func trackedMode(n int) bool {
 	switch n {
 	case 47, 1047, 1049, // alternate screen buffer
-		1,                                            // DECCKM — application cursor keys (arrow-key encoding)
+		1,                                              // DECCKM — application cursor keys (arrow-key encoding)
 		1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, // mouse tracking + encodings
 		2004: // bracketed paste
 		return true

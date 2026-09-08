@@ -80,9 +80,9 @@ power-code-deck/                # 저장소 디렉터리
 │   │   └── helpers.go          # jsonResponse, jsonError 유틸
 │   ├── services/
 │   │   ├── agent.go            # 에이전트 비즈니스 로직, 색상 배정, SendKeys (SessionEngine 경유)
-│   │   ├── session_engine.go          # SessionEngine 인터페이스 + 타입 (세션 조작의 유일한 경계)
-│   │   ├── session_engine_internal.go # InternalPtySessionEngine — 프로세스/PTY 직접 소유, viewer 추적, Detach≠Kill
-│   │   ├── ring_buffer.go      # 세션별 스크롤백 링버퍼 (재접속 시 재생)
+│   │   ├── session_engine.go          # internal/runtime/session 인터페이스·타입 호환 별칭
+│   │   ├── session_engine_internal.go # 공유 PTY 런타임 생성자 + 기존 실행 정책 주입
+│   │   ├── ring_buffer.go      # internal/runtime/pty 링버퍼 호환 별칭
 │   │   ├── file.go             # 파일시스템 조작, 경로 보안검증
 │   │   ├── project.go          # 프로젝트 탐색, 최근 프로젝트 DB
 │   │   ├── watcher.go          # fsnotify 파일감시 → WS 브로드캐스트
@@ -456,3 +456,11 @@ xterm 옵션: scrollback 3000, scrollSensitivity 1.1~1.25, smoothScrollDuration 
 - **반응형**: useDevice 훅으로 mobile/tablet/desktop 분기
 - **색상 자동배정**: HSL 거리 최대화로 에이전트별 고유 컬러
 - **디버그**: `?debug` 쿼리로 Eruda 모바일 콘솔 활성화
+
+## PowerCodeDeck 2.0 runtime foundation
+
+The shared session contract lives in `server/internal/runtime/session`; PTY/process
+ownership and terminal mechanics live in `server/internal/runtime/pty`. Existing
+services expose compatibility aliases and inject the legacy launch policy from
+`session_launch.go`. See [the migration plan](docs/architecture/powercodedeck-2-migration.md)
+for the component inventory, dependency direction, rollout gates and rollback.
