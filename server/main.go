@@ -365,20 +365,12 @@ func main() {
 	if err != nil {
 		log.Printf("No embedded static files found, serving API only")
 	} else {
+		appShell := handlers.AppShell(staticFS)
 		// SPA frontend routes — serve index.html for client-side routing
 		spaRoutes := []string{"/agents", "/dashboard", "/control", "/login", "/settings", "/logs", "/launch"}
 		for _, route := range spaRoutes {
-			route := route
-			r.PathPrefix(route).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				if f, err := staticFS.(fs.ReadFileFS).ReadFile("index.html"); err == nil {
-					w.Header().Set("Content-Type", "text/html")
-					w.Header().Set("Cache-Control", "no-cache")
-					w.Write(f)
-				}
-			})
+			r.PathPrefix(route).HandlerFunc(appShell)
 		}
-
-		fileServer := http.FileServer(http.FS(staticFS))
 
 		r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path
@@ -415,9 +407,7 @@ func main() {
 			}
 
 			// SPA fallback
-			w.Header().Set("Cache-Control", "no-cache")
-			r.URL.Path = "/index.html"
-			fileServer.ServeHTTP(w, r)
+			appShell(w, r)
 		})
 	}
 

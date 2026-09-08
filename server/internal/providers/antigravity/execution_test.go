@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +47,13 @@ func TestAGYHelper(t *testing.T) {
 	if prompt == "missing" {
 		os.Exit(0)
 	}
+	if prompt == "permission-empty" || prompt == "empty-success" {
+		if prompt == "permission-empty" {
+			fmt.Fprintln(os.Stderr, `jetski: no output produced — a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.`)
+		}
+		fmt.Println(`{"event":"result","result":{"conversation_id":"agy-conversation","status":"SUCCESS","response":""}}`)
+		os.Exit(0)
+	}
 	cwd, _ := os.Getwd()
 	observation, _ := json.Marshal(map[string]string{"prompt": prompt, "model": value("--model"), "mode": value("--mode"), "schema": value("--json-schema"), "resume": value("--conversation"), "cwd": cwd, "sandbox": fmt.Sprint(present("--sandbox")), "bypass": fmt.Sprint(present("--dangerously-skip-permissions"))})
 	message, _ := json.Marshal(map[string]any{"event": "step_update", "step_update": map[string]any{"step_type": "agent_response", "step_index": 1, "state": "DONE", "conversation_id": "agy-conversation", "text_delta": string(observation)}})
@@ -74,6 +82,29 @@ func helperExecution(t *testing.T) *Execution {
 		t.Fatal(err)
 	}
 	return e
+}
+
+func TestHeadlessPermissionDenialOverridesEmptySuccess(t *testing.T) {
+	for _, prompt := range []string{"permission-empty", "empty-success"} {
+		t.Run(prompt, func(t *testing.T) {
+			e := helperExecution(t)
+			if err := e.Send(prompt); err != nil {
+				t.Fatal(err)
+			}
+			events := drain(t, e)
+			last := events[len(events)-1]
+			if last.Kind != providers.TurnFinished || last.Outcome == nil {
+				t.Fatal(last)
+			}
+			if prompt == "permission-empty" {
+				if !last.Outcome.IsError || last.Outcome.Status != providers.CompletionFailed || last.Outcome.Reason != "permission_denied" || !strings.Contains(last.Outcome.Diagnostics, "read_file") {
+					t.Fatal(last.Outcome)
+				}
+			} else if last.Outcome.IsError || last.Outcome.Status != providers.CompletionSuccess {
+				t.Fatal("empty response alone is not proof of denial", last.Outcome)
+			}
+		})
+	}
 }
 func drain(t *testing.T, e *Execution) []providers.Event {
 	t.Helper()

@@ -278,3 +278,52 @@ dependency/import/chunk warnings remain. Browser E2E and authenticated provider
 validation are still outstanding. Evidence/ref expiry, dirty-workspace removal,
 cleanup of interrupted Git metadata, and multiple server owners are not covered
 by this feature.
+
+## Browser smoke and real Antigravity denial — 2026-09-08
+
+Used the embedded production UI on a loopback-only server with a separate SQLite
+database, work root and Git fixture. Existing user repositories, databases and
+CLI permission settings were not changed. Browser interactions used the actual
+UI and server, not mocked API responses.
+
+Observed browser results:
+
+- Opened the existing home/control views and navigated to Runs.
+- Created a Run and observed planning state, disabled editing and draft history.
+- After live generation failed, edited two manual Tasks, set a dependency and
+  confirmed the plan. Refreshing history preserved unsaved edits. A subsequent
+  direct navigation/reload preserved the frozen plan and dependency.
+- Attempting execution without a project check manifest was rejected before
+  provider execution.
+- Loaded cleanup candidates, selected the confirmation step and canceled it.
+  No workspace was deleted through the browser during this check.
+
+Two defects found and fixed:
+
+1. Direct `/runs/...` navigation used FileServer with a rewritten `/index.html`
+   path. Its redirect to `./` caused a loop. `handlers.AppShell` now serves the
+   shell directly without rewriting the request. GET/HEAD, deep links, cache
+   headers and missing-shell errors have regression coverage. Direct navigation
+   and reload were confirmed in the browser after rebuilding.
+2. Installed `agy --version` reported 1.1.27. The opt-in real Worker test failed
+   because `read_file` permission was auto-denied in headless mode. The CLI still
+   reported an empty successful result and exit zero; the project check caught
+   the missing edit. The adapter now classifies the explicit no-output/headless
+   auto-denial diagnostic as `permission_denied` when the final response is empty.
+   Empty responses without that diagnostic and normal successful responses keep
+   their existing semantics. CLI diagnostics remain available. No permission
+   bypass or automatic allow rule was introduced.
+
+The initial browser planning attempt exposed the same issue as `invalid plan
+draft: EOF`. A second real browser planning attempt with the fixed adapter showed
+the permission-denial explanation and retained a failed draft, with manual
+editing available. The source fixture remained clean.
+
+Passed: full server `go test -race ./...`, targeted adapter/handler regression
+tests, `go vet ./...`, production server build and `npm run build`. Existing
+frontend build warnings remain. A complete authenticated implementation/review
+success path is still blocked by the configured CLI permissions. Browser conflict
+repair, final integration/application, destructive cleanup and mobile handoff
+still need dedicated end-to-end checks; earlier temporary-repository Go tests do
+not substitute for those browser checks. Verification server processes were
+stopped afterward; scratch fixtures and logs remain outside the repository.

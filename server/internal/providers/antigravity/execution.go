@@ -302,6 +302,19 @@ func (e *Execution) pump(cmd *exec.Cmd, stdout io.ReadCloser, stderr *tail) {
 		}
 	}
 	final.Outcome.Diagnostics = strings.TrimSpace(string(stderr.data))
+	// Observed in agy 1.1.27: a headless permission denial can still emit a
+	// SUCCESS result and exit zero, with an empty response. Fail this explicit
+	// no-output diagnostic; ordinary tool warnings with a final answer remain
+	// subject to the CLI outcome and the worker's independent verification.
+	if final.Outcome.Status == providers.CompletionSuccess && strings.TrimSpace(final.Outcome.Text) == "" &&
+		strings.Contains(final.Outcome.Diagnostics, "jetski: no output produced") &&
+		strings.Contains(final.Outcome.Diagnostics, "headless mode cannot prompt") &&
+		strings.Contains(final.Outcome.Diagnostics, "auto-denied") {
+		final.Outcome.Status = providers.CompletionFailed
+		final.Outcome.IsError = true
+		final.Outcome.Reason = "permission_denied"
+		final.Outcome.Text = "Antigravity could not proceed: a required tool permission was denied in headless mode. Review the CLI permission settings for this workspace."
+	}
 	emit(*final)
 }
 
