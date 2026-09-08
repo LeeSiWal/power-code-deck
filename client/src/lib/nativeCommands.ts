@@ -1,4 +1,4 @@
-export type NativeDriverName = 'codex' | 'claude';
+export type NativeDriverName = 'codex' | 'claude' | 'antigravity';
 
 export function clientCommand(text: string): 'clear' | 'plugin' | 'native' | null {
   if (text === '/clear') return 'clear';

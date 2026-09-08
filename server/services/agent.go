@@ -214,6 +214,10 @@ func (s *AgentService) assignColor() (int, string) {
 }
 
 func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
+	nativeOnly := req.Preset == "antigravity"
+	if nativeOnly && (req.Command != "agy" || len(req.Args) != 0) {
+		return nil, fmt.Errorf("Antigravity requires command agy without custom arguments")
+	}
 	b := make([]byte, 4)
 	rand.Read(b)
 	id := hex.EncodeToString(b)
@@ -232,19 +236,22 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 		return nil, err
 	}
 
-	// Start the session's process via the engine (tmux/PTY details are hidden).
-	if _, err := s.engine.Create(CreateSessionRequest{
-		ID:      id,
-		Type:    req.Preset,
-		Command: req.Command,
-		Args:    req.Args,
-		Cwd:     workingDir,
-		Cols:    80,
-		Rows:    24,
-	}); err != nil {
-		return nil, fmt.Errorf("failed to start session: %w", err)
-	}
+	// Antigravity starts on native:open; do not launch a second interactive CLI.
+	if !nativeOnly {
+		// Start the session's process via the engine (tmux/PTY details are hidden).
+		if _, err := s.engine.Create(CreateSessionRequest{
+			ID:      id,
+			Type:    req.Preset,
+			Command: req.Command,
+			Args:    req.Args,
+			Cwd:     workingDir,
+			Cols:    80,
+			Rows:    24,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to start session: %w", err)
+		}
 
+	}
 	now := time.Now().Format("2006-01-02T15:04:05Z")
 	agent := &Agent{
 		ID:          id,
@@ -261,12 +268,17 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 		UpdatedAt:   now,
 	}
 
+	if nativeOnly {
+		agent.Status = "stopped"
+	}
 	_, err = s.db.Exec(
 		"INSERT INTO agents (id, preset, name, tmux_session, working_dir, command, args, status, color_hue, color_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		agent.ID, agent.Preset, agent.Name, agent.TmuxSession, agent.WorkingDir, agent.Command, string(argsJSON), agent.Status, agent.ColorHue, agent.ColorName,
 	)
 	if err != nil {
-		s.engine.Kill(id)
+		if !nativeOnly {
+			s.engine.Kill(id)
+		}
 		return nil, err
 	}
 
@@ -275,6 +287,9 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 	// /clear and 이어하기 paths copy from their exact source agent afterwards; this is
 	// the general case — a fresh agent from the dashboard or a new project.)
 	driver := "claude"
+	if nativeOnly {
+		driver = "antigravity"
+	}
 	if req.Preset == "codex-cli" || req.Command == "codex" {
 		driver = "codex"
 	}
@@ -313,6 +328,9 @@ func ResolveWorkingDir(dir string) (string, error) {
 // (Claude's defaults). The just-created row can't match itself: it's still empty, so
 // the "!= ”" filter excludes it.
 func (s *AgentService) inheritedNativeConfig(workingDir, driver string) (model, mode, effort string) {
+	if driver == "antigravity" {
+		return "", "", ""
+	}
 	match := `( (? = 'codex' AND (preset = 'codex-cli' OR command = 'codex'))
 	            OR (? = 'claude' AND (preset IN ('claude', 'claude-code') OR command = 'claude')) )`
 	const set = `(native_model != '' OR native_mode != '' OR native_effort != '')`
@@ -425,6 +443,10 @@ func (s *AgentService) Restart(id string) (*Agent, error) {
 	agent, err := s.Get(id)
 	if err != nil {
 		return nil, err
+	}
+
+	if agent.Preset == "antigravity" {
+		return agent, nil
 	}
 
 	// Restart = Kill the current process, then start a fresh one. Rebuilt from

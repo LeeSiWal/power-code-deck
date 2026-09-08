@@ -41,10 +41,10 @@ interface NativeChatProps {
   agentId: string;
   cwd: string;
   model?: string;
-  driver?: 'claude' | 'codex';
+  driver?: NativeDriverName;
 }
 
-const cloudTargetName = (d: NativeDriverName) => (d === 'codex' ? 'Codex' : 'Claude Code');
+const cloudTargetName = (d: NativeDriverName) => (d === 'antigravity' ? 'Antigravity' : d === 'codex' ? 'Codex' : 'Claude Code');
 
 // Model choices for the switcher. `id` is passed straight to the CLI's --model;
 // '' = the CLI default ("Auto"). Switching restarts the session on the same
@@ -126,6 +126,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   useEffect(() => { evictedRef.current = evicted; }, [evicted]);
   const sentTimer = useRef<number | null>(null);
   const [modelId, setModelId] = useState(() => {
+    if (driver === 'antigravity') return '';
     const saved = localStorage.getItem(`pcd:model:${agentId}`) || '';
     // Model catalogs change across Codex releases. Never keep launching a stale
     // slug that the current switcher no longer supports: a failed app-server
@@ -189,22 +190,23 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
 
   // Shift+Tab cycles the permission mode, like the Claude Code TUI.
   const cycleMode = useCallback(() => {
+    if (driver === 'antigravity') return;
     const i = MODES.findIndex((m) => m.id === modeIdRef.current);
     pickMode(MODES[(i + 1) % MODES.length].id);
-  }, [pickMode]);
+  }, [pickMode, driver]);
 
   const models = driver === 'codex' ? CODEX_MODELS : MODELS;
   const modelLabel = models.find((m) => m.id === modelId)?.label ?? modelId ?? 'Auto';
   const currentMode = MODES.find((m) => m.id === modeId) ?? MODES[0];
   // Codex has no effort concept, so the control is hidden there rather than shown
   // inert — a setting that silently does nothing is worse than no setting.
-  const showEffort = driver !== 'codex';
+  const showEffort = driver === 'claude';
   const currentEffort = EFFORTS.find((e) => e.id === effortId) ?? EFFORTS[2];
 
   // A missing CLI is recoverable from inside the deck. Open a real PTY because
   // both installers and OAuth login are interactive (especially on WSL/SSH where
   // the browser returns a code that must be pasted back into the terminal).
-  const cliMissing = /executable file not found|not found in \$PATH|no such file or directory/i.test(error)
+  const cliMissing = driver !== 'antigravity' && /executable file not found|not found in \$PATH|no such file or directory/i.test(error)
     && error.toLowerCase().includes(driver);
   const openSetup = useCallback(async () => {
     setOpeningSetup(true);
@@ -299,8 +301,9 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   const [cmdIdx, setCmdIdx] = useState(0);
   const [cmdDismissed, setCmdDismissed] = useState(false);
   useEffect(() => {
+    if (driver === 'antigravity') { setCmds([]); return; }
     api.slashCommands(agentId).then(setCmds).catch(() => { /* no picker is fine */ });
-  }, [agentId]);
+  }, [agentId, driver]);
 
   // Offer completions only while the draft IS the token — "/dep", "@rev". A space
   // means arguments have started and the choice is already made. The colon is part
@@ -446,6 +449,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   }, [agentId]);
 
   const send = useCallback(async () => {
+    if (driver === 'antigravity' && working) return;
     const text = draft.trim();
     if (!text && !attachments.length) return;
     const command = !attachments.length ? clientCommand(text) : null;
@@ -469,6 +473,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     // (`/plugin`, `/plugins`, `/plugin foo`) opens the management panel, prefilling a
     // search with whatever followed the command.
     if (command === 'plugin') {
+      if (driver === 'antigravity') { setError('Antigravity 플러그인은 agy CLI에서 관리해주세요.'); return; }
       setDraft('');
       setHistIdx(null);
       const rest = text.replace(/^\/plugins?\s*/, '').trim();
@@ -502,7 +507,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       ? (text ? text + '\n\n' : '') + '첨부 파일 (Read 도구로 확인해줘):\n' + attachments.map((a) => a.path).join('\n')
       : text;
     sendText(msg);
-  }, [agentId, attachments, draft, navigate, sendText]);
+  }, [agentId, attachments, draft, navigate, sendText, driver, working]);
 
   const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string, remember?: boolean) => {
     agentDeckWS.send('native:decide', { agentId, id, behavior, message, remember });
@@ -840,15 +845,15 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
             >
               {uploading ? <IconSpinner size={15} className="animate-spin" /> : <IconPlus size={15} />}
             </button>
-            <button
+            {driver !== 'antigravity' && <button
               onClick={() => setMenu(menu === 'model' ? null : 'model')}
               className="shrink-0 h-8 px-2.5 rounded-full bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1.5"
               title="모델 전환"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-deck-accent" />
               {modelLabel}
-            </button>
-            <button
+            </button>}
+            {driver !== 'antigravity' && <button
               onClick={() => setMenu(menu === 'mode' ? null : 'mode')}
               className={`shrink-0 h-8 px-2.5 rounded-full border text-xs font-medium flex items-center gap-1.5 ${currentMode.pill} ${
                 menu === 'mode' ? 'ring-1 ring-deck-accent' : ''
@@ -857,7 +862,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
             >
               <currentMode.icon size={13} />
               {currentMode.label}
-            </button>
+            </button>}
+            {driver === 'antigravity' && <span className="text-xs text-deck-text-dim">Antigravity · CLI 설정 사용</span>}
             {showEffort && (
               <button
                 onClick={() => { setMenu(null); setOptionsOpen(true); }}
@@ -903,11 +909,11 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
             )}
             <button
               onClick={send}
-              disabled={!draft.trim() && !attachments.length}
+              disabled={(!draft.trim() && !attachments.length) || (driver === 'antigravity' && working)}
               className="shrink-0 px-4 h-8 rounded-lg bg-deck-accent text-white text-sm font-medium disabled:opacity-40"
               title={busy ? '현재 답변이 끝나면 이어서 처리됩니다' : undefined}
             >
-              {busy ? '이어서' : '보내기'}
+              {busy ? (driver === 'antigravity' ? '작업 중' : '이어서') : '보내기'}
             </button>
           </div>
         </div>
@@ -946,6 +952,7 @@ function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) 
     // attached in every mode. A missing bridge is now a genuine fault everywhere, and
     // that mode is the worst place to hide it — it is where a silent denial looks
     // exactly like the agent deciding to skip the work.
+    if (item.approvalHandling === 'cli_settings') return <div className="text-xs text-deck-text-dim px-3 py-2">Antigravity CLI의 로그인·권한 설정을 사용합니다. 권한 요청은 이 화면에서 승인할 수 없습니다.</div>;
     if (item.bridgeOk) return null;
     return (
       <div className="text-[11px] text-red-400 border border-red-400/40 bg-red-400/5 rounded-lg px-3 py-2 flex items-center gap-1.5">
@@ -998,6 +1005,7 @@ function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) 
   // now renders only when it has something the user must act on. "success" describes
   // the turn, not the work: a turn where every tool was blocked still ends
   // successful, so say so rather than implying it happened.
+  if (item.notice && item.text) return <div className="text-xs text-amber-400 whitespace-pre-wrap border-t border-deck-border pt-2">{item.text}</div>;
   if (!item.denied.length) return null;
   return (
     <div className="text-[11px] text-amber-400 border-t border-deck-border pt-2 mt-2">

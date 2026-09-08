@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"powercodedeck/internal/providers"
+	"powercodedeck/internal/providers/antigravity"
 	"powercodedeck/internal/providers/native"
 )
 
@@ -127,8 +128,9 @@ type NativeService struct {
 
 type nativeSession struct {
 	id     string
-	driver *native.Adapter
-	kind   string // claude | codex
+	driver nativeExecution
+	kind   string // claude | codex | antigravity
+	sendMu sync.Mutex
 	cwd    string
 	model  string        // remembered so a mode switch keeps the model, and vice-versa
 	mode   string        // permission mode: "" | acceptEdits | plan | bypassPermissions
@@ -235,6 +237,9 @@ func (s *NativeService) SetOptions(sessionID string, opts NativeOptions) ([]stri
 	save := s.saveOptions
 	sess := s.sessions[sessionID]
 	s.mu.RUnlock()
+	if sess != nil && sess.kind == "antigravity" {
+		return nil, fmt.Errorf("Antigravity has no session options")
+	}
 	if save != nil {
 		save(sessionID, clean)
 	}
@@ -409,10 +414,16 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	if kind == "" {
 		kind = "claude"
 	}
+	if kind != "claude" && kind != "codex" && kind != "antigravity" {
+		return fmt.Errorf("unsupported native provider %q", kind)
+	}
 	cliMode := cliPermissionMode(mode)
 	// Codex has no effort equivalent, so its sessions report "" and the client hides the
 	// control rather than offering a setting that would do nothing.
-	if kind == "codex" {
+	if kind == "antigravity" {
+		mode, effort = "", ""
+	}
+	if kind == "codex" || kind == "antigravity" {
 		effort = ""
 	} else {
 		effort = normalizeEffort(effort)
@@ -423,7 +434,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	// world moves — an --add-dir path valid when it was saved may be gone now, and a
 	// stale path must not be what stops the session from starting.
 	var opts NativeOptions
-	if kind != "codex" {
+	if kind == "claude" {
 		s.mu.RLock()
 		loadOpts := s.loadOptions
 		s.mu.RUnlock()
@@ -432,7 +443,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		}
 	}
 	var token string
-	if kind != "codex" {
+	if kind == "claude" {
 		var err error
 		if token, err = s.tokens.Issue(sessionID); err != nil {
 			return err
@@ -457,7 +468,10 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			ApproveToken: token, SelfPath: s.selfBin,
 		})
 	}
-	newDriver := func(resume string) (*native.Adapter, error) {
+	newDriver := func(resume string) (nativeExecution, error) {
+		if kind == "antigravity" {
+			return newAntigravityChat(antigravity.Config{Cwd: cwd, Model: model, ResumeID: resume}), nil
+		}
 		// Each process attempt has its own ID, including a fresh-start retry.
 		provider := providers.Claude
 		if kind == "codex" {
@@ -474,7 +488,8 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		// A stale resume id (its transcript was deleted, or the CLI rejects it)
 		// must not lock the agent out of ever starting. Drop it and try fresh
 		// once, rather than failing every open from here on.
-		if resumeID == "" {
+		if resumeID == "" || kind == "antigravity" {
+			d.Stop()
 			s.tokens.Revoke(sessionID)
 			return err
 		}
@@ -548,7 +563,8 @@ func (s *NativeService) ExecutionIdentity(sessionID string) (providers.Identity,
 	if sess == nil || sess.driver == nil {
 		return providers.Identity{}, false
 	}
-	return sess.driver.Identity(), true
+	identity := sess.driver.Identity()
+	return identity, identity.ExecutionID != ""
 }
 
 // AddExecutionObserver receives provider-neutral live events. It does not replay
@@ -584,9 +600,14 @@ func (s *NativeService) pump(sess *nativeSession) {
 		if err != nil {
 			break
 		} // Background cannot cancel; channel EOF ends the pump.
-		s.emitExecution(sess, envelope.Event)
+		if sess.kind == "antigravity" {
+			sess.sendMu.Lock()
+		}
+		if envelope.Event.Identity.ExecutionID != "" {
+			s.emitExecution(sess, envelope.Event)
+		}
 		ev := envelope.Wire
-		if ev.Type == StreamTypeSystem && ev.Subtype == "init" && ev.SessionID != "" {
+		if (ev.Type == StreamTypeResult || ev.Type == StreamTypeSystem && ev.Subtype == "init") && ev.SessionID != "" {
 			s.mu.RLock()
 			save := s.onSessionID
 			s.mu.RUnlock()
@@ -595,6 +616,9 @@ func (s *NativeService) pump(sess *nativeSession) {
 			}
 		}
 		s.emit(sess, ev)
+		if sess.kind == "antigravity" {
+			sess.sendMu.Unlock()
+		}
 	}
 
 	// The process is gone: release anything waiting on a human for it, or the
@@ -653,6 +677,9 @@ func (s *NativeService) SetModel(sessionID, model string) error {
 	s.mu.RLock()
 	sess := s.sessions[sessionID]
 	s.mu.RUnlock()
+	if sess != nil && sess.kind == "antigravity" {
+		return fmt.Errorf("Antigravity model selection uses CLI configuration in this integration")
+	}
 	mode, effort := "", ""
 	if sess != nil {
 		mode, effort = sess.mode, sess.effort
@@ -673,8 +700,8 @@ func (s *NativeService) SetEffort(sessionID, effort string) error {
 	if sess == nil {
 		return fmt.Errorf("native session %s is not running", sessionID)
 	}
-	if sess.kind == "codex" {
-		return fmt.Errorf("codex sessions have no effort setting")
+	if sess.kind != "claude" {
+		return fmt.Errorf("this provider has no effort setting")
 	}
 	s.mu.RLock()
 	model, mode, current := sess.model, sess.mode, sess.effort
@@ -717,6 +744,9 @@ func (s *NativeService) SetMode(sessionID, mode string) error {
 	s.mu.RUnlock()
 	if sess == nil {
 		return fmt.Errorf("native session %s is not running", sessionID)
+	}
+	if sess.kind == "antigravity" {
+		return fmt.Errorf("Antigravity uses configured CLI permissions")
 	}
 	s.mu.RLock()
 	current, model := sess.mode, sess.model
@@ -794,6 +824,10 @@ func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText s
 	s.mu.RUnlock()
 	if sess == nil {
 		return fmt.Errorf("native session %s is not running", sessionID)
+	}
+	if sess.kind == "antigravity" {
+		sess.sendMu.Lock()
+		defer sess.sendMu.Unlock()
 	}
 	if err := sess.driver.Send(driverText); err != nil {
 		return err

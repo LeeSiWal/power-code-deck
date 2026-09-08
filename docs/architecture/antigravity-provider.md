@@ -52,8 +52,30 @@ whether a new conversation is appropriate. No history, credentials, approval
 policy, or model configuration is copied across providers by this runtime.
 
 This module is validated with subprocess fixtures using the actual Antigravity
-adapter. It is not yet wired into `NativeService` or the launcher. The next slice
-must map neutral text/tool/outcome events to legacy chat rendering, resolve
-provider and workspace from the stored agent, avoid launching a duplicate PTY,
-and hide unsupported mode/effort/plugin controls. Antigravity's cumulative usage
-must not be exposed as per-turn usage or accumulated again on each follow-up.
+adapter. `services/antigravity_chat.go` now connects it to `NativeService` through
+an application-owned compatibility envelope. The provider parser and conversation
+runtime remain independent of legacy chat events. Canonical events retain their
+per-process identities and full usage; legacy result events omit cumulative usage
+and unreported cost. Text deltas, tool calls/results, interruptions, failures, and
+stderr notices are projected into the existing chat.
+
+The launcher offers preset `antigravity` with command `agy` and no custom argv.
+Creation only stores the agent; native open validates the installed CLI and a
+prompt starts the process. There is no duplicate interactive PTY. WebSocket open
+resolves provider and working directory from the stored agent, and resume IDs
+remain server-owned. Antigravity does not inherit Claude/Codex model or policy
+settings. Its chat uses the CLI model and permission configuration; Claude-only
+mode, effort, options, plugin management and transcript-history controls are not
+offered. Concurrent prompts are rejected while a turn is active.
+
+The existing in-memory history supports reconnecting devices while the server
+runs. Across server restarts only the conversation ID is persisted; importing
+Antigravity transcripts into the scrollback remains future work. The CLI must
+already be installed and authenticated on the server host. No installer, login
+automation, permission bypass, or browser approval bridge is added.
+
+Validation uses fake subprocesses through the real adapter and NativeService,
+including sequential prompts, identity/usage preservation, interruption, user
+message ordering, diagnostics, and rejection of unsupported settings. Browser
+event-folding tests execute separately from the TypeScript production build.
+Live authenticated model execution is not part of these tests.

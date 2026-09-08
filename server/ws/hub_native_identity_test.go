@@ -35,4 +35,16 @@ func TestNativeLaunchIdentityComesFromAgentRow(t *testing.T) {
 	if driver != "codex" || gotCwd != cwd {
 		t.Fatalf("identity did not come from durable row: driver=%q cwd=%q", driver, gotCwd)
 	}
+	if _, err := db.Exec(`UPDATE agents SET preset='antigravity', command='agy' WHERE id='a1'`); err != nil {
+		t.Fatal(err)
+	}
+	if driver, gotCwd, err := h.nativeLaunchIdentity("a1"); err != nil || driver != "antigravity" || gotCwd != cwd {
+		t.Fatalf("Antigravity identity: %q %q %v", driver, gotCwd, err)
+	}
+	if _, err := db.Exec(`UPDATE agents SET command='arbitrary-command' WHERE id='a1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.nativeLaunchIdentity("a1"); err == nil {
+		t.Fatal("invalid Antigravity command accepted")
+	}
 }

@@ -4,6 +4,7 @@ import { IconClaude, IconCodex, IconCustom, IconRocket } from '../icons';
 const PRESETS = [
   { id: 'claude-code', name: 'Claude Code', Icon: IconClaude, command: 'claude', args: [], color: '#D97706' },
   { id: 'codex-cli', name: 'Codex CLI', Icon: IconCodex, command: 'codex', args: [], color: '#16A34A' },
+  { id: 'antigravity', name: 'Antigravity', Icon: IconRocket, command: 'agy', args: [], color: '#4285F4' },
   { id: 'custom', name: 'Custom', Icon: IconCustom, command: '', args: [], color: '#9333EA' },
 ];
 
