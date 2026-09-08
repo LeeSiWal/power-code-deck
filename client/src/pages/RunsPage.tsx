@@ -12,7 +12,7 @@ function stateLabel(state: string) {
     case 'queued': return '실행 대기';
     case 'pending': return '실행 대기';
     case 'planned': return '계획 저장됨';
-    case 'plan_running': return 'Task 배정 중';
+    case 'plan_running': return 'Task 실행 중';
     case 'awaiting_integration': return '결과 통합 대기';
     case 'verifying': return '검증 중';
     case 'running': return '작업 중';
@@ -133,7 +133,7 @@ export function RunsPage() {
   }, [id, run?.id, run?.state]);
 
   useEffect(() => {
-    if (!id || run?.id !== id || run.state !== 'running') { setApprovals([]); return; }
+    if (!id || run?.id !== id || !['running', 'plan_running'].includes(run.state)) { setApprovals([]); return; }
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -174,12 +174,17 @@ export function RunsPage() {
 
   const latest = useMemo(() => run?.executions[run.executions.length - 1], [run]);
 
-  const start = useCallback(async (runId: string) => {
+  const start = useCallback(async (runId: string, planned = false) => {
     setSubmitting(true);
     setError('');
     try {
-      await api.startRun(runId);
+      if (planned) await api.startRunPlan(runId);
+      else await api.startRun(runId);
       await loadRun(runId);
+      if (planned) {
+        const snapshot = await api.getRunPlan(runId);
+        if (selectedID.current === runId) setPlan(snapshot);
+      }
       await loadList();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Run을 시작하지 못했습니다');
@@ -223,11 +228,11 @@ export function RunsPage() {
     }
   };
 
-  const openArtifact = async (item: RunArtifact) => {
-    if (!run || !latest || item.kind === 'workspace') return;
+  const openArtifact = async (item: RunArtifact, executionId = latest?.id) => {
+    if (!run || !executionId || item.kind === 'workspace') return;
     setError('');
     try {
-      setArtifact({ title: artifactLabel(item), content: await api.readRunArtifact(run.id, latest.id, item.kind) });
+      setArtifact({ title: artifactLabel(item), content: await api.readRunArtifact(run.id, executionId, item.kind) });
     } catch (err) {
       setError(err instanceof Error ? err.message : '결과 파일을 불러오지 못했습니다');
     }
@@ -338,7 +343,8 @@ export function RunsPage() {
               {plan && (
                 <div className="rounded-xl border border-deck-border bg-deck-surface p-4 space-y-3">
                   <div className="text-sm font-semibold">작업 계획 · {plan.tasks.length}개 Task</div>
-                  <p className="text-xs text-deck-text-dim">계획 저장과 배정 상태를 확인할 수 있습니다. 다중 Task의 실제 실행과 결과 통합은 아직 연결 중입니다.</p>
+                  <p className="text-xs text-deck-text-dim">검증된 선행 변경을 전달해 Task를 실행합니다. 전체 완료 후 결과 통합과 최종 검증이 필요합니다.</p>
+                  {run.state === 'planned' && plan.selection.ready.length > 0 && <button className="btn-primary" disabled={submitting} onClick={() => start(run.id, true)}>계획 실행</button>}
                   {plan.tasks.map((task) => (
                     <div key={task.id} className="border-t border-deck-border pt-3">
                       <div className="flex gap-2 items-center text-xs">
@@ -347,6 +353,19 @@ export function RunsPage() {
                       </div>
                       <p className="text-xs mt-1 whitespace-pre-wrap break-words">{task.prompt}</p>
                       {task.dependsOn.length > 0 && <p className="text-[11px] mt-1 text-deck-text-dim">선행 작업: {task.dependsOn.join(', ')}</p>}
+                      {task.detail && <p className="text-xs mt-1 whitespace-pre-wrap break-words">{task.detail}</p>}
+                      {task.checks.map((check) => <p key={check.name} className="text-xs mt-1">{check.passed ? '✓' : '✕'} {check.name}: {check.detail}</p>)}
+                      <div className="flex gap-2 flex-wrap mt-2">{task.artifacts.filter((a) => a.kind !== 'workspace' && !a.kind.endsWith('_commit')).map((a) => <button key={a.kind} className="text-xs underline" onClick={() => openArtifact(a, task.attemptId)}>{artifactLabel(a)}</button>)}</div>
+                      {task.state === 'failed' && run.state === 'planned' && <button className="btn-primary mt-2" disabled={submitting} onClick={async () => {
+                        setSubmitting(true);
+                        try {
+                          await api.retryRunTask(run.id, task.id);
+                          const snapshot = await api.getRunPlan(run.id);
+                          if (selectedID.current === run.id) setPlan(snapshot);
+                        }
+                        catch (err) { setError(err instanceof Error ? err.message : '재시도 준비 실패'); }
+                        finally { setSubmitting(false); }
+                      }}>재시도 준비</button>}
                     </div>
                   ))}
                 </div>
@@ -358,6 +377,7 @@ export function RunsPage() {
                   {approvals.map((request) => (
                     <div key={request.id} className="space-y-2">
                       <div className="text-xs font-medium">{request.toolName}</div>
+                      {plan && <div className="text-xs text-deck-text-dim">Task: {plan.tasks.find((task) => task.attemptId === request.sessionId)?.id || request.sessionId}</div>}
                       <pre className="text-xs whitespace-pre-wrap break-words max-h-48 overflow-auto">{JSON.stringify(request.input, null, 2)}</pre>
                       <div className="flex gap-2">
                         <button disabled={!!deciding} onClick={() => decide(request, 'allow')} className="btn-primary disabled:opacity-40">이번 요청 허용</button>

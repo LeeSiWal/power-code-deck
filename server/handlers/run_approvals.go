@@ -14,7 +14,7 @@ import (
 
 // RegisterRunApprovalRoutes must receive the authenticated API router.
 func RegisterRunApprovalRoutes(api *mux.Router, store *orchestration.Store, broker *services.PermissionBroker) {
-	active := func(w http.ResponseWriter, r *http.Request) string {
+	active := func(w http.ResponseWriter, r *http.Request) []string {
 		run, err := store.Get(mux.Vars(r)["id"])
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -22,24 +22,42 @@ func RegisterRunApprovalRoutes(api *mux.Router, store *orchestration.Store, brok
 			} else {
 				jsonError(w, "work storage unavailable", 500)
 			}
-			return ""
+			return nil
+		}
+		if run.State == "plan_running" {
+			plan, err := store.GetPlan(run.ID)
+			if err != nil {
+				jsonError(w, "work storage unavailable", 500)
+				return nil
+			}
+			ids := []string{}
+			for _, task := range plan.Tasks {
+				if task.State == "running" {
+					ids = append(ids, task.AttemptID)
+				}
+			}
+			return ids
 		}
 		if run.State != "running" || len(run.Executions) == 0 {
 			jsonError(w, "run has no active execution", 409)
-			return ""
+			return nil
 		}
-		return run.Executions[len(run.Executions)-1].ID
+		return []string{run.Executions[len(run.Executions)-1].ID}
 	}
 	api.HandleFunc("/v2/runs/{id}/approvals", func(w http.ResponseWriter, r *http.Request) {
 		id := active(w, r)
-		if id == "" {
+		if id == nil {
 			return
 		}
-		jsonResponse(w, broker.Pending(id))
+		pending := []services.PermissionRequest{}
+		for _, session := range id {
+			pending = append(pending, broker.Pending(session)...)
+		}
+		jsonResponse(w, pending)
 	}).Methods("GET")
 	api.HandleFunc("/v2/runs/{id}/approvals", func(w http.ResponseWriter, r *http.Request) {
 		id := active(w, r)
-		if id == "" {
+		if id == nil {
 			return
 		}
 		var req struct {
@@ -56,7 +74,14 @@ func RegisterRunApprovalRoutes(api *mux.Router, store *orchestration.Store, brok
 			jsonError(w, "invalid decision", 400)
 			return
 		}
-		if !broker.ResolveSession(id, req.ID, services.PermissionDecision{Behavior: req.Behavior}) {
+		resolved := false
+		for _, session := range id {
+			if broker.ResolveSession(session, req.ID, services.PermissionDecision{Behavior: req.Behavior}) {
+				resolved = true
+				break
+			}
+		}
+		if !resolved {
 			jsonError(w, "approval is no longer pending", 409)
 			return
 		}

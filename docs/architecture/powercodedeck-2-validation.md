@@ -76,3 +76,31 @@ The runtime retains existing limitations: process lifetime is bound to the serve
 one output callback needs explicit fan-out for multiple consumers, and callers must
 serialize lifecycle operations for the same session ID (duplicate Create and
 concurrent Restart/Kill are not made transactional by this extraction).
+
+## Planned Task execution — 2026-09-08
+
+Added a separate plan worker with per-task worktrees and provider lifecycles,
+incremental dependency snapshots, mandatory project checks and independent
+review. Existing single-task dispatch shares only its Run slot and reusable
+review/artifact helpers. New persistence is additive.
+
+Validation passed: `go test -race ./...`, `go vet ./...` and `npm run build`.
+Fake-provider tests use real temporary Git repositories and check subprocesses:
+
+- A diamond dependency graph transfers newly created files and applies shared
+  ancestors once. Result refs survive as reachable objects, while source HEAD,
+  index and working files remain unchanged.
+- Conflicting branches fail before dependent provider execution; explicit retry
+  allocates a new attempt. Failed/mutating checks block dependents.
+- Review mutations cannot publish successful results. A reviewer and project
+  checks are required before reserving execution.
+- Cancellation stops the provider and rejects late results/artifacts. Single-task
+  and planned execution cannot occupy the same worker simultaneously.
+- Approval listing includes concurrent tasks from the selected Run only;
+  foreign, finished and canceled attempts cannot be approved in these cases.
+
+The frontend build retains existing eruda eval, mixed-import and chunk-size
+warnings. No authenticated live provider or browser E2E run was performed in
+this slice. The earlier Antigravity headless permission issue remains open.
+Final integration/verification of terminal branch results is still required;
+all verified tasks move the parent Run only to `awaiting_integration`.

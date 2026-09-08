@@ -31,6 +31,21 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 		}
 	}
 	if worker != nil {
+		api.HandleFunc("/v2/runs/{id}/plan/start", func(w http.ResponseWriter, r *http.Request) {
+			if err := worker.StartPlan(mux.Vars(r)["id"]); err != nil {
+				fail(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+		}).Methods("POST")
+		api.HandleFunc("/v2/runs/{id}/plan/tasks/{task}/retry", func(w http.ResponseWriter, r *http.Request) {
+			vars := mux.Vars(r)
+			if err := store.RetryPlannedTask(vars["id"], vars["task"]); err != nil {
+				fail(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}).Methods("POST")
 		api.HandleFunc("/v2/runs/{id}/start", func(w http.ResponseWriter, r *http.Request) {
 			execution, err := worker.Start(mux.Vars(r)["id"])
 			if err != nil {

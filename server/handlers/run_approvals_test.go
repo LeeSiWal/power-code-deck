@@ -6,9 +6,67 @@ import (
 	"github.com/gorilla/mux"
 	"net/http/httptest"
 	"powercodedeck/internal/orchestration"
+	"powercodedeck/internal/orchestration/taskgraph"
 	"powercodedeck/services"
 	"testing"
 )
+
+func TestPlannedApprovalsAreScopedToRunningAttempts(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	s, err := orchestration.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Create("plan", t.TempDir(), "plan", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SavePlan(r.ID, orchestration.TaskPlan{Concurrency: 2, Tasks: []taskgraph.Task{{ID: "a", Provider: "codex", Prompt: "a"}, {ID: "b", Provider: "claude", Prompt: "b"}}}); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := s.ClaimTasks(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := services.NewPermissionBroker()
+	broker.InjectPendingForTest(services.PermissionRequest{ID: "a-tool", SessionID: tasks[0].AttemptID, ToolName: "Edit"})
+	broker.InjectPendingForTest(services.PermissionRequest{ID: "b-tool", SessionID: tasks[1].AttemptID, ToolName: "Edit"})
+	broker.InjectPendingForTest(services.PermissionRequest{ID: "other-tool", SessionID: "outside", ToolName: "Edit"})
+	router := mux.NewRouter()
+	RegisterRunApprovalRoutes(router, s, broker)
+	call := func(method, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(method, "/v2/runs/"+r.ID+"/approvals", bytes.NewBufferString(body)))
+		return w
+	}
+	w := call("GET", "")
+	if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("a-tool")) || !bytes.Contains(w.Body.Bytes(), []byte("b-tool")) || bytes.Contains(w.Body.Bytes(), []byte("other-tool")) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := call("POST", `{"id":"other-tool","behavior":"allow"}`); w.Code != 409 {
+		t.Fatal("foreign request accepted", w.Code)
+	}
+	if err := s.FinishPlannedAttempt(tasks[0].AttemptID, true, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if w := call("POST", `{"id":"a-tool","behavior":"allow"}`); w.Code != 409 {
+		t.Fatal("finished attempt accepted", w.Code)
+	}
+	if w := call("POST", `{"id":"b-tool","behavior":"deny"}`); w.Code != 204 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if err := s.Cancel(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w := call("GET", ""); w.Code != 409 {
+		t.Fatal("canceled plan exposed requests", w.Code)
+	}
+}
 
 func TestRunApprovalsRejectCrossRunAndStaleDecisions(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")

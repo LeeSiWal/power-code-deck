@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS v2_task_plans(run_id TEXT PRIMARY KEY REFERENCES v2_r
 CREATE TABLE IF NOT EXISTS v2_plan_tasks(run_id TEXT NOT NULL REFERENCES v2_task_plans(run_id),task_id TEXT NOT NULL,state TEXT NOT NULL,active_attempt TEXT NOT NULL DEFAULT '',PRIMARY KEY(run_id,task_id));
 CREATE TABLE IF NOT EXISTS v2_plan_attempts(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,task_id TEXT NOT NULL,state TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',FOREIGN KEY(run_id,task_id) REFERENCES v2_plan_tasks(run_id,task_id));
 CREATE TABLE IF NOT EXISTS v2_plan_checks(attempt_id TEXT NOT NULL REFERENCES v2_plan_attempts(id),name TEXT NOT NULL,passed INTEGER NOT NULL,detail TEXT NOT NULL,PRIMARY KEY(attempt_id,name));
+CREATE TABLE IF NOT EXISTS v2_plan_artifacts(attempt_id TEXT NOT NULL REFERENCES v2_plan_attempts(id),kind TEXT NOT NULL,path TEXT NOT NULL,base_commit TEXT NOT NULL,PRIMARY KEY(attempt_id,kind));
 `
 
 type TaskPlan struct {
@@ -24,6 +25,9 @@ type PlannedTask struct {
 	taskgraph.Task
 	State     taskgraph.State `json:"state"`
 	AttemptID string          `json:"attemptId"`
+	Detail    string          `json:"detail"`
+	Artifacts []Artifact      `json:"artifacts"`
+	Checks    []Check         `json:"checks"`
 }
 type PlanSnapshot struct {
 	Concurrency int                 `json:"concurrency"`
@@ -107,6 +111,47 @@ func readPlan(tx *sql.Tx, run string) (PlanSnapshot, error) {
 			return p, err
 		}
 		states[task.ID] = t.State
+		t.Artifacts = []Artifact{}
+		t.Checks = []Check{}
+		if t.AttemptID != "" {
+			if err := tx.QueryRow(`SELECT detail FROM v2_plan_attempts WHERE id=?`, t.AttemptID).Scan(&t.Detail); err != nil {
+				return p, err
+			}
+			rows, err := tx.Query(`SELECT kind,path,base_commit FROM v2_plan_artifacts WHERE attempt_id=? ORDER BY kind`, t.AttemptID)
+			if err != nil {
+				return p, err
+			}
+			for rows.Next() {
+				var a Artifact
+				if err := rows.Scan(&a.Kind, &a.Path, &a.BaseCommit); err != nil {
+					rows.Close()
+					return p, err
+				}
+				t.Artifacts = append(t.Artifacts, a)
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return p, err
+			}
+			checkRows, err := tx.Query(`SELECT name,passed,detail FROM v2_plan_checks WHERE attempt_id=? ORDER BY name`, t.AttemptID)
+			if err != nil {
+				return p, err
+			}
+			for checkRows.Next() {
+				var c Check
+				if err := checkRows.Scan(&c.Name, &c.Passed, &c.Detail); err != nil {
+					checkRows.Close()
+					return p, err
+				}
+				t.Checks = append(t.Checks, c)
+			}
+			err = checkRows.Err()
+			checkRows.Close()
+			if err != nil {
+				return p, err
+			}
+		}
 		p.Tasks = append(p.Tasks, t)
 	}
 	p.Selection, err = g.Select(states, p.Concurrency)
@@ -205,6 +250,11 @@ func (s *Store) RecordPlannedCheck(attempt, name string, passed bool, detail str
 	}
 	if err = changed(tx.Exec(`UPDATE v2_plan_attempts SET state=? WHERE id=? AND state='verifying'`, state, attempt)); err != nil {
 		return err
+	}
+	if !passed {
+		if _, err = tx.Exec(`UPDATE v2_plan_attempts SET detail=? WHERE id=?`, detail, attempt); err != nil {
+			return err
+		}
 	}
 	// Verified branches still need downstream patch integration and final checks.
 	if _, err = tx.Exec(`UPDATE v2_runs SET state='awaiting_integration' WHERE id=(SELECT run_id FROM v2_plan_attempts WHERE id=?) AND state='plan_running' AND NOT EXISTS(SELECT 1 FROM v2_plan_tasks t WHERE t.run_id=v2_runs.id AND t.state!='succeeded')`, attempt); err != nil {

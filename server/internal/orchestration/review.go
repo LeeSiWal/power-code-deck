@@ -112,6 +112,10 @@ func reviewFingerprint(ctx context.Context, root string) ([32]byte, error) {
 }
 
 func (w *Worker) review(ctx context.Context, run Run, execution, worktree, base, artifactDir string, factory Factory) (bool, string, error) {
+	return reviewExecution(ctx, run, execution, worktree, base, artifactDir, factory, w.store.AddArtifact)
+}
+
+func reviewExecution(ctx context.Context, run Run, execution, worktree, base, artifactDir string, factory Factory, save func(string, string, string, string) error) (bool, string, error) {
 	before, err := reviewFingerprint(ctx, worktree)
 	if err != nil {
 		return false, "", err
@@ -163,7 +167,7 @@ func (w *Worker) review(ctx context.Context, run Run, execution, worktree, base,
 	if err := writeExclusive(logPath, []byte(logText)); err != nil {
 		return false, "", err
 	}
-	if err := w.store.AddArtifact(execution, "review_log", logPath, ""); err != nil {
+	if err := save(execution, "review_log", logPath, ""); err != nil {
 		return false, "", err
 	}
 	after, err := reviewFingerprint(ctx, worktree)

@@ -16,7 +16,8 @@ func (s *Store) Artifact(run, execution, kind string) (Artifact, error) {
 		FROM v2_artifacts a
 		JOIN v2_executions e ON e.id=a.execution_id
 		JOIN v2_tasks t ON t.id=e.task_id
-		WHERE t.run_id=? AND e.id=? AND a.kind=?`, run, execution, kind).
+		WHERE t.run_id=? AND e.id=? AND a.kind=?
+		UNION ALL SELECT a.kind,a.path,a.base_commit FROM v2_plan_artifacts a JOIN v2_plan_attempts e ON e.id=a.attempt_id WHERE e.run_id=? AND e.id=? AND a.kind=?`, run, execution, kind, run, execution, kind).
 		Scan(&artifact.Kind, &artifact.Path, &artifact.BaseCommit)
 	if err != nil {
 		return Artifact{}, err
@@ -30,7 +31,11 @@ func (s *Store) BindBase(run, commit string) error {
 	if strings.TrimSpace(commit) == "" {
 		return ErrInvalid
 	}
-	return changed(s.db.Exec(`UPDATE v2_runs SET base_commit=? WHERE id=? AND state='running' AND (base_commit='' OR base_commit=?)`, commit, run, commit))
+	return changed(s.db.Exec(`UPDATE v2_runs SET base_commit=? WHERE id=? AND state IN ('running','planned','plan_running') AND (base_commit='' OR base_commit=?)`, commit, run, commit))
+}
+
+func (s *Store) AddPlannedArtifact(attempt, kind, path, base string) error {
+	return changed(s.db.Exec(`INSERT INTO v2_plan_artifacts(attempt_id,kind,path,base_commit) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM v2_plan_tasks WHERE active_attempt=? AND state IN ('running','verifying'))`, attempt, kind, path, base, attempt))
 }
 
 func (s *Store) RequireChecks(run string, names ...string) error {

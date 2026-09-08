@@ -2,7 +2,7 @@
 
 `server/internal/orchestration/taskgraph` provides a pure, provider-neutral plan
 validator and ready-task selector. It is separate from SQL, CLI lifecycle, chat,
-and HTTP. The existing single-task Run remains the execution path.
+and HTTP. Single-task Runs and planned Runs have separate dispatch paths.
 
 Each Task contains an ID, prompt, provider and dependency IDs. Plans allow at
 most 64 tasks, 64 KiB per prompt and 256 KiB of prompts in total. Validation
@@ -63,19 +63,55 @@ Recovery marks active attempts interrupted and their tasks failed, keeping
 partial evidence. The plan returns to `planned`; interrupted tasks require
 explicit retry. No recovery path starts a CLI or automatically repeats edits.
 
-This layer reserves work; it does not launch a process. Planned Runs cannot use
-the legacy single-task start path. There is no browser route to claim tasks,
-submit passing checks or complete a plan.
+Persistence alone never launches a process. Planned Runs cannot use the legacy
+single-task start path. There is no browser route to claim attempts, submit
+passing checks or complete a plan.
+
+## Planned execution
+
+`POST /v2/runs/{id}/plan/start` dispatches through `plan_worker.go`, sharing the
+existing Worker's single active Run slot. Within a Run, ready tasks run in
+batches bounded by the saved concurrency (including verification). This is a
+single-server owner design, not a distributed process lease. All task providers
+and an independent reviewer must be connected, and a nonempty project check
+manifest is required. Start pins a clean repository's HEAD; subsequent dispatch
+rejects a changed source revision. Checks are loaded from that source before
+any agent edits, so an agent cannot replace the commands for its own check.
+
+Each attempt receives a detached worktree. Verified ancestor results are applied
+once in dependency order with `cherry-pick --no-commit`; conflicting changes fail
+preparation before starting a provider. This includes transitive diamond graphs.
+The prepared input and result are immutable Git commit objects, with the result
+parent explicitly set to the input. `git add --all` captures new non-ignored
+files as well as tracked edits/deletions. Hooks and commit signing are not used
+for internal snapshots. Successful results are retained under
+`refs/powercodedeck/attempts/{attemptId}`; no source branch or source index moves.
+Worktrees and Git refs remain for inspection; automatic cleanup is not implemented.
+
+Provider completion is followed by diff validation, every configured project
+check, and a fresh review. Check/reviewer source mutations are rejected. Only
+then can a result be used by dependents. `v2_plan_artifacts` keeps workspace
+metadata, incremental patches, input/result commits and verification logs.
+The existing artifact endpoint validates Run/attempt ownership and file bounds.
+The plan snapshot exposes current attempt details, check results and artifact
+metadata. The Run UI can start a saved plan, prepare a failed task for retry,
+read evidence, and resolve approvals for the Run's currently running attempts.
+
+`POST /v2/runs/{id}/plan/tasks/{task}/retry` only resets a failed task to pending;
+it neither changes the frozen plan nor supplies verification evidence. Stopped
+schedulers leave the Run `planned` unless canceled or awaiting integration.
+Retrying a conflict repeats preparation in a fresh worktree and preserves the
+old one; it does not automatically resolve the conflict. Cancel stops active
+providers and rejects late results. Runtime worktrees are not OS sandboxes.
 
 Remaining integration steps:
 
-1. Bind the plan to the source revision before first execution.
-2. Connect reserved attempts to isolated worktrees, provider lifecycles and
-   per-attempt approval scopes; add the runtime-wide concurrency limit.
-3. Define how verified dependency changes enter a downstream worktree. Retain
-   original patches and report conflicts instead of discarding changes.
-4. Complete a Run only after terminal verification of the integrated result.
-5. Add plan generation/editing and per-attempt evidence/approvals to the Run UI.
-
-Automatic LLM decomposition, parallel CLI dispatch and patch integration are not
-enabled by plan persistence alone.
+1. Combine all terminal branch results in a dedicated integration worktree and
+   run final checks/review before allowing Run completion. Sibling branches with
+   no common downstream task have not yet been combined.
+2. Add automatic plan generation and plan creation/editing before saving in the UI.
+3. Add prior-attempt browsing, conflict resolution and explicit retained worktree/
+   ref cleanup, plus multi-server leases if deployment requires them.
+4. Finish authenticated live provider/browser validation. The previous Antigravity
+   headless permission denial remains unresolved; fake-provider tests do not
+   establish live CLI permissions or browser end-to-end behavior.
