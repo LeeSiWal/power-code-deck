@@ -168,3 +168,23 @@ Existing Antigravity permission failures are not bypassed. Manual planning is
 available when generation fails; CLI/provider availability and live planning
 quality remain to be checked. Local manual edits are not persisted until plan
 confirmation; generated drafts are persisted separately.
+
+## Task history and conflict evidence — 2026-09-08
+
+Added scoped history pagination, captured Git conflict stages and a UI for
+historical checks/logs and conflict comparison. A resolution action prepares a
+new request including the saved task plan; it does not mutate the failed Run.
+
+Regression coverage includes twelve retries paged without missing/duplicate
+attempts, invalid/foreign cursors, hidden host paths, dependency and integration
+conflict capture, read isolation across Runs, immutable snapshots after manual
+workspace edits and retry, tab/newline filenames, binary data, large blobs and
+deleted incoming stages. Existing records without stage snapshots remain valid.
+
+Passed: server-wide `go test -race ./...`, targeted history/conflict tests after
+the final assertions, `go vet ./...`, `npm run build`, and `git diff --check`.
+Existing frontend dependency/chunk warnings remain; no browser E2E was run.
+
+Direct conflict editing/resume, draft history browsing, cleanup and authenticated
+provider/browser validation remain separate work. This slice does not establish
+that a newly generated follow-up plan will resolve a real-world conflict.

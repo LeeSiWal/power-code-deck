@@ -123,6 +123,20 @@ func RegisterRunRoutes(api *mux.Router, store *orchestration.Store, workers ...*
 			w.Write(content)
 		}).Methods("GET")
 	}
+	api.HandleFunc("/v2/runs/{id}/plan/tasks/{task}/attempts", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		before := r.URL.Query().Get("before")
+		if len(before) > 128 {
+			jsonError(w, "invalid history cursor", 400)
+			return
+		}
+		history, err := store.TaskAttempts(vars["id"], vars["task"], before)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		jsonResponse(w, history)
+	}).Methods("GET")
 	api.HandleFunc("/v2/runs/{id}/plan/draft", func(w http.ResponseWriter, r *http.Request) {
 		draft, err := store.GetPlanDraft(mux.Vars(r)["id"])
 		if err != nil {

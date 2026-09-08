@@ -62,6 +62,12 @@ export interface PlanSnapshot {
 export interface PlanTask { id: string; prompt: string; provider: string; dependsOn: string[] }
 export interface TaskPlan { concurrency: number; tasks: PlanTask[] }
 export interface PlanDraft { id: string; state: string; detail: string; plan: TaskPlan | null }
+export interface TaskHistory { attempts: RunExecution[]; nextCursor: string }
+export interface ConflictVersion { artifact?: string; unavailable?: string }
+export interface ConflictReport {
+  baseCommit: string; incomingCommit: string; truncated: boolean;
+  files: { path: string; base: ConflictVersion; current: ConflictVersion; incoming: ConflictVersion }[];
+}
 
 export interface ApplyTarget {
   integrationId: string;
@@ -243,6 +249,7 @@ export const api = {
   startRunPlan: (id: string) => apiFetch(`/v2/runs/${encodeURIComponent(id)}/plan/start`, { method: 'POST' }),
   generateRunPlan: (id: string) => apiFetch<{ draftId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/draft/generate`, { method: 'POST' }),
   getRunPlanDraft: (id: string) => apiFetch<PlanDraft>(`/v2/runs/${encodeURIComponent(id)}/plan/draft`),
+  getTaskHistory: (id: string, task: string, before = '') => apiFetch<TaskHistory>(`/v2/runs/${encodeURIComponent(id)}/plan/tasks/${encodeURIComponent(task)}/attempts?${new URLSearchParams({ before })}`),
   saveRunPlan: (id: string, plan: TaskPlan) => apiFetch(`/v2/runs/${encodeURIComponent(id)}/plan`, { method: 'PUT', body: JSON.stringify(plan) }),
   integrateRunPlan: (id: string) => apiFetch<{ executionId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/integrate`, { method: 'POST' }),
   previewRunApplication: (id: string) => apiFetch<ApplyPreview>(`/v2/runs/${encodeURIComponent(id)}/plan/apply`),

@@ -231,6 +231,10 @@ func TestPlanWorkerConflictingDependenciesStopBeforeProvider(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 	old := last.AttemptID
+	report, err := w.ReadArtifact(r.ID, old, "conflicts")
+	if err != nil || !strings.Contains(string(report), "tracked.txt") {
+		t.Fatal("task conflict evidence missing", string(report), err)
+	}
 	if err := s.RetryPlannedTask(r.ID, "join"); err != nil {
 		t.Fatal(err)
 	}
@@ -241,6 +245,14 @@ func TestPlanWorkerConflictingDependenciesStopBeforeProvider(t *testing.T) {
 	p, _ = s.GetPlan(r.ID)
 	if p.Tasks[2].AttemptID == old || p.Tasks[0].AttemptID == "" {
 		t.Fatal("retry reused attempt")
+	}
+	history, err := s.TaskAttempts(r.ID, "join", "")
+	if err != nil || len(history.Attempts) != 2 || history.Attempts[1].ID != old {
+		t.Fatal(history, err)
+	}
+	oldReport, err := w.ReadArtifact(r.ID, old, "conflicts")
+	if err != nil || string(oldReport) != string(report) {
+		t.Fatal("retry changed conflict evidence", err)
 	}
 }
 

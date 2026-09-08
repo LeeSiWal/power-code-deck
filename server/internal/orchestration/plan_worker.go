@@ -215,6 +215,9 @@ func (w *Worker) executePlanned(ctx context.Context, run Run, task PlannedTask, 
 	}
 	for _, commit := range commits {
 		if _, err := git(ctx, cwd, "-c", "core.hooksPath="+hooks, "cherry-pick", "--no-commit", commit); err != nil {
+			if captureErr := captureConflict(ctx, cwd, dir, id, run.BaseCommit, commit, err.Error(), w.store.AddPlannedArtifact); captureErr != nil {
+				err = fmt.Errorf("%w; conflict evidence: %v", err, captureErr)
+			}
 			fail(fmt.Errorf("dependency integration failed: %w", err))
 			return
 		}

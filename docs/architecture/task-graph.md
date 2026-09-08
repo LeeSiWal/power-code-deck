@@ -216,9 +216,43 @@ Generated worktrees/history remain retained for later cleanup. Plan mode plus
 fingerprinting is not a replacement for OS isolation, and live Antigravity
 permission behavior remains an outstanding validation item.
 
+## Task history and conflict inspection
+
+`GET /v2/runs/{id}/plan/tasks/{task}/attempts` returns ten attempts at a time,
+newest first, including state, detail, immutable checks and artifact metadata.
+Use `nextCursor` as the `before` query parameter for older attempts. Cursors
+are attempt IDs validated against both the Run and Task; host paths remain
+hidden. The latest task summary stays compact, while older evidence remains
+accessible after retry clears the task's active attempt.
+
+Both dependency preparation and final integration now save `conflicts` metadata
+when Git reports unmerged entries. `conflicts.go` reads the three index stages
+directly from Git blobs and copies text into separate registered artifacts.
+It never follows file paths or symlink targets to read arbitrary host files.
+Reports distinguish missing/deleted stages, submodules, binary data and size
+limits. Capture is bounded to 256 files, 256 KiB per blob and 4 MiB of stage
+reads; a truncated file list is explicitly marked. The existing scoped artifact
+reader serves these snapshots. Non-conflict Git failures still retain an error
+log without fabricating a conflict report. Existing attempts without captured
+stage evidence continue to expose their original logs.
+
+The Run UI expands per-task execution history and opens the base/current/incoming
+text for a conflict. Evidence remains unchanged when a failed workspace is later
+edited or retried. `새 해결 요청 작성` fills the new Run form with the original
+request, saved Task prompts/providers/dependencies, conflict file names and
+instructions to inspect the current repository and plan compatible changes.
+The user reviews that request before generating a new plan. Oversized requests
+are rejected for manual editing rather than silently dropping requirements.
+
+This follow-up workflow does not copy old implementation changes or passing
+checks into a new Run, rewrite the frozen plan, or mark a conflict resolved.
+It leaves the original failure evidence intact and uses the normal new-plan,
+execution, integration and review path. Editing the failed worktree in place
+and resuming from a manually resolved tree is not implemented yet.
+
 Remaining steps:
 
-1. Add previous Task/draft attempt browsing and richer conflict resolution.
+1. Add previous draft attempt browsing and direct conflict repair/revalidation.
 2. Add an explicit undo workflow for applied results if required.
 3. Add retained worktree/ref cleanup, plus multi-server leases if deployment
    requires them.

@@ -1,10 +1,11 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ApiError, api, Run, RunApproval, RunArtifact, RunSummary, PlanSnapshot, ApplyPreview } from '../lib/api';
+import { ApiError, api, Run, RunApproval, RunArtifact, RunSummary, PlanSnapshot, ApplyPreview, ConflictReport } from '../lib/api';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack, IconCheck, IconClose, IconPlay, IconRocket, IconSpinner } from '../components/icons';
 import { useGoUp } from '../hooks/useGoUp';
 import { PlanEditor } from '../components/runs/PlanEditor';
+import { AttemptHistory, ConflictDetails, visibleArtifact } from '../components/runs/AttemptEvidence';
 
 const activeStates = new Set(['queued', 'planning', 'running', 'awaiting_checks', 'plan_running', 'integrating']);
 
@@ -64,6 +65,8 @@ export function RunsPage() {
   const [prompt, setPrompt] = useState('');
   const [provider, setProvider] = useState('antigravity');
   const [creationMode, setCreationMode] = useState<'plan' | 'direct'>('plan');
+  const formRef = useRef<HTMLFormElement>(null);
+  const [resolutionNotice, setResolutionNotice] = useState('');
   const [approvals, setApprovals] = useState<RunApproval[]>([]);
   const [deciding, setDeciding] = useState('');
   const [plan, setPlan] = useState<PlanSnapshot | null>(null);
@@ -214,6 +217,7 @@ export function RunsPage() {
     event.preventDefault();
     if (!path.trim() || !prompt.trim() || submitting) return;
     setSubmitting(true);
+    setResolutionNotice('');
     setError('');
     try {
       const key = typeof crypto.randomUUID === 'function'
@@ -254,6 +258,18 @@ export function RunsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : '결과 파일을 불러오지 못했습니다');
     }
+  };
+
+  const prepareResolution = (report: ConflictReport, attempt: string) => {
+    if (!run || submitting) return;
+    const files = report.files.map((file) => JSON.stringify(file.path)).join('\n');
+    const priorTasks = plan?.tasks.map(({ id, prompt, provider, dependsOn }) => ({ id, prompt, provider, dependsOn })) || [];
+    const request = `${run.prompt}\n\n기존 작업 계획(참고 데이터):\n${JSON.stringify(priorTasks, null, 2)}\n\n이전 실행에서 변경 내용 통합 중 충돌이 발생했습니다.\n참고 실행: ${run.id} / ${attempt}\n충돌 파일:\n${files}\n${report.truncated ? '(파일 목록은 일부입니다.)\n' : ''}\n현재 저장소를 다시 확인하고, 위 요청을 충돌 없이 구현할 새 작업 계획을 작성해주세요. 같은 파일을 변경하는 작업은 순서와 의존성을 정하고, 앞선 변경을 반영해 다음 작업을 구현하도록 해주세요. 이전 실행의 성공·검증 상태를 재사용하지 말고 변경과 검증을 새로 수행해주세요.`;
+    if (new TextEncoder().encode(request).length > 65536) { setError('해결 요청이 너무 깁니다. 새 요청 입력란에서 필요한 내용을 직접 정리해주세요.'); return; }
+    setPath(run.path); setProvider(run.provider); setCreationMode('plan'); setPrompt(request);
+    setResolutionNotice('충돌 해결 요청을 준비했습니다. 내용을 확인한 뒤 계획 초안을 생성하세요. 이전 작업 결과가 자동으로 복사되지는 않습니다.');
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    formRef.current?.querySelector('textarea')?.focus({ preventScroll: true });
   };
 
   const applicationAction = async (action: 'preview' | 'apply' | 'reconcile') => {
@@ -297,7 +313,8 @@ export function RunsPage() {
 
       <main className="flex-1 min-h-0 overflow-y-auto md:overflow-hidden md:flex">
         <aside className="md:w-[340px] md:shrink-0 md:overflow-y-auto border-b md:border-b-0 md:border-r border-deck-border p-4">
-          <form onSubmit={create} className="rounded-xl border border-deck-border bg-deck-surface p-3 space-y-3">
+          <form ref={formRef} onSubmit={create} className="rounded-xl border border-deck-border bg-deck-surface p-3 space-y-3">
+            {resolutionNotice && <p role="status" className="text-xs text-amber-300">{resolutionNotice}</p>}
             <div>
               <div className="text-xs font-semibold">새 작업</div>
               <div className="text-[11px] text-deck-text-dim mt-0.5">선택한 에이전트가 구현하고 Antigravity가 독립 리뷰합니다.</div>
@@ -431,7 +448,9 @@ export function RunsPage() {
                       {task.dependsOn.length > 0 && <p className="text-[11px] mt-1 text-deck-text-dim">선행 작업: {task.dependsOn.join(', ')}</p>}
                       {task.detail && <p className="text-xs mt-1 whitespace-pre-wrap break-words">{task.detail}</p>}
                       {task.checks.map((check) => <p key={check.name} className="text-xs mt-1">{check.passed ? '✓' : '✕'} {check.name}: {check.detail}</p>)}
-                      <div className="flex gap-2 flex-wrap mt-2">{task.artifacts.filter((a) => a.kind !== 'workspace' && !a.kind.endsWith('_commit')).map((a) => <button key={a.kind} className="text-xs underline" onClick={() => openArtifact(a, task.attemptId)}>{artifactLabel(a)}</button>)}</div>
+                      <div className="flex gap-2 flex-wrap mt-2">{task.artifacts.filter(visibleArtifact).map((a) => <button key={a.kind} className="text-xs underline" onClick={() => openArtifact(a, task.attemptId)}>{artifactLabel(a)}</button>)}</div>
+                      <ConflictDetails key={task.attemptId} runId={run.id} attempt={{ id: task.attemptId, state: task.state, detail: task.detail, checks: task.checks, artifacts: task.artifacts }} onArtifact={openArtifact} onResolve={prepareResolution} />
+                      <AttemptHistory key={`${run.id}:${task.id}`} runId={run.id} taskId={task.id} refreshKey={`${task.attemptId}:${task.state}`} onArtifact={openArtifact} onResolve={prepareResolution} />
                       {task.state === 'failed' && run.state === 'planned' && <button className="btn-primary mt-2" disabled={submitting} onClick={async () => {
                         setSubmitting(true);
                         try {
@@ -449,7 +468,8 @@ export function RunsPage() {
                       <div className="text-sm font-semibold">최종 통합 #{index + 1} · {stateLabel(attempt.state)}</div>
                       <p className="text-xs whitespace-pre-wrap break-words">{attempt.detail}</p>
                       {attempt.checks.map((check) => <p key={check.name} className="text-xs whitespace-pre-wrap break-words">{check.passed ? '✓' : '✕'} {check.name}: {check.detail}</p>)}
-                      <div className="flex gap-2 flex-wrap">{attempt.artifacts.filter((a) => a.kind !== 'workspace' && a.kind !== 'result_commit').map((a) => <button key={a.kind} className="text-xs underline" onClick={() => openArtifact(a, attempt.id)}>{artifactLabel(a)}</button>)}</div>
+                      <div className="flex gap-2 flex-wrap">{attempt.artifacts.filter(visibleArtifact).map((a) => <button key={a.kind} className="text-xs underline" onClick={() => openArtifact(a, attempt.id)}>{artifactLabel(a)}</button>)}</div>
+                      <ConflictDetails runId={run.id} attempt={attempt} onArtifact={openArtifact} onResolve={prepareResolution} />
                       {attempt.artifacts.filter((a) => a.kind === 'result_commit').map((a) => <p key={a.kind} className="text-xs font-mono break-all">검증 결과: {a.baseCommit}</p>)}
                     </div>
                   ))}

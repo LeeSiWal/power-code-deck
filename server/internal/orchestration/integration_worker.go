@@ -105,13 +105,8 @@ func (w *Worker) integrate(ctx context.Context, run Run, id string, checks []Che
 	}
 	for _, commit := range commits {
 		if _, err := git(ctx, cwd, "-c", "core.hooksPath="+hooks, "cherry-pick", "--no-commit", commit); err != nil {
-			// Retain the conflicting workspace and a readable failure log for review.
-			path := filepath.Join(dir, "integration.log")
-			if saveErr := writeExclusive(path, []byte(err.Error())); saveErr != nil {
-				return saveErr
-			}
-			if saveErr := w.store.AddIntegrationArtifact(id, "integration_log", path, run.BaseCommit); saveErr != nil {
-				return saveErr
+			if captureErr := captureConflict(ctx, cwd, dir, id, run.BaseCommit, commit, err.Error(), w.store.AddIntegrationArtifact); captureErr != nil {
+				return fmt.Errorf("%w; conflict evidence: %v", err, captureErr)
 			}
 			return fmt.Errorf("task result integration conflict: %w", err)
 		}
