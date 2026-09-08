@@ -305,7 +305,7 @@ func (e *Execution) pump(cmd *exec.Cmd, stdout io.ReadCloser, stderr *tail) {
 			final.Outcome.Text = waitErr.Error()
 		}
 	}
-	final.Outcome.Diagnostics = strings.TrimSpace(string(stderr.data))
+	final.Outcome.Diagnostics = strings.TrimSpace(final.Outcome.Diagnostics + "\n" + strings.TrimSpace(string(stderr.data)))
 	// Observed in agy 1.1.27: a headless permission denial can still emit a
 	// SUCCESS result and exit zero, with an empty response. Fail this explicit
 	// no-output diagnostic; ordinary tool warnings with a final answer remain

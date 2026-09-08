@@ -47,6 +47,22 @@ func TestAGYHelper(t *testing.T) {
 	if prompt == "missing" {
 		os.Exit(0)
 	}
+	if strings.HasPrefix(prompt, "structured-denial") {
+		response := ""
+		if prompt == "structured-denial-answer" {
+			response = "Recovered using file tools."
+		}
+		payload, _ := json.Marshal(map[string]any{"event": "result", "result": map[string]any{
+			"status": "SUCCESS", "response": response,
+			"denied_actions": []map[string]string{{"action": "write_file", "display_name": "WriteToFile"}},
+		}})
+		fmt.Println(string(payload))
+		if prompt == "structured-denial-crash" {
+			fmt.Fprintln(os.Stderr, "CLI crashed after result")
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if prompt == "permission-empty" || prompt == "empty-success" {
 		if prompt == "permission-empty" {
 			fmt.Fprintln(os.Stderr, `jetski: no output produced — a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.`)
@@ -106,6 +122,38 @@ func TestHeadlessPermissionDenialOverridesEmptySuccess(t *testing.T) {
 				}
 			} else if last.Outcome.IsError || last.Outcome.Status != providers.CompletionSuccess {
 				t.Fatal("empty response alone is not proof of denial", last.Outcome)
+			}
+		})
+	}
+}
+
+func TestStructuredDenialWithoutStderr(t *testing.T) {
+	for _, tc := range []struct {
+		prompt, reason string
+		failed         bool
+	}{
+		{"structured-denial", "permission_denied", true},
+		{"structured-denial-answer", "SUCCESS", false},
+		{"structured-denial-crash", "process_error", true},
+	} {
+		t.Run(tc.prompt, func(t *testing.T) {
+			e := helperExecution(t)
+			if err := e.Send(tc.prompt); err != nil {
+				t.Fatal(err)
+			}
+			events := drain(t, e)
+			got := events[len(events)-1].Outcome
+			if got == nil || got.IsError != tc.failed || got.Reason != tc.reason || !strings.Contains(got.Diagnostics, "write_file") {
+				t.Fatalf("outcome: %+v", got)
+			}
+			if tc.failed && got.Status != providers.CompletionFailed {
+				t.Fatal(got)
+			}
+			if !tc.failed && (got.Status != providers.CompletionSuccess || got.Text != "Recovered using file tools.") {
+				t.Fatal(got)
+			}
+			if tc.prompt == "structured-denial-crash" && !strings.Contains(got.Diagnostics, "CLI crashed") {
+				t.Fatal(got)
 			}
 		})
 	}

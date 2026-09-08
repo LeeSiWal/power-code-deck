@@ -21,6 +21,19 @@ explicit denials. The adapter does not edit global settings or select another
 project implicitly. See the [CLI workspace reference](https://antigravity.google/docs/cli/reference/)
 and [permission policy](https://antigravity.google/docs/cli/permissions).
 
+The v2 implementation factory explicitly selects `accept-edits`, because an
+authorized implementation Run must be able to edit its disposable worktree.
+Planner and reviewer factories retain `plan` plus terminal sandboxing; legacy
+chat still inherits its CLI mode. The [execution mode documentation](https://antigravity.google/docs/cli/modes/)
+distinguishes file editing from shell permissions: enabling edits does not grant
+commands. These modes are not themselves filesystem isolation guarantees.
+
+Structured `result.denied_actions` are preserved in outcome diagnostics even
+without stderr. Empty `SUCCESS` with named denials becomes `permission_denied`;
+a nonempty answer retains its CLI outcome for independent worker verification.
+Process failures and cancellation still take precedence. Older CLI no-output
+stderr notices remain supported as a fallback.
+
 Antigravity headless mode is intentionally modeled as a single-turn execution.
 The upstream CLI can keep a stream session open, but its documented stdin
 protocol accepts text user events only and rejects control request/response

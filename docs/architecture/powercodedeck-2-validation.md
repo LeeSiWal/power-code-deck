@@ -1,5 +1,34 @@
 # Runtime extraction validation
 
+## Antigravity implementation mode — 2026-09-08
+
+V2 implementation executions now request `accept-edits`; planning, review and
+legacy chat configuration are unchanged. The live fixture explicitly asks for
+file tools rather than commands for its single-file edit; host project checks
+and the independent review procedure are not weakened.
+
+Authenticated production Worker validation reached `diff_check` and
+`project_test`, both passing with the exact required file contents. Independent
+review failed on headless `command` permission after 33.13 seconds total, so the
+Run correctly remained failed. End-to-end success is still unverified.
+
+The adapter now also interprets observed structured `denied_actions`, preserving
+their names without relying on stderr. Subprocess tests cover empty denial,
+nonempty recovery, and a subsequent process crash with both diagnostics retained.
+The live test checks preservation of the original file on failed runs too.
+
+`TMPDIR=/private/tmp go test -race ./...`, `go vet ./...` and `git diff --check`
+passed. The final live-test cleanup change was compiled with live execution
+disabled; the authenticated result above precedes that cleanup-only change.
+
+The installed CLI help exposes no per-invocation command allow-list flag. Its
+documented rules live in global settings and distinguish literal prefixes from
+`regex:` matching. No blanket Git allow-rule or global settings change was made:
+arbitrary Git options and hooks must not be assumed harmless. The next review
+integration should provide host-collected bounded diff evidence, or use a
+supported execution-scoped approval API when available, while retaining source
+fingerprints and mandatory tests. Do not advertise `plan` as OS-enforced read-only.
+
 ## Antigravity workspace and permission follow-up — 2026-09-08
 
 The adapter now passes its validated absolute cwd as `--add-dir`, including for

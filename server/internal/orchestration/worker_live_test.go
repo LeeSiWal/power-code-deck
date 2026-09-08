@@ -20,13 +20,20 @@ func TestAntigravityRunLive(t *testing.T) {
 	}
 	repo := testRepo(t)
 	addCheckManifest(t, repo, "verify-change")
+	// Check source preservation even when a later provider/review gate fails.
+	t.Cleanup(func() {
+		original, err := os.ReadFile(filepath.Join(repo, "tracked.txt"))
+		if err != nil || string(original) != "original\n" {
+			t.Error("source checkout changed", err)
+		}
+	})
 	store := openTest(t, filepath.Join(t.TempDir(), "runs.db"))
-	run, err := store.Create("live", repo, "Change tracked.txt to contain exactly PCD_RUN_LIVE_OK followed by a newline. Do not change any other file, do not commit, do not install anything. This is a minimal integration test.", "antigravity")
+	run, err := store.Create("live", repo, "Change tracked.txt to contain exactly PCD_RUN_LIVE_OK followed by a newline. Do not change any other file, do not commit, do not install anything. Use file tools for this edit; do not run shell commands. The host runs verification separately. This is a minimal integration test.", "antigravity")
 	if err != nil {
 		t.Fatal(err)
 	}
 	worker, err := NewWorker(store, t.TempDir(), map[string]Factory{"antigravity": func(id, cwd string) (providers.Execution, error) {
-		return antigravity.New(id, antigravity.Config{Cwd: cwd})
+		return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "accept-edits"})
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -64,9 +71,5 @@ func TestAntigravityRunLive(t *testing.T) {
 	patch, err := worker.ReadArtifact(run.ID, execution, "changes.patch")
 	if err != nil || !strings.Contains(string(patch), "+PCD_RUN_LIVE_OK") {
 		t.Fatal("missing verified patch", err)
-	}
-	original, err := os.ReadFile(filepath.Join(repo, "tracked.txt"))
-	if err != nil || string(original) != "original\n" {
-		t.Fatal("source checkout changed", err)
 	}
 }

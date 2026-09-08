@@ -246,7 +246,7 @@ func main() {
 			"claude": func(id, cwd string) (providers.Execution, error) { return runProviders.New(providers.Claude, id, cwd) },
 			"codex":  func(id, cwd string) (providers.Execution, error) { return runProviders.New(providers.Codex, id, cwd) },
 			"antigravity": func(id, cwd string) (providers.Execution, error) {
-				return antigravity.New(id, antigravity.Config{Cwd: cwd})
+				return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "accept-edits"})
 			},
 		})
 		if err != nil {

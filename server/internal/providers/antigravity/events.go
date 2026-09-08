@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"powercodedeck/internal/providers"
 )
@@ -39,7 +40,10 @@ func (d *decoder) parse(line []byte) (providers.Event, error) {
 			Status         string `json:"status"`
 			Response       string `json:"response"`
 			Error          string `json:"error"`
-			Usage          *struct {
+			DeniedActions  []struct {
+				Action string `json:"action"`
+			} `json:"denied_actions"`
+			Usage *struct {
 				Input     int  `json:"input_tokens"`
 				Output    int  `json:"output_tokens"`
 				Thinking  *int `json:"thinking_tokens"`
@@ -121,6 +125,27 @@ func (d *decoder) parse(line []byte) (providers.Event, error) {
 		}
 		if result.Error != "" {
 			event.Outcome.Text = result.Error
+		}
+		var denied []string
+		for _, action := range result.DeniedActions {
+			if name := strings.TrimSpace(action.Action); name != "" {
+				denied = append(denied, name)
+			}
+		}
+		if len(denied) > 0 {
+			detail := strings.Join(denied, ", ")
+			if len(detail) > 512 {
+				detail = detail[:512]
+			}
+			event.Outcome.Diagnostics = "Antigravity denied actions: " + detail
+			// A nonempty answer can legitimately recover from a denied tool.
+			// Empty SUCCESS plus explicit denials cannot establish completion.
+			if event.Outcome.Status == providers.CompletionSuccess && strings.TrimSpace(result.Response) == "" {
+				event.Outcome.Status = providers.CompletionFailed
+				event.Outcome.IsError = true
+				event.Outcome.Reason = "permission_denied"
+				event.Outcome.Text = "Antigravity could not proceed: required tool permissions were denied: " + detail
+			}
 		}
 		if result.Usage != nil {
 			u := result.Usage
