@@ -1,5 +1,41 @@
 # Runtime extraction validation
 
+## Server-collected review evidence — 2026-09-09
+
+Authenticated `TestAntigravityRunLive` **passed in 26.55 seconds** with installed
+agy 1.1.27. The real implementation changed only the disposable tracked file;
+`diff_check`, the project test checking exact marker contents, and independent
+review all passed. The Run reached `succeeded`; the verified patch contained the
+marker and the original source file remained unchanged. No global permission
+settings or blanket command approvals were added.
+
+The shared review boundary now persists and transmits a complete bounded JSON
+input rather than asking the reviewer to run Git. Tests use real repositories to
+cover combined staged/unstaged changes, new staged files, untracked files with
+unusual names, deletions, input persistence/transmission, and record-write failure.
+Binary, oversized (including JSON escaping), untracked symlink, changed submodule
+and invalid-base inputs reject before provider startup. Existing reviewer mutation
+and project-check gates remain in place.
+
+Live attempts exposed unreliable CLI schema output: presentation fields, duplicate
+JSON objects and nested verdict text; one attempt also hit a read permission
+failure. These attempts correctly failed. The final solution omits the optional
+CLI schema hint for review only, requests one JSON object, and retains the server's
+unchanged strict decoder. No extra-field or duplicate-response normalization is
+shipped. New strict-decoder cases retain rejection of these observed shapes.
+
+Validation passed: `TMPDIR=/private/tmp go test -race ./...`, the targeted final
+strict-decoder cases, `go vet ./...`, and `git diff --check`. UI code is unchanged;
+no browser build or new browser smoke is claimed for this backend change.
+
+The input limit is 64 KiB serialized JSON and 256 untracked files. Binary,
+submodule and larger reviews remain unsupported and fail explicitly; they need a
+separate evidence delivery design. A simple live Run passing does not establish
+live multi-task planning, conflict resolution or application of results. Next:
+validate a multi-file dependency plan through independent review and integration,
+then expose the saved review input in the Run interface where useful.
+
+
 ## Antigravity implementation mode — 2026-09-08
 
 V2 implementation executions now request `accept-edits`; planning, review and

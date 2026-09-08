@@ -123,3 +123,28 @@ short marker-only request in an isolated working directory, returning exit code
 This verifies basic authenticated headless connectivity; it does not replace
 the fake-process cancellation/permission tests or prove an end-to-end browser
 workflow against a live coding task.
+
+## Review evidence and structured output — 2026-09-09
+
+The orchestration layer now supplies a server-collected JSON review input:
+resolved base commit, task, combined tracked diff and complete non-ignored
+untracked text files. Reviewers are instructed to use this evidence and read-only
+file tools for more context, without running shell/Git commands. This applies to
+single-run, planned-task and integration reviews through their shared boundary.
+The caller-selected verification base and worktree fingerprints are retained.
+
+The serialized input is limited to 64 KiB and 256 untracked files. Oversized,
+binary, invalid UTF-8, changed submodule and non-regular untracked inputs fail
+before launching a reviewer. Nothing is silently truncated. Untracked reads use
+an OS-rooted file handle to prevent symlink escapes. The exact JSON is recorded as
+`review_input` (`review-input.json`) before provider invocation. Existing review
+mutation detection, JSON verdict validation and project checks still gate success.
+This bounded text path is not yet a general large-diff or binary review solution.
+
+The review factory omits the optional CLI `--json-schema` hint because observed
+agy 1.1.27 responses added presentation fields, concatenated objects, and nested
+the verdict inside another summary. Review prompts still request one JSON object;
+the server's strict verdict decoder remains authoritative and unchanged. It
+rejects extra fields, trailing output, missing/invalid verdicts and empty summaries.
+No compatibility normalization of these malformed responses is retained. Planner
+configuration and generic provider schema support remain unchanged.

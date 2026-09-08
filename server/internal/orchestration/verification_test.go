@@ -81,6 +81,9 @@ func TestDecodeReviewIsStrict(t *testing.T) {
 	for _, text := range []string{
 		"```json\n{\"verdict\":\"pass\",\"summary\":\"ok\"}\n```",
 		`{"verdict":"pass","summary":"ok","extra":true}`,
+		`{"verdict":"pass","summary":"ok","toolAction":"Finishing review","toolSummary":"Review completion"}`,
+		`{"verdict":"pass","summary":"ok"} {"verdict":"pass","summary":"ok"}`,
+		`{"verdict":"pass","summary":"ok"} {"verdict":"fail","summary":"unsafe"}`,
 		`{"verdict":"maybe","summary":"ok"}`,
 		`{"verdict":"pass","summary":""}`,
 	} {

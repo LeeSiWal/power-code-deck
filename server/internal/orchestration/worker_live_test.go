@@ -39,7 +39,7 @@ func TestAntigravityRunLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker.SetReviewer(func(id, cwd string) (providers.Execution, error) {
-		return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "plan", Sandbox: true, JSONSchema: ReviewJSONSchema})
+		return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "plan", Sandbox: true})
 	})
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -66,6 +66,12 @@ func TestAntigravityRunLive(t *testing.T) {
 		t.Logf("%s passed=%v: %s", check.Name, check.Passed, check.Detail)
 	}
 	if got.State != "succeeded" {
+		if log, readErr := worker.ReadArtifact(run.ID, execution, "review_log"); readErr == nil {
+			if len(log) > 8192 {
+				log = log[:8192]
+			}
+			t.Logf("review response: %s", log)
+		}
 		t.Fatalf("live run state=%s outcome=%s", got.State, got.Executions[0].Detail)
 	}
 	patch, err := worker.ReadArtifact(run.ID, execution, "changes.patch")
