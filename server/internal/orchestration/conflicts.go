@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 )
 
 type ConflictVersion struct {
+	Mode        string `json:"mode,omitempty"`
 	Artifact    string `json:"artifact,omitempty"`
 	Unavailable string `json:"unavailable,omitempty"`
 }
@@ -22,6 +24,7 @@ type ConflictFile struct {
 	Incoming ConflictVersion `json:"incoming"`
 }
 type ConflictReport struct {
+	Fingerprint    string         `json:"fingerprint"`
 	BaseCommit     string         `json:"baseCommit"`
 	IncomingCommit string         `json:"incomingCommit"`
 	Files          []ConflictFile `json:"files"`
@@ -47,7 +50,7 @@ func captureConflict(ctx context.Context, cwd, dir, id, base, incoming, detail s
 	if err != nil {
 		return err
 	}
-	report := ConflictReport{BaseCommit: base, IncomingCommit: incoming, Files: []ConflictFile{}}
+	report := ConflictReport{Fingerprint: fmt.Sprintf("%x", sha256.Sum256([]byte(list))), BaseCommit: base, IncomingCommit: incoming, Files: []ConflictFile{}}
 	indexes := map[string]int{}
 	total := 0
 	for _, entry := range strings.Split(list, "\x00") {
@@ -84,6 +87,7 @@ func captureConflict(ctx context.Context, cwd, dir, id, base, incoming, detail s
 		default:
 			return fmt.Errorf("unknown conflict stage")
 		}
+		version.Mode = fields[0]
 		if fields[0] == "160000" {
 			version.Unavailable = "submodule"
 			continue
@@ -117,7 +121,7 @@ func captureConflict(ctx context.Context, cwd, dir, id, base, incoming, detail s
 		if err := save(id, kind, output, base); err != nil {
 			return err
 		}
-		*version = ConflictVersion{Artifact: kind}
+		*version = ConflictVersion{Artifact: kind, Mode: fields[0]}
 	}
 	if len(report.Files) == 0 {
 		return nil

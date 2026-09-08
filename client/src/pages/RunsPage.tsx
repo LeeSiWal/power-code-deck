@@ -45,6 +45,7 @@ function artifactLabel(artifact: RunArtifact) {
   if (artifact.kind === 'status.txt') return '변경 파일';
   if (artifact.kind === 'review_log') return '독립 리뷰';
   if (artifact.kind === 'integration_log') return '통합 오류 로그';
+  if (artifact.kind === 'resolution_plan') return '적용한 충돌 수정안';
   if (artifact.kind.startsWith('check_log:')) return `${artifact.kind.slice('check_log:'.length)} 로그`;
   return artifact.kind;
 }
@@ -191,6 +192,14 @@ export function RunsPage() {
 
   const refreshPlanEditor = useCallback(async () => {
     if (id) await loadRun(id);
+    await loadList();
+  }, [id, loadRun, loadList]);
+
+  const refreshRepair = useCallback(async () => {
+    if (!id) return;
+    await loadRun(id);
+    const next = await api.getRunPlan(id);
+    if (selectedID.current === id) setPlan(next);
     await loadList();
   }, [id, loadRun, loadList]);
 
@@ -469,7 +478,7 @@ export function RunsPage() {
                       <p className="text-xs whitespace-pre-wrap break-words">{attempt.detail}</p>
                       {attempt.checks.map((check) => <p key={check.name} className="text-xs whitespace-pre-wrap break-words">{check.passed ? '✓' : '✕'} {check.name}: {check.detail}</p>)}
                       <div className="flex gap-2 flex-wrap">{attempt.artifacts.filter(visibleArtifact).map((a) => <button key={a.kind} className="text-xs underline" onClick={() => openArtifact(a, attempt.id)}>{artifactLabel(a)}</button>)}</div>
-                      <ConflictDetails runId={run.id} attempt={attempt} onArtifact={openArtifact} onResolve={prepareResolution} />
+                      <ConflictDetails runId={run.id} attempt={attempt} onArtifact={openArtifact} onResolve={prepareResolution} onRepairStarted={run.state === 'integration_failed' && plan.integrations[plan.integrations.length - 1]?.id === attempt.id ? refreshRepair : undefined} />
                       {attempt.artifacts.filter((a) => a.kind === 'result_commit').map((a) => <p key={a.kind} className="text-xs font-mono break-all">검증 결과: {a.baseCommit}</p>)}
                     </div>
                   ))}

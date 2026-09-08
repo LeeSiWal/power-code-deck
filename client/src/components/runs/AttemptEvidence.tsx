@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ConflictReport, ConflictVersion, RunArtifact, RunExecution, TaskHistory } from '../../lib/api';
+import { ResolutionEditor } from './ResolutionEditor';
 
 type EvidenceActions = {
   runId: string;
   onArtifact: (artifact: RunArtifact, attempt: string) => void;
   onResolve: (report: ConflictReport, attempt: string) => void;
+  onRepairStarted?: () => Promise<unknown>;
 };
 export function visibleArtifact(a: RunArtifact) {
   return a.kind !== 'workspace' && !a.kind.endsWith('_commit') && a.kind !== 'conflicts' && !a.kind.startsWith('conflict:');
 }
-export function ConflictDetails({ attempt, runId, onArtifact, onResolve }: EvidenceActions & { attempt: RunExecution }) {
+export function ConflictDetails({ attempt, runId, onArtifact, onResolve, onRepairStarted }: EvidenceActions & { attempt: RunExecution }) {
   const [open, setOpen] = useState(false);
   const [report, setReport] = useState<ConflictReport | null>(null);
   const [error, setError] = useState('');
+  const [editing, setEditing] = useState(false);
   useEffect(() => {
     if (!open) return;
     let disposed = false;
@@ -40,6 +43,10 @@ export function ConflictDetails({ attempt, runId, onArtifact, onResolve }: Evide
         </div>)}
         {report.truncated && <p className="text-xs text-amber-300">파일 수 제한으로 일부 충돌만 표시합니다. 전체 내용은 보관된 작업 공간에서 확인해야 합니다.</p>}
         <button className="btn-primary" onClick={() => onResolve(report, attempt.id)}>새 해결 요청 작성</button>
+        {onRepairStarted && report.fingerprint && !report.truncated && report.files.every((f) => [f.base, f.current, f.incoming].every((v) => (!v.unavailable || v.unavailable === 'deleted_or_absent') && (!v.mode || ['100644', '100755'].includes(v.mode)))) && <div className="space-y-2">
+          <button className="text-xs underline" onClick={() => setEditing(!editing)}>{editing ? '수정 편집기 닫기' : '텍스트 충돌 직접 수정'}</button>
+          {editing && <ResolutionEditor runId={runId} attemptId={attempt.id} report={report} onStarted={onRepairStarted} />}
+        </div>}
       </>}
     </div>}
   </div>;

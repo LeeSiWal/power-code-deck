@@ -248,11 +248,43 @@ This follow-up workflow does not copy old implementation changes or passing
 checks into a new Run, rewrite the frozen plan, or mark a conflict resolved.
 It leaves the original failure evidence intact and uses the normal new-plan,
 execution, integration and review path. Editing the failed worktree in place
-and resuming from a manually resolved tree is not implemented yet.
+and resuming from a manually resolved tree is not supported.
+
+## Explicit final integration conflict repair
+
+The latest failed final integration exposes a text editor when every conflict
+stage is a complete, bounded regular UTF-8 text file (or absent). The editor
+starts with the current stage, falling back to incoming/base for absent files;
+users combine the intended changes or explicitly delete a file. It submits all
+conflict paths and the captured index fingerprint to
+`POST /v2/runs/{id}/plan/integrations/{attempt}/resolve`.
+
+`resolution.go` validates the latest failed attempt, exact path set, fingerprint,
+text limits and file modes. Each request allows at most 256 files, 256 KiB per
+file and 4 MiB of content. Binary, symlink, submodule, truncated or incomplete
+evidence cannot use direct repair. Fresh worktree writes also reject symlink
+targets and ancestors. Executable mode follows current, then incoming, then base.
+
+A new integration attempt saves the resolution recipe as an artifact, starts
+from the pinned source and replays every successful Task result. Each repair
+must match its incoming commit and exact unmerged index; no submitted repair
+may be silently skipped. A later conflict produces fresh evidence. Repairing it
+carries earlier resolutions forward, bounded to 64 entries and 6 MiB of encoded
+recipe data. Original failed workspaces, artifacts and checks remain unchanged.
+
+The combined result must pass fresh diff checks, the pinned project checks and
+an independent review. Cancellation and restart recovery use the existing
+integration lifecycle. Success retains a reviewed result; source application
+remains a separate action. Source revision/cleanliness guards still apply.
+Task dependency conflicts and unsupported files retain comparison and new-plan
+workflows. Old conflict reports without a fingerprint remain readable but cannot
+seed direct repair. A repair rejected during replay retains its recipe and error;
+normal integration can capture fresh evidence again.
 
 Remaining steps:
 
-1. Add previous draft attempt browsing and direct conflict repair/revalidation.
+1. Add previous draft attempt browsing; extend repair to Task dependency conflicts
+   if needed.
 2. Add an explicit undo workflow for applied results if required.
 3. Add retained worktree/ref cleanup, plus multi-server leases if deployment
    requires them.

@@ -188,3 +188,25 @@ Existing frontend dependency/chunk warnings remain; no browser E2E was run.
 Direct conflict editing/resume, draft history browsing, cleanup and authenticated
 provider/browser validation remain separate work. This slice does not establish
 that a newly generated follow-up plan will resolve a real-world conflict.
+
+## Final integration text repair — 2026-09-08
+
+Added explicit conflict text editing/deletion and a bounded resolution recipe.
+Each submission creates a fresh integration attempt from the pinned source,
+replays all Task results and earlier resolutions, and reruns checks and review.
+Original failed attempts remain available. Only complete regular-text conflict
+evidence from the latest failed final integration can seed a repair.
+
+Regression tests exercise two consecutive conflicts followed by a later Task,
+retained failure evidence, stale/foreign attempts, forged fingerprints, invalid
+paths/text/size/deletion input, symlink target rejection, explicit deletion,
+combined project check failure, independent review rejection and cancellation
+with late-result rejection. Tests use real temporary Git repositories and fake
+providers; they do not establish live provider permissions or UI behavior.
+
+Validation: server `go test -race ./...`, `go vet ./...`, client `npm run build`
+and `git diff --check`. Existing eruda, mixed import and bundle-size build
+warnings remain. Browser E2E and authenticated provider validation remain
+pending, including the previous Antigravity headless permission denial.
+Task dependency repair, draft history browsing and retained workspace cleanup
+remain separate work.

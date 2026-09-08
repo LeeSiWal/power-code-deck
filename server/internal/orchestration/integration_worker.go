@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -14,6 +15,14 @@ import (
 // StartIntegration uses the same Run slot as task dispatch. Completion produces
 // a verified, retained result; applying it to the user's branch is separate.
 func (w *Worker) StartIntegration(id string) (string, error) {
+	return w.startIntegration(id, nil)
+}
+
+func (w *Worker) StartConflictResolution(id string, request ResolutionRequest) (string, error) {
+	return w.startIntegration(id, &request)
+}
+
+func (w *Worker) startIntegration(id string, request *ResolutionRequest) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed || w.cancel != nil {
@@ -55,6 +64,14 @@ func (w *Worker) StartIntegration(id string) (string, error) {
 		cancel()
 		return "", err
 	}
+	var repairs *resolutionPlan
+	if request != nil {
+		repairs, err = w.loadResolution(id, *request)
+		if err != nil {
+			cancel()
+			return "", err
+		}
+	}
 	attempt, err := w.store.BeginIntegration(id, checks)
 	if err != nil {
 		cancel()
@@ -64,7 +81,7 @@ func (w *Worker) StartIntegration(id string) (string, error) {
 	w.run, w.cancel, w.done = id, cancel, make(chan struct{})
 	go func() {
 		defer func() { cancel(); w.mu.Lock(); w.cancel = nil; close(w.done); w.mu.Unlock() }()
-		if err := w.integrate(ctx, run, attempt, checks, reviewer); err != nil {
+		if err := w.integrateWithResolutions(ctx, run, attempt, checks, reviewer, repairs); err != nil {
 			if saveErr := w.store.FailIntegration(attempt, err.Error()); saveErr != nil && !errors.Is(saveErr, ErrConflict) {
 				log.Printf("integration %s: %v", attempt, saveErr)
 			}
@@ -73,7 +90,7 @@ func (w *Worker) StartIntegration(id string) (string, error) {
 	return attempt, nil
 }
 
-func (w *Worker) integrate(ctx context.Context, run Run, id string, checks []CheckSpec, reviewer Factory) error {
+func (w *Worker) integrateWithResolutions(ctx context.Context, run Run, id string, checks []CheckSpec, reviewer Factory, repairs *resolutionPlan) error {
 	plan, err := w.store.GetPlan(run.ID)
 	if err != nil {
 		return err
@@ -92,6 +109,19 @@ func (w *Worker) integrate(ctx context.Context, run Run, id string, checks []Che
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return err
 	}
+	if repairs != nil {
+		raw, err := json.Marshal(repairs)
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(dir, "resolution-plan.json")
+		if err := writeExclusive(path, raw); err != nil {
+			return err
+		}
+		if err := w.store.AddIntegrationArtifact(id, "resolution_plan", path, run.BaseCommit); err != nil {
+			return err
+		}
+	}
 	hooks := filepath.Join(dir, "empty-hooks")
 	if err := os.Mkdir(hooks, 0700); err != nil {
 		return err
@@ -103,13 +133,33 @@ func (w *Worker) integrate(ctx context.Context, run Run, id string, checks []Che
 	if _, err := git(ctx, run.Path, "-c", "core.hooksPath="+hooks, "worktree", "add", "--detach", cwd, run.BaseCommit); err != nil {
 		return err
 	}
+	appliedRepairs := 0
 	for _, commit := range commits {
 		if _, err := git(ctx, cwd, "-c", "core.hooksPath="+hooks, "cherry-pick", "--no-commit", commit); err != nil {
+			if repairs != nil {
+				resolved := false
+				for _, repair := range repairs.Resolutions {
+					if repair.IncomingCommit == commit {
+						if err := applyConflictResolution(ctx, cwd, repair); err != nil {
+							return err
+						}
+						resolved = true
+						appliedRepairs++
+						break
+					}
+				}
+				if resolved {
+					continue
+				}
+			}
 			if captureErr := captureConflict(ctx, cwd, dir, id, run.BaseCommit, commit, err.Error(), w.store.AddIntegrationArtifact); captureErr != nil {
 				return fmt.Errorf("%w; conflict evidence: %v", err, captureErr)
 			}
 			return fmt.Errorf("task result integration conflict: %w", err)
 		}
+	}
+	if repairs != nil && appliedRepairs != len(repairs.Resolutions) {
+		return fmt.Errorf("%w: not all submitted conflict resolutions were applied", ErrConflict)
 	}
 	result, err := snapshot(ctx, cwd, run.BaseCommit)
 	if err != nil {
