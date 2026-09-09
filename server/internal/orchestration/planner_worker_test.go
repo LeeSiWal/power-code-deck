@@ -127,6 +127,10 @@ func TestDecodePlanRejectsUnsafeGraphAndForgedState(t *testing.T) {
 		strings.Replace(validDraft, `"concurrency":2`, `"state":"succeeded","concurrency":2`, 1),
 		strings.Replace(validDraft, `"id":"api"`, `"state":"succeeded","id":"api"`, 1),
 		strings.Replace(validDraft, `"provider":"codex"`, `"provider":"antigravity"`, 1),
+		// Presentation fields observed from a live agy plan response; the strict
+		// decoder must keep rejecting them instead of normalizing them away.
+		strings.Replace(validDraft, `"concurrency":2`, `"toolAction":"Submitting implementation plan","concurrency":2`, 1),
+		strings.Replace(validDraft, `"concurrency":2`, `"toolSummary":"Plan submission","concurrency":2`, 1),
 		strings.Repeat(" ", 512*1024+1),
 	}
 	for i, raw := range invalid {
