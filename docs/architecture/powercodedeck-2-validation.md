@@ -1,5 +1,59 @@
 # Runtime extraction validation
 
+## Live automatic planning — 2026-09-09
+
+`TestAntigravityGeneratedPlanLive` passed in **200.60 seconds** against installed
+agy 1.1.28. A natural-language request alone produced the plan; the generated
+plan drove execution, per-task review and final integration with no manual
+editing or frozen plan. This is the coverage `TestAntigravityPlanIntegrationLive`
+skipped by starting from a frozen plan.
+
+- The planner chose two tasks, `task_2` depending on `task_1`, and concurrency 1.
+- Both tasks passed project checks and independent review.
+- Integration passed `diff_check`, `project_test` and a separate independent
+  review; the Run reached `succeeded` and the retained commit contents matched
+  the request exactly.
+- Source HEAD, clean status and original contents were unchanged.
+
+Three defects were found by running it, each reproduced before being fixed:
+
+1. Planning was impossible in headless mode. The planner prompt told the model to
+   inspect the repository itself, so agy requested the `command` permission that
+   headless mode cannot prompt for and auto-denied. Two runs failed identically
+   at 23.94 s and 24.22 s. The planner now receives host-collected evidence, the
+   way review already did, and is told to call no tools at all. Unlike the review
+   prompt it gets no read-only tool fallback, because headless auto-denial has
+   also been observed for `read_file`.
+2. `--json-schema` made the CLI wrap the response in its structured-output tool
+   and leak `toolAction` and `toolSummary` presentation fields, which the strict
+   decoder correctly rejected. The plan content itself was already correct. The
+   optional schema hint is now omitted for planning, matching the earlier review
+   fix; the decoder is unchanged and new cases keep rejecting the observed shape.
+   `PlanJSONSchema` stays declared and unused, as `ReviewJSONSchema` already is.
+3. A rejected draft discarded what the CLI actually returned, leaving
+   `unknown field "toolAction"` as the only detail an operator would see. The
+   failure now retains a bounded 2 KiB copy of the planner output.
+
+Plan evidence carries the complete tracked listing plus file contents chosen
+smallest first, within 64 KiB serialized, 2000 files and 8 KiB per file. A plan
+must remain possible for a repository larger than the budget, so contents are
+best-effort while `omitted_contents` names every excluded file and why; nothing
+is truncated silently. Symlinks are never followed and are recorded as omitted.
+Repositories above the file limit, with no tracked files, or whose listing alone
+exceeds the budget are rejected explicitly. A unit test caught a real budget
+defect during implementation: omission reasons are part of the payload and were
+not reserved, so a 201-file repository serialized past 64 KiB.
+
+Validation passed: `go test -race ./...`, `go vet ./...`, targeted plan evidence,
+decoder and planner tests, and `git diff --check`. UI code is unchanged, so no
+browser build or browser smoke is claimed. `dist/pcd.exe` was not rebuilt, which
+matches every earlier commit on this branch; it still reflects main.
+
+Limits: one request shape on a disposable two-file repository, concurrency 1, and
+one CLI version. Automatic planning against a large real repository, parallel
+branches, conflict repair and application of results are still unproven live, and
+planner output remains dependent on CLI response shape.
+
 ## Live dependency plan and final integration — 2026-09-09
 
 `TestAntigravityPlanIntegrationLive` passed in **136.69 seconds** against the
