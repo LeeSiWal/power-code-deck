@@ -1,5 +1,34 @@
 # Runtime extraction validation
 
+## Live dependency plan and final integration — 2026-09-09
+
+`TestAntigravityPlanIntegrationLive` passed in **136.69 seconds** against the
+installed/authenticated Antigravity CLI. Two implementation executions and three
+fresh review executions ran against a disposable Git repository. The test uses a
+frozen two-task dependency plan, not generated planning output.
+
+- The first task wrote a fresh random marker. Before the second provider started,
+  the host verified that its worktree already contained that marker.
+- The second task read the dependency output and created a derived file. Both
+  tasks passed project checks and independent review; their review inputs were
+  retained, and the second task patch did not repeat the first task's edit.
+- The Run reached `awaiting_integration`, then a separate integration passed
+  `diff_check`, `project_test`, and a new independent review, reaching `succeeded`.
+- The retained integration ref resolved to the recorded commit. Both committed
+  file contents matched exactly, the combined patch was available, and integration
+  review input was retained.
+- Source HEAD, clean status and original contents remained unchanged. The test
+  does not apply or publish the result.
+
+Validation also passed: `TMPDIR=/private/tmp go test -race ./...`, `go vet ./...`
+and `git diff --check`. The normal suite exercises negative helper cases without
+model usage. Production code and UI were unchanged in this validation step.
+
+Next live coverage: natural-language automatic planning, followed by planned
+execution/integration. Parallel branches, conflict repair and explicit result
+application remain separate scenarios; this run used concurrency one.
+
+
 ## Server-collected review evidence — 2026-09-09
 
 Authenticated `TestAntigravityRunLive` **passed in 26.55 seconds** with installed

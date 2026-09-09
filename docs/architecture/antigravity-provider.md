@@ -148,3 +148,29 @@ the server's strict verdict decoder remains authoritative and unchanged. It
 rejects extra fields, trailing output, missing/invalid verdicts and empty summaries.
 No compatibility normalization of these malformed responses is retained. Planner
 configuration and generic provider schema support remain unchanged.
+
+## Opt-in dependency and integration smoke
+
+Run from `server` with an installed/authenticated CLI; this consumes model usage:
+
+```sh
+PCD_PLAN_LIVE=1 TMPDIR=/private/tmp go test -v ./internal/orchestration -run '^TestAntigravityPlanIntegrationLive$' -count=1 -timeout 15m
+```
+
+The test freezes
+a two-task dependency plan in a disposable Git repository. The first model writes
+a fresh random marker; the second receives that result in its worktree and creates
+a derived file without receiving the marker in its task prompt. Host checks
+validate the exact contents, and each task gets a fresh Antigravity review.
+
+A separate final integration gets its own checks and third independent review.
+The test verifies retained result contents/ref, combined patch, task review inputs,
+absence of duplicated ancestor edits in the second task patch, and unchanged
+source HEAD, status and original contents. Integration does not apply the result
+to the source checkout. The check helper permits the derived file to be absent
+at the first task; the final retained-commit assertions require both exact files.
+Negative helper cases reject incorrect seed and dependency content.
+
+This smoke deliberately tests a confirmed plan with concurrency one. Automatic
+planning, parallel branches, conflict repair and applying the reviewed result to
+the source are separate live scenarios. Normal tests leave model execution off.
