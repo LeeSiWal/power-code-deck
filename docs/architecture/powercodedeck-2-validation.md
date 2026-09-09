@@ -1,5 +1,60 @@
 # Runtime extraction validation
 
+## Destructive paths through the running server — 2026-09-09
+
+Browser validation was **not** performed: the Chrome extension is not connected in
+this environment, so no browser check is claimed and the browser gaps stay open.
+
+Instead the destructive paths were driven end to end through the real production
+binary over HTTP. Every earlier orchestration test uses an in-process Worker, so
+routing, handlers, JSON contracts and persistence had never been exercised on
+these paths. This covers the server, not the UI, and does not substitute for the
+browser checks.
+
+Isolation: a purpose-built binary served the embedded UI on loopback only, with a
+separate SQLite database, its own work root and a disposable Git fixture whose
+project check rejects conflict markers and empty files. No user repository,
+database or CLI permission setting was touched.
+
+Verified through the API:
+
+- Run creation, plan save (204) and plan start (202).
+- Two independent tasks at concurrency two both succeeded, each passing `review`
+  and `tests`.
+- Integration reached `integration_failed` rather than picking a side, and the
+  conflict artifact was retrievable over HTTP with a fingerprint and per-stage
+  blob references for `tracked.txt`.
+- An explicit resolution posted to the resolve route reached `succeeded` with
+  `diff_check`, `project_test` and `review` all passing.
+- **Applying the result moved the source.** The reviewed preview was posted back
+  unchanged; `refs/heads/master` advanced from the base to the reviewed result
+  commit, the base remained its ancestor so the move was fast-forward only, the
+  checkout held the merged contents, the worktree stayed clean, and the record
+  read `applied: verified result applied to master`.
+- **Deleting a retained workspace removed only the worktree.** The Git worktree
+  count fell from five to four and the workspace directory was gone, while
+  `changes.patch`, `review-input.json`, `review.log` and the check log survived on
+  disk and the patch was still served over HTTP. The retained attempt and
+  integration refs still resolved. Repeating the delete returned 409, and a forged
+  fingerprint against the other attempt also returned 409.
+
+Two failures during this drive were defects in the driver script, not the server,
+and both server rejections were correct:
+
+- Run creation requires a non-empty `Idempotency-Key` header. Omitting it returns
+  400 `invalid work request`, which does not say which field is missing. The UI
+  sends the header, so no product change was made, but the message is unhelpful
+  to any direct API caller.
+- Posting an apply target that differed from the reviewed preview returned 409.
+  `ApplyResult` compares the whole target against a freshly computed preview and
+  fast-forwards the checked-out branch; applying to an arbitrary new branch is not
+  supported by design. The driver was corrected to post the preview verbatim.
+
+Still unverified: everything that requires a browser — the plan editor, the
+resolution editor, the cleanup confirmation step, deep links and mobile handoff.
+Automatic planning against a large real repository and more than two parallel
+branches also remain untested.
+
 ## Live parallel execution and conflict repair — 2026-09-09
 
 `TestAntigravityParallelConflictRepairLive` passed in **48.56 seconds** against
