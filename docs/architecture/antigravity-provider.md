@@ -157,6 +157,24 @@ Run from `server` with an installed/authenticated CLI; this consumes model usage
 PCD_PLAN_LIVE=1 TMPDIR=/private/tmp go test -v ./internal/orchestration -run '^TestAntigravityPlanIntegrationLive$' -count=1 -timeout 15m
 ```
 
+Two further opt-in checks cover what a frozen plan cannot. `TMPDIR=/private/tmp`
+matters on macOS only; drop it elsewhere.
+
+```sh
+# A natural-language request alone produces the plan, which then drives
+# execution, per-task review and integration with no manual editing.
+PCD_PLANNER_LIVE=1 TMPDIR=/private/tmp go test -v ./internal/orchestration -run '^TestAntigravityGeneratedPlanLive$' -count=1 -timeout 20m
+
+# Two independent tasks edit the same file at concurrency two, so their
+# verified results conflict; an explicit resolution then repairs and reverifies.
+PCD_CONFLICT_LIVE=1 TMPDIR=/private/tmp go test -v ./internal/orchestration -run '^TestAntigravityParallelConflictRepairLive$' -count=1 -timeout 20m
+```
+
+Neither is a browser test. The planner test needs no tool permissions because the
+server supplies repository evidence in the prompt; if it fails on a permission
+diagnostic, the CLI is being asked to inspect files itself and the evidence path
+has regressed.
+
 The test freezes
 a two-task dependency plan in a disposable Git repository. The first model writes
 a fresh random marker; the second receives that result in its worktree and creates

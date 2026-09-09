@@ -139,5 +139,46 @@ described in [Task graph foundation](task-graph.md). Plans can be saved and insp
 through the authenticated plan API; the Run UI displays them. Actual multi-task
 CLI dispatch and result integration are still separate follow-up work.
 
+## Isolated browser check setup
+
+The browser layer is still unverified. Run the check where a signed-in Chrome and
+the server share a machine, so no tunnel or virtual display is needed. Build a
+binary with the UI embedded, then point it at throwaway state:
+
+```sh
+make build-client                 # or: cd client && ./node_modules/.bin/vite build
+rm -rf server/static && cp -r client/dist server/static
+cd server && CGO_ENABLED=0 go build -o /tmp/pcd-e2e .
+
+E=/tmp/pcd-e2e-state
+mkdir -p "$E/projects/fixture/.powercodedeck" "$E/workroot"
+cd "$E/projects/fixture" && git init -q && printf 'original\n' > tracked.txt
+cat > .powercodedeck/checks.json <<'JSON'
+{"version":1,"checks":[{"name":"project_test","cwd":".","argv":["/bin/sh","-c","! grep -q '^<<<<<<<' tracked.txt && test -s tracked.txt"],"timeoutSeconds":30}]}
+JSON
+git add -A && git -c user.name=E2E -c user.email=e2e@example.invalid commit -qm base
+
+POWERCODEDECK_PORT=47311 POWERCODEDECK_BIND_HOST=127.0.0.1 \
+POWERCODEDECK_DB_PATH="$E/e2e.db" POWERCODEDECK_WORKSPACE_ROOT="$E/projects" \
+POWERCODEDECK_AUTH_ENABLED=false PCD_V2_ENABLED=1 PCD_V2_WORK_ROOT="$E/workroot" \
+/tmp/pcd-e2e
+```
+
+Loopback binding, a separate database and a disposable fixture keep real
+repositories, databases and CLI permission settings out of the check. Applying a
+result fast-forwards the fixture's checked-out branch and cleanup deletes
+worktrees, so both are genuinely destructive; never point this at a real project.
+
+What still needs browser evidence: the plan editor and draft history, the conflict
+resolution editor, the cleanup confirmation step, applying a reviewed result,
+direct `/runs/:id` navigation and reload, and mobile handoff. Server-side versions
+of the conflict, application and cleanup paths have been driven over HTTP and are
+recorded in [validation](powercodedeck-2-validation.md); that does not cover the UI.
+
+Applying a result requires posting the reviewed preview back unchanged. The whole
+target is compared against a freshly computed preview, and only the checked-out
+branch is fast-forwarded, so an arbitrary target branch is refused with 409.
+Creating a Run over the API also requires a non-empty `Idempotency-Key` header.
+
 Rollback: disable `PCD_V2_ENABLED` and restart. The additive tables remain for
 future re-enablement; existing chat data and routes remain unchanged.
