@@ -273,6 +273,12 @@ func TestWorkerCheckHelper(t *testing.T) {
 			os.Exit(5)
 		}
 	}
+	if arg := os.Args[len(os.Args)-1]; strings.HasPrefix(arg, "verify-merge:") {
+		if err := verifyLiveMergeFile(".", strings.TrimPrefix(arg, "verify-merge:")); err != nil {
+			fmt.Println(err)
+			os.Exit(5)
+		}
+	}
 	if os.Args[len(os.Args)-1] == "verify-change" {
 		data, err := os.ReadFile("tracked.txt")
 		if err != nil || string(data) != "PCD_RUN_LIVE_OK\n" {

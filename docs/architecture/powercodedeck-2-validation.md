@@ -1,5 +1,59 @@
 # Runtime extraction validation
 
+## Live parallel execution and conflict repair — 2026-09-09
+
+`TestAntigravityParallelConflictRepairLive` passed in **48.56 seconds** against
+installed agy 1.1.28. Two independent tasks edited the same file at concurrency
+two, their verified results conflicted at integration, and an explicit resolution
+repaired and re-verified the result. Earlier live coverage used concurrency one
+and never produced a real conflict.
+
+- Peak concurrent implementations was 2, measured rather than assumed: the test
+  wraps each provider execution and counts live instances, decrementing on Stop.
+- Both tasks passed project checks and independent review in isolation.
+- Integration rejected the conflict instead of picking a side, and retained
+  conflict evidence naming `tracked.txt` with a fingerprint.
+- The conflicted attempt started no reviewer, so a conflicted merge costs no
+  model call. The test now asserts this rather than only asserting the repair.
+- The repair supplied merged content, passed `diff_check`, `project_test` and one
+  fresh independent review, and reached `succeeded`. No implementation provider
+  re-ran. The retained ref resolved to the recorded commit with exactly the
+  merged contents, and the failed attempt's conflict evidence survived.
+- Source HEAD, clean status and original contents remained unchanged.
+
+The first run failed on a wrong test assertion, not on product behavior: it
+expected the conflicted integration to have consumed a review. It had not,
+because the merge fails before a reviewer starts. The assertion was corrected to
+require exactly that, which is stronger than what it replaced.
+
+One project check gates both the isolated branches and the merged result by
+accepting either branch content or the merge, and nothing else; a unit test pins
+those accepted and rejected shapes without model usage.
+
+## Merge readiness for main — 2026-09-09
+
+- `git merge-tree` against `origin/main` reports no conflicts, and no file was
+  touched by both sides since the merge base.
+- Client `tsc --noEmit` and `vite build` pass. Existing chunk-size warnings
+  remain.
+- Windows (amd64) and macOS (arm64) cross-compiles succeed, which matters here
+  because plan evidence uses `os.OpenRoot` and rejects non-regular files.
+  Cross-compilation is still not a Windows or macOS runtime test.
+- Compatibility alias audit: the five session type aliases still have callers
+  outside `services` and stay. Four state constants — `SessionRunning`,
+  `SessionKilled`, `SessionStopped`, `SessionUnknown` — had no caller anywhere
+  and were retired, satisfying the staged rule that aliases go only when nothing
+  depends on them. `SessionExited` is still named inside the package and stays.
+- `dist/pcd.exe` remains as built on main. Every commit on this branch has left
+  it alone, so rebuilding it is deferred to the merge itself.
+
+Validation passed: `go test -race ./...`, `go vet ./...`, targeted live and
+non-live orchestration tests, and `git diff --check`.
+
+Still unproven live: browser end-to-end coverage of conflict repair, result
+application, destructive workspace cleanup and mobile handoff; automatic planning
+against a large real repository; and more than two parallel branches.
+
 ## Live automatic planning — 2026-09-09
 
 `TestAntigravityGeneratedPlanLive` passed in **200.60 seconds** against installed

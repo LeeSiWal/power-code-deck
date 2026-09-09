@@ -9,10 +9,6 @@ type CreateSessionRequest = session.CreateSessionRequest
 type SessionInfo = session.SessionInfo
 type AttachResult = session.AttachResult
 
-const (
-	SessionRunning = session.SessionRunning
-	SessionExited  = session.SessionExited
-	SessionKilled  = session.SessionKilled
-	SessionStopped = session.SessionStopped
-	SessionUnknown = session.SessionUnknown
-)
+// Only the states this package still names itself remain aliased; the rest were
+// retired once no caller depended on them.
+const SessionExited = session.SessionExited
