@@ -110,6 +110,13 @@ export interface DelegateJob {
 export interface AutoModelUsage { tool: string; model: string; effort: string; turns: number; reported: number; input: number; output: number; cacheCreation: number; cacheRead: number }
 export interface AutoIdleBucket { label: string; minSeconds: number; turns: number; reported: number; cacheRead: number; inputTotal: number }
 export interface AutoUsage { turns: number; models: AutoModelUsage[]; modelSwitches: number; toolSwitches: number; delegations: number; handoffTokens: number; idle: AutoIdleBucket[]; idleThresholdSeconds: number }
+// Settings → 로컬 모델 (GET/PUT/DELETE /v2/routing/local).
+export interface LocalModelEntry {
+  id: string; url: string; kind: 'openai' | 'ollama' | string; model: string;
+  status: string; detail?: string; models: string[];
+  useForEasy: boolean; useAsJudge: boolean; profileId?: string; tiers?: string[];
+}
+export interface LocalModelInput { url: string; kind: string; model: string; useForEasy: boolean; useAsJudge: boolean }
 export interface RoutingChoice { decision: RoutingDecision; profile?: RoutingProfile }
 export interface RoutingRunState { runId: string; mode: RoutingMode; phase: string; epoch: number; currentProfile: string; currentExecution: string; pendingProfile: string; pendingWhen: string; pinProfile: string; pinAdapter: string; switches: number; attempts: number }
 export interface RoutingUsage { scope: string; source: string; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheCreationTokens: number | null; thinkingTokens: number | null; totalTokens: number | null; local: boolean }
@@ -379,6 +386,10 @@ export const api = {
   getRun: (id: string) => apiFetch<Run>(`/v2/runs/${encodeURIComponent(id)}`),
   routingSnapshot: () => apiFetch<RoutingSnapshot>('/v2/routing'),
   routingChoose: (goal: string) => apiFetch<RoutingChoice>('/v2/routing/choose', { method: 'POST', body: JSON.stringify({ goal }) }),
+  localModels: () => apiFetch<{ endpoints: LocalModelEntry[] }>('/v2/routing/local'),
+  testLocalModel: (url: string, kind: string) => apiFetch<{ models: string[] }>('/v2/routing/local/test', { method: 'POST', body: JSON.stringify({ url, kind }) }),
+  saveLocalModel: (id: string, body: LocalModelInput) => apiFetch<{ endpoints: LocalModelEntry[] }>(`/v2/routing/local/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteLocalModel: (id: string) => apiFetch<void>(`/v2/routing/local/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   routingRefresh: () => apiFetch<RoutingSnapshot>('/v2/routing/refresh', { method: 'POST' }),
   routingMarkValidated: (adapter: string) => apiFetch<void>(`/v2/routing/adapters/${encodeURIComponent(adapter)}/validated`, { method: 'POST' }),
   runRouting: (id: string) => apiFetch<RoutingTimeline>(`/v2/runs/${encodeURIComponent(id)}/routing`),

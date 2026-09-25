@@ -89,15 +89,17 @@ func NewSession(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc {
 			jsonError(w, "agent not found", http.StatusNotFound)
 			return
 		}
-		newAgent, err := agentSvc.Create(services.CreateAgentRequest{
-			Preset:     agent.Preset,
-			Name:       agent.Name,
-			WorkingDir: agent.WorkingDir,
-			Command:    sessionLaunchCommand(agent),
-			Args:       nil,
-		})
+		req, auto := services.NewSessionRequest(agent, sessionLaunchCommand(agent))
+		newAgent, err := agentSvc.Create(req)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if auto {
+			// A fresh auto session: its first message picks the tool and model.
+			hub.BroadcastAll(ws.EventAgentCreated, newAgent)
+			w.WriteHeader(http.StatusCreated)
+			jsonResponse(w, newAgent)
 			return
 		}
 		// Carry the chosen model + permission mode + effort onto the new agent, so
@@ -136,9 +138,13 @@ func ResumeSession(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFun
 			return
 		}
 		sid := mux.Vars(r)["sid"]
+		name := services.DerivedName(agent)
+		if agent.AutoProfile != "" {
+			name = agent.Name // stays auto-routed, see below
+		}
 		newAgent, err := agentSvc.Create(services.CreateAgentRequest{
 			Preset:     agent.Preset,
-			Name:       agent.Name,
+			Name:       name,
 			WorkingDir: agent.WorkingDir,
 			Command:    "claude",
 			Args:       []string{"--resume", sid},
@@ -153,6 +159,12 @@ func ResumeSession(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFun
 		// opens the resumed agent blank (fresh session, no prior conversation), and
 		// NativeService can't seed history from the transcript either.
 		agentSvc.SetClaudeSessionID(newAgent.ID, sid)
+		// Resuming a conversation of an auto-routed Claude session keeps it
+		// auto-routed (later turns may still change model, or tool after idle).
+		if agent.AutoProfile != "" {
+			agentSvc.SetAutoProfile(newAgent.ID, agent.AutoProfile)
+			newAgent.AutoProfile = agent.AutoProfile
+		}
 		// Carry the chosen model + permission mode + effort across the resume, so 이어하기
 		// keeps your choices instead of resetting to defaults on the freshly created agent.
 		if model, mode, effort := agentSvc.NativeConfig(agent.ID); model != "" || mode != "" || effort != "" {

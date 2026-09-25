@@ -47,6 +47,15 @@ var billingEnv = map[string][]string{
 
 // Invalidate forces the next Probe to re-run (login/logout, CLI update,
 // config change).
+// SetEndpoints replaces the probed local endpoints (Settings edits) and drops
+// the cached results so the next probe sees them.
+func (p *Prober) SetEndpoints(eps []LocalEndpoint) {
+	p.mu.Lock()
+	p.Endpoints = append([]LocalEndpoint(nil), eps...)
+	p.cache = nil
+	p.mu.Unlock()
+}
+
 func (p *Prober) Invalidate() {
 	p.mu.Lock()
 	p.cache = nil
@@ -62,9 +71,10 @@ func (p *Prober) Probe(ctx context.Context, maxAge time.Duration) []AdapterStatu
 		p.mu.Unlock()
 		return out
 	}
+	endpoints := append([]LocalEndpoint(nil), p.Endpoints...)
 	p.mu.Unlock()
 	var wg sync.WaitGroup
-	out := make([]AdapterStatus, 4, 4+len(p.Endpoints))
+	out := make([]AdapterStatus, 4, 4+len(endpoints))
 	for i, f := range []func(context.Context) AdapterStatus{p.claude, p.codex, p.antigravity, p.gemini} {
 		wg.Add(1)
 		go func(i int, f func(context.Context) AdapterStatus) {
@@ -73,7 +83,7 @@ func (p *Prober) Probe(ctx context.Context, maxAge time.Duration) []AdapterStatu
 		}(i, f)
 	}
 	wg.Wait()
-	for _, e := range p.Endpoints {
+	for _, e := range endpoints {
 		out = append(out, p.local(ctx, e))
 	}
 	p.mu.Lock()
