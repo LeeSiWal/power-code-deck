@@ -3,6 +3,9 @@ package runroute
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -79,5 +82,30 @@ func TestWithoutLocalDropsLocalProfiles(t *testing.T) {
 	got := withoutLocal(cfg).Profiles
 	if len(got) != 1 || got[0].ID != "paid" || len(cfg.Profiles) != 3 {
 		t.Fatalf("kept %+v (original %d)", got, len(cfg.Profiles))
+	}
+}
+
+// judgeTier skips a down endpoint (no call, no wait) and caches answers.
+func TestJudgeTierCachesAndSkipsDownEndpoint(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		io.WriteString(w, `{"choices":[{"message":{"content":"EASY"}}]}`)
+	}))
+	defer srv.Close()
+	c := &Coordinator{prober: &routing.Prober{HTTP: routing.NewLocalClient()}, now: time.Now}
+	cfg := routing.Config{LocalEndpoints: []routing.LocalEndpoint{{ID: "mac", URL: srv.URL, Kind: "openai", Model: "m"}},
+		TierJudge: &routing.TierJudgeConfig{EndpointRef: "mac"}}
+	up := map[string]routing.AdapterStatus{"local:mac": {Installation: routing.Observation{Value: routing.Installed}}}
+	if got := c.judgeTier(context.Background(), cfg, map[string]routing.AdapterStatus{}, "README 오타 고쳐줘"); got != routing.TierUnset || calls != 0 {
+		t.Fatalf("down endpoint: tier %v, %d calls", got, calls)
+	}
+	for i := 0; i < 3; i++ {
+		if got := c.judgeTier(context.Background(), cfg, up, "README 오타 고쳐줘"); got != routing.VeryEasy {
+			t.Fatalf("judge tier %v", got)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("cache: %d calls for one request", calls)
 	}
 }

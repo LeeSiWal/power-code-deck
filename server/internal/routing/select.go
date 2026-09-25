@@ -52,6 +52,10 @@ type DecideInput struct {
 	PinProfile    string
 	PinAdapter    string
 	ContextTokens int
+	// JudgeTier, when set, is a local model's rating of the request and
+	// replaces the keyword rule tier for a first attempt (rules still win at
+	// ULTRA, and failure-based escalation always uses the rules).
+	JudgeTier Tier
 }
 
 // Decide never launches anything. In Shadow mode the caller records the
@@ -61,6 +65,10 @@ func Decide(ctx context.Context, in DecideInput) Decision {
 	d := Decision{ID: "rd_" + rand.Text(), Mode: in.Mode, Stage: in.Task.Stage, Kind: in.Task.Kind, ConfigFingerprint: in.Config.Fingerprint(), CreatedAt: start.UTC()}
 	defer func() { d.DurationMS = time.Since(start).Milliseconds() }()
 	d.RuleTier, d.RuleWhy = RuleTier(in.Task)
+	if in.JudgeTier != TierUnset && in.Task.Stage == "initial" && d.RuleTier != Ultra {
+		d.RuleWhy = append([]string{"local judge: " + in.JudgeTier.String() + " (rules: " + d.RuleTier.String() + ")"}, d.RuleWhy...)
+		d.RuleTier = in.JudgeTier
+	}
 
 	if in.Manual != "" {
 		d.Candidates = Filter(in.Config, in.Statuses, in.Policy, in.Health, Need{Kind: in.Task.Kind, ContextTokens: in.ContextTokens, PinProfile: in.PinProfile, PinAdapter: in.PinAdapter, Role: RoleExecutor})

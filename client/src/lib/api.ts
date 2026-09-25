@@ -60,6 +60,7 @@ export interface RoutingSnapshot {
   adapters: RoutingAdapterStatus[]; profiles: RoutingProfileView[] | null; tiers: Record<string, string[]>; routellm: Record<string, unknown>;
   policy: { reviewedAt: string; sources: Record<string, string> };
   decider: DeciderView;
+  tierJudge?: { endpointRef: string; model?: string; timeoutMs?: number };
 }
 export type RoutingStrategy = 'rules' | 'routellm' | 'commercial_llm';
 export interface DeciderCall { profileId: string; purpose: string; latencyMs: number; usage?: RoutingUsage; observedModel?: string; errorClass?: string; error?: string; valid: boolean }

@@ -54,6 +54,15 @@ type Coordinator struct {
 	timings  sync.Map
 	decider  routing.DeciderCaller
 	verdicts verdictCache
+	// judged caches local tier-judge answers by request text for a minute: one
+	// route-turn asks with and without a tool pin, and retries repeat a goal.
+	judgedMu sync.Mutex
+	judged   map[string]judgedTier
+}
+
+type judgedTier struct {
+	tier routing.Tier
+	exp  time.Time
 }
 
 type Options struct {
@@ -115,12 +124,14 @@ type Snapshot struct {
 	RouteLLM    map[string]any          `json:"routellm"`
 	Policy      routing.PolicyEvidence  `json:"policy"`
 	Decider     DeciderView             `json:"decider"`
+	// TierJudge is the local difficulty judge, when configured.
+	TierJudge *routing.TierJudgeConfig `json:"tierJudge,omitempty"`
 }
 
 // Snapshot is the support matrix the UI renders.
 func (c *Coordinator) Snapshot(ctx context.Context) Snapshot {
 	cfg, st := c.config(ctx)
-	s := Snapshot{Mode: cfg.Mode, Fingerprint: cfg.Fingerprint(), Spend: cfg.Spend, Switching: cfg.Switching, Policy: c.policy, Tiers: map[string][]string{}, RouteLLM: map[string]any{"enabled": cfg.RouteLLM.Enabled}}
+	s := Snapshot{Mode: cfg.Mode, Fingerprint: cfg.Fingerprint(), Spend: cfg.Spend, Switching: cfg.Switching, Policy: c.policy, Tiers: map[string][]string{}, RouteLLM: map[string]any{"enabled": cfg.RouteLLM.Enabled}, TierJudge: cfg.TierJudge}
 	if c.cfgErr != nil {
 		s.ConfigError = c.cfgErr.Error()
 	}

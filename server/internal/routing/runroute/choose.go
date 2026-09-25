@@ -29,7 +29,7 @@ func (c *Coordinator) Choose(ctx context.Context, goal string) (Choice, error) {
 	}
 	cfg, statuses := c.config(ctx)
 	d := routing.Decide(ctx, routing.DecideInput{Config: cfg, Statuses: statuses, Policy: c.policy, Health: c.health, Router: c.router,
-		Task: routing.DescribeTask(goal, routing.KindCode, nil), Mode: routing.ModeAuto})
+		Task: routing.DescribeTask(goal, routing.KindCode, nil), Mode: routing.ModeAuto, JudgeTier: c.judgeTier(ctx, cfg, statuses, goal)})
 	if d.Selected == "" {
 		return Choice{Decision: d}, ErrNoProfile
 	}
@@ -75,7 +75,8 @@ func (c *Coordinator) ChooseTurn(ctx context.Context, goal, adapter, current str
 		cfg = withoutLocal(full)
 	}
 	d := routing.Decide(ctx, routing.DecideInput{Config: cfg, Statuses: statuses, Policy: c.policy, Health: c.health, Router: c.router,
-		Task: routing.DescribeTask(goal, routing.KindCode, nil), Mode: routing.ModeAuto, Current: current, PinAdapter: adapter})
+		Task: routing.DescribeTask(goal, routing.KindCode, nil), Mode: routing.ModeAuto, Current: current, PinAdapter: adapter,
+		JudgeTier: c.judgeTier(ctx, full, statuses, goal)})
 	tc := TurnChoice{Choice: Choice{Decision: d}}
 	// The current profile may be a local one that noLocal just left out.
 	if cur, ok := full.ProfileByID(current); ok {
@@ -121,4 +122,46 @@ func withoutLocal(cfg routing.Config) routing.Config {
 	}
 	cfg.Profiles = kept
 	return cfg
+}
+
+// judgeTier asks the configured local model to rate the request. Any problem —
+// no judge configured, the endpoint down in the last probe, a timeout, an
+// unusable answer — returns TierUnset, and the keyword rules decide as before.
+func (c *Coordinator) judgeTier(ctx context.Context, cfg routing.Config, statuses map[string]routing.AdapterStatus, goal string) routing.Tier {
+	j := cfg.TierJudge
+	if j == nil || c.prober == nil || c.prober.HTTP == nil {
+		return routing.TierUnset
+	}
+	if st := statuses[routing.AdapterLocal+":"+j.EndpointRef]; st.Installation.Value != routing.Installed {
+		return routing.TierUnset
+	}
+	var ep *routing.LocalEndpoint
+	for i := range cfg.LocalEndpoints {
+		if cfg.LocalEndpoints[i].ID == j.EndpointRef {
+			ep = &cfg.LocalEndpoints[i]
+		}
+	}
+	if ep == nil {
+		return routing.TierUnset
+	}
+	key := j.EndpointRef + "\x00" + goal
+	c.judgedMu.Lock()
+	if hit, ok := c.judged[key]; ok && c.now().Before(hit.exp) {
+		c.judgedMu.Unlock()
+		return hit.tier
+	}
+	c.judgedMu.Unlock()
+	jctx, cancel := context.WithTimeout(ctx, j.JudgeTimeout())
+	defer cancel()
+	tier, err := c.prober.HTTP.JudgeTier(jctx, *ep, j.Model, goal)
+	if err != nil {
+		return routing.TierUnset
+	}
+	c.judgedMu.Lock()
+	if c.judged == nil || len(c.judged) > 500 {
+		c.judged = map[string]judgedTier{}
+	}
+	c.judged[key] = judgedTier{tier: tier, exp: c.now().Add(time.Minute)}
+	c.judgedMu.Unlock()
+	return tier
 }
