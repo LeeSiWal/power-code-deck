@@ -166,6 +166,10 @@ type CreateAgentRequest struct {
 	WorkingDir string   `json:"workingDir"`
 	Command    string   `json:"command"`
 	Args       []string `json:"args"`
+	// NativeModel/NativeEffort are an explicit starting choice (the "자동" start's
+	// routed profile). They win over what the session would inherit.
+	NativeModel  string `json:"nativeModel,omitempty"`
+	NativeEffort string `json:"nativeEffort,omitempty"`
 }
 
 func (s *AgentService) assignColor() (int, string) {
@@ -293,7 +297,7 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 	if req.Preset == "codex-cli" || req.Command == "codex" {
 		driver = "codex"
 	}
-	if model, mode, effort := s.inheritedNativeConfig(workingDir, driver); model != "" || mode != "" || effort != "" {
+	if model, mode, effort := s.startingNativeConfig(workingDir, driver, req); model != "" || mode != "" || effort != "" {
 		s.SetNativeConfig(agent.ID, model, mode, effort)
 	}
 
@@ -320,6 +324,22 @@ func ResolveWorkingDir(dir string) (string, error) {
 		return "", fmt.Errorf("working directory is not a directory: %s", abs)
 	}
 	return abs, nil
+}
+
+// startingNativeConfig is the inherited config with the request's explicit model and
+// effort applied on top. The permission mode is always inherited.
+func (s *AgentService) startingNativeConfig(workingDir, driver string, req CreateAgentRequest) (model, mode, effort string) {
+	model, mode, effort = s.inheritedNativeConfig(workingDir, driver)
+	if driver == "antigravity" {
+		return model, mode, effort
+	}
+	if req.NativeModel != "" {
+		model = req.NativeModel
+	}
+	if req.NativeEffort != "" && driver == "claude" {
+		effort = req.NativeEffort
+	}
+	return model, mode, effort
 }
 
 // inheritedNativeConfig picks the model + permission mode + effort a new session should
