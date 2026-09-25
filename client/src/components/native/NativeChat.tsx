@@ -14,6 +14,7 @@ import {
 import { writeClipboard } from '../../lib/clipboard';
 import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
+import { modelName } from '../../lib/routingLabels';
 import { clientCommand, type NativeDriverName } from '../../lib/nativeCommands';
 
 /**
@@ -198,7 +199,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   }, [pickMode, driver]);
 
   const models = driver === 'codex' ? CODEX_MODELS : MODELS;
-  const modelLabel = models.find((m) => m.id === modelId)?.label ?? modelId ?? 'Auto';
+  // Ids the picker doesn't list (dated, [1m], newly released) still read as names.
+  const modelLabel = models.find((m) => m.id === modelId)?.label ?? (modelId ? modelName(modelId) : 'Auto');
   const currentMode = MODES.find((m) => m.id === modeId) ?? MODES[0];
   // Codex has no effort concept, so the control is hidden there rather than shown
   // inert — a setting that silently does nothing is worse than no setting.
