@@ -15,7 +15,7 @@ import { writeClipboard } from '../../lib/clipboard';
 import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
 import { modelName } from '../../lib/routingLabels';
-import { SESSION_TOOLS, rememberTool, sessionName, toolForDriver, type SessionTool } from '../../lib/sessionTools';
+import { AUTO, SESSION_TOOLS, rememberTool, sessionName, takePendingStart, toolForDriver, type PendingStart, type SessionTool } from '../../lib/sessionTools';
 import { clientCommand, type NativeDriverName } from '../../lib/nativeCommands';
 
 /**
@@ -146,6 +146,12 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     return EFFORTS.some((e) => e.id === saved) ? saved : DEFAULT_EFFORT;
   });
   const [menu, setMenu] = useState<null | 'add' | 'model' | 'mode' | 'effort'>(null);
+  // A session started from the "자동" page carries its first request and a note
+  // saying which tool/model was picked. Taken once; sent when the session opens.
+  const pendingStartRef = useRef<PendingStart | null | undefined>(undefined);
+  if (pendingStartRef.current === undefined) pendingStartRef.current = takePendingStart(agentId);
+  const [notice, setNotice] = useState(() => pendingStartRef.current?.note ?? '');
+  const sendTextRef = useRef<(text: string) => void>(() => {});
   // Session options live on the server, not in localStorage: they describe the agent
   // and are re-validated at every launch, so the client only ever mirrors them.
   const [options, setOptions] = useState<SessionOptions>(EMPTY_OPTIONS);
@@ -369,6 +375,12 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       if (p.agentId !== agentId) return;
       setEvents(p.events as StreamEvent[]);
       setRunning(!!p.running);
+      const first = pendingStartRef.current;
+      if (first) {
+        pendingStartRef.current = null;
+        // Only into a fresh session: a reopened one already has its conversation.
+        if (!(p.events as StreamEvent[]).length) sendTextRef.current(first.message);
+      }
       // The session's model/mode are authoritative — they may have been chosen on
       // another device, or restored from a past session. Sync the toolbar (and this
       // device's remembered choice) to them so what's shown matches what's running.
@@ -462,6 +474,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     agentDeckWS.send('native:input', { agentId, text });
     markJustSent();
   }, [agentId, markJustSent]);
+  sendTextRef.current = sendText;
 
   const interrupt = useCallback(() => {
     agentDeckWS.send('native:interrupt', { agentId });
@@ -564,6 +577,13 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         )}
       </div>
 
+      {notice && (
+        <div className="mx-2 mb-1 px-3 py-2 rounded-lg bg-deck-accent/10 text-deck-text-dim text-xs flex items-start gap-2">
+          <div className="flex-1 min-w-0">{notice}</div>
+          <button onClick={() => setNotice('')} className="shrink-0 text-deck-text-dim hover:text-deck-text" title="닫기">✕</button>
+        </div>
+      )}
+
       {error && (
         <div className="mx-2 mb-1 px-3 py-2 rounded-lg bg-red-500/15 text-red-400 text-xs flex items-start gap-2">
           <div className="flex-1 min-w-0">
@@ -632,6 +652,14 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
                 </button>
               );
             })}
+            <button
+              onClick={() => { setMenu(null); rememberTool(AUTO); navigate(`/start/${encodeURIComponent(cwd)}`); }}
+              className="w-full text-left px-3 py-2 hover:bg-deck-bg/60 flex items-center gap-2"
+            >
+              <span className="shrink-0 w-3.5" />
+              <span className="text-sm text-deck-text">자동</span>
+              <span className="ml-auto text-xs text-deck-text-dim">요청 보고 선택</span>
+            </button>
             <button
               onClick={() => { setMenu(null); navigate(`/launch/${encodeURIComponent(cwd)}`); }}
               className="w-full text-left px-3 py-2 text-xs text-deck-text-dim hover:bg-deck-bg/60"

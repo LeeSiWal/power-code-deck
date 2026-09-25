@@ -13,6 +13,7 @@ import { TerminalPage } from './pages/TerminalPage';
 import { LogsPage } from './pages/LogsPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AutoStartPage } from './pages/AutoStartPage';
 import { CommandPalette } from './components/CommandPalette';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import { NotificationToaster } from './components/notification/NotificationToaster';
@@ -178,6 +179,7 @@ export default function App() {
             <Route path="/dashboard" element={<Navigate to="/control" replace />} />
             <Route path="/control" element={<ControlRoomPage />} />
             <Route path="/launch/:encodedPath" element={<AgentLauncherPage />} />
+            <Route path="/start/:encodedPath" element={<AutoStartPage />} />
             <Route path="/agents/:id" element={<TerminalPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
