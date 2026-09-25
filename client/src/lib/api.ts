@@ -342,6 +342,8 @@ export const api = {
   autoUsageRecent: (days = 7) => apiFetch<AutoUsage>(`/auto-usage?days=${days}`),
   delegateStatus: (id: string, job: string) => apiFetch<DelegateJob>(`/agents/${encodeURIComponent(id)}/delegate/${encodeURIComponent(job)}`),
   cancelDelegate: (id: string, job: string) => apiFetch<void>(`/agents/${encodeURIComponent(id)}/delegate/${encodeURIComponent(job)}`, { method: 'DELETE' }),
+  escalate: (id: string, goal: string) =>
+    apiFetch<RouteTurnResult>(`/agents/${encodeURIComponent(id)}/escalate`, { method: 'POST', body: JSON.stringify({ goal }) }),
   clearAutoProfile: (id: string) => apiFetch<void>(`/agents/${encodeURIComponent(id)}/auto-profile`, { method: 'DELETE' }),
   routeAgent: (id: string, goal: string, adapter = '') =>
     apiFetch<RouteAgentResult>(`/agents/${encodeURIComponent(id)}/route`, { method: 'POST', body: JSON.stringify({ goal, adapter }) }),

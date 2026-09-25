@@ -64,15 +64,21 @@ type TurnChoice struct {
 // ChooseTurn re-routes a later message of an auto session, pinned to the tool
 // the session already runs (moving between tools is a later stage). The current
 // profile gets the configured stickiness, so near-ties stay put.
-func (c *Coordinator) ChooseTurn(ctx context.Context, goal, adapter, current string) (TurnChoice, error) {
+// noLocal leaves local-model profiles out (the user rejected a local answer).
+func (c *Coordinator) ChooseTurn(ctx context.Context, goal, adapter, current string, noLocal bool) (TurnChoice, error) {
 	if strings.TrimSpace(goal) == "" {
 		return TurnChoice{}, fmt.Errorf("%w: empty request", orchestration.ErrInvalid)
 	}
-	cfg, statuses := c.config(ctx)
+	full, statuses := c.config(ctx)
+	cfg := full
+	if noLocal {
+		cfg = withoutLocal(full)
+	}
 	d := routing.Decide(ctx, routing.DecideInput{Config: cfg, Statuses: statuses, Policy: c.policy, Health: c.health, Router: c.router,
 		Task: routing.DescribeTask(goal, routing.KindCode, nil), Mode: routing.ModeAuto, Current: current, PinAdapter: adapter})
 	tc := TurnChoice{Choice: Choice{Decision: d}}
-	if cur, ok := cfg.ProfileByID(current); ok {
+	// The current profile may be a local one that noLocal just left out.
+	if cur, ok := full.ProfileByID(current); ok {
 		tc.Current = &cur
 	}
 	if d.Selected == "" {
@@ -103,4 +109,16 @@ func TurnSwitch(cur *routing.Profile, next routing.Profile, idle time.Duration) 
 		return true, "idle_downgrade"
 	}
 	return false, "downgrade_deferred"
+}
+
+// withoutLocal drops local-model profiles (local adapter or local Codex).
+func withoutLocal(cfg routing.Config) routing.Config {
+	kept := make([]routing.Profile, 0, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		if p.Adapter != routing.AdapterLocal && !p.IsLocalCodex() {
+			kept = append(kept, p)
+		}
+	}
+	cfg.Profiles = kept
+	return cfg
 }

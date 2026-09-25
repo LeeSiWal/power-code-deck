@@ -557,6 +557,39 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
     sendText(ask.msg);
   }, [toolAsk, agentId, applyToolSwitch, sendText]);
 
+  // "유료 모델로 다시": the session runs a local model and the user rejects its
+  // answer. The server moves the session to a paid model (same tool: model
+  // switch; other tool: tool switch with handoff) and keeps local models out of
+  // this session; the last request is then sent again.
+  const onLocal = modelId.startsWith('oss:');
+  const [escalating, setEscalating] = useState(false);
+  const escalate = useCallback(async () => {
+    const last = [...items].reverse().find((i) => i.kind === 'user') as { text: string } | undefined;
+    if (!last || escalating) return;
+    const retry = `방금 요청을 다시 처리해 주세요. 이전 답변(로컬 모델)이 틀렸거나 끝나지 않았을 수 있으니 파일 상태부터 확인해 주세요.\n\n${last.text}`;
+    setEscalating(true);
+    setError('');
+    try {
+      const r = await api.escalate(agentId, last.text);
+      if (r.reason === 'tool_switch' && r.agent && r.to) {
+        applyToolSwitch(r, retry);
+        return;
+      }
+      if (r.applied && r.to) {
+        if (r.to.model) {
+          setModelId(r.to.model);
+          try { localStorage.setItem(`pcd:model:${agentId}`, r.to.model); } catch { /* ignore */ }
+        }
+        setNotice(`유료 모델로 다시 보냈습니다: ${modelName(r.to.model || '')}. 이 세션은 이제 로컬 모델을 쓰지 않습니다.`);
+        sendText(retry);
+      }
+    } catch (err) {
+      setError('유료 모델로 다시 보내지 못했습니다: ' + String(err));
+    } finally {
+      setEscalating(false);
+    }
+  }, [items, escalating, agentId, applyToolSwitch, sendText]);
+
   const interrupt = useCallback(() => {
     agentDeckWS.send('native:interrupt', { agentId });
   }, [agentId]);
@@ -1084,6 +1117,16 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
               {currentMode.label}
             </button>}
             {driver === 'antigravity' && <span className="text-xs text-deck-text-dim">CLI 설정 사용</span>}
+            {autoOn && onLocal && !working && items.some((i) => i.kind === 'user') && (
+              <button
+                onClick={escalate}
+                disabled={escalating}
+                className="shrink-0 h-8 px-2.5 rounded-full border border-amber-400/40 text-amber-300 text-xs disabled:opacity-40"
+                title="로컬 모델의 답이 틀렸거나 부족하면, 같은 요청을 유료 모델로 다시 보냅니다"
+              >
+                {escalating ? '전환 중…' : '유료 모델로 다시'}
+              </button>
+            )}
             {showEffort && (
               <button
                 onClick={() => { setMenu(null); setOptionsOpen(true); }}

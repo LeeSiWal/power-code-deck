@@ -291,6 +291,7 @@ func main() {
 	api.HandleFunc("/agents/{id}/route-turn", handlers.RouteTurn(agentSvc, nativeSvc, chooseTurn, autoUsage, delegator)).Methods("POST")
 	api.HandleFunc("/agents/{id}/delegate/{job}", handlers.DelegateStatus(delegator)).Methods("GET", "DELETE")
 	api.HandleFunc("/agents/{id}/auto-usage", handlers.AutoUsageOf(autoUsage)).Methods("GET")
+	api.HandleFunc("/agents/{id}/escalate", handlers.Escalate(agentSvc, nativeSvc, chooseTurn, autoUsage)).Methods("POST")
 	api.HandleFunc("/auto-usage", handlers.AutoUsageRecent(autoUsage)).Methods("GET")
 	api.HandleFunc("/agents/{id}/auto-profile", handlers.ClearAutoProfile(agentSvc)).Methods("DELETE")
 	api.HandleFunc("/agents/{id}", handlers.DeleteAgent(agentSvc, nativeSvc, hub)).Methods("DELETE")
