@@ -25,7 +25,7 @@ export function AgentLauncherPage() {
         <button onClick={goUp} className="p-1 rounded hover:bg-deck-border/30">
           <IconBack size={16} />
         </button>
-        <span className="text-sm font-medium">Launch Agent</span>
+        <span className="text-sm font-medium">직접 설정해서 시작</span>
       </header>
       <main className="flex-1 overflow-y-auto p-4 max-w-lg mx-auto w-full">
         <AgentLauncher workingDir={workingDir} onLaunch={handleLaunch} />
