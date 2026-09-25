@@ -7,6 +7,7 @@ package ossbridge
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 )
 
@@ -108,7 +109,16 @@ func fnTool(name, desc, params string) chatTool {
 
 // toChat converts a Responses request, and reports which tool names are
 // freeform (custom) so their calls can be converted back.
-func toChat(in responsesRequest, model string) (chatRequest, map[string]bool) {
+// turnInfo is what the answer conversion needs to know about the request.
+type turnInfo struct {
+	custom  map[string]bool // freeform tools (apply_patch)
+	offered map[string]bool // tool names the model was given
+	cwd     string          // Codex's working directory, from <environment_context>
+}
+
+var cwdRe = regexp.MustCompile(`<cwd>([^<]+)</cwd>`)
+
+func toChat(in responsesRequest, model string) (chatRequest, turnInfo) {
 	custom := map[string]bool{}
 	// Codex sends no sampling settings, so mlx_lm.server decodes greedily — and
 	// Qwen3 then repeats itself until the token limit (measured: a create-file
@@ -172,7 +182,18 @@ func toChat(in responsesRequest, model string) (chatRequest, map[string]bool) {
 	} else {
 		out.ParallelToolCalls = nil
 	}
-	return out, custom
+	info := turnInfo{custom: custom, offered: map[string]bool{}}
+	for _, t := range out.Tools {
+		info.offered[t.Function.Name] = true
+	}
+	for _, m := range out.Messages {
+		if s, ok := m.Content.(string); ok {
+			if c := cwdRe.FindStringSubmatch(s); c != nil {
+				info.cwd = strings.TrimSpace(c[1])
+			}
+		}
+	}
+	return out, info
 }
 
 func inputMessages(raw json.RawMessage) []chatMessage {

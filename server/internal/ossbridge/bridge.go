@@ -3,6 +3,7 @@ package ossbridge
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -69,29 +70,37 @@ func (b *Bridge) responses(w http.ResponseWriter, r *http.Request, ep routing.Lo
 	if ep.Model != "" {
 		model = ep.Model // the endpoint's configured model wins over the client's alias
 	}
-	chat, custom := toChat(in, model)
+	chat, info := toChat(in, model)
 	body, _ := json.Marshal(chat)
 	if dump := os.Getenv("PCD_OSS_BRIDGE_DUMP"); dump != "" { // debugging aid: last chat request
 		_ = os.WriteFile(dump, body, 0600)
 	}
-	resp, err := b.Client.Stream(r.Context(), ep, http.MethodPost, "/v1/chat/completions", body)
+	res, err := b.ask(r, ep, body)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "local model server unreachable: "+err.Error())
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2000))
-		writeError(w, http.StatusBadGateway, "local model server returned "+resp.Status+": "+strings.TrimSpace(string(snippet)))
-		return
+	res.recoverCalls(info.offered)
+	if res.announcedOnly() {
+		// The model said what it would do and stopped. Ask once more, with its
+		// own words in the history, to make the call now.
+		chat.Messages = append(chat.Messages, chatMessage{Role: "assistant", Content: res.text},
+			chatMessage{Role: "user", Content: continueNudge})
+		retry, _ := json.Marshal(chat)
+		if more, err := b.ask(r, ep, retry); err == nil {
+			more.recoverCalls(info.offered)
+			log.Printf("ossbridge %s: answer only announced a step; asked again → %d tool call(s)", ep.ID, len(more.calls))
+			res.calls = more.calls
+			if strings.TrimSpace(more.text) != "" {
+				res.text = strings.TrimSpace(res.text + "\n\n" + more.text)
+			}
+			res.usage = addUsage(res.usage, more.usage)
+		}
 	}
 	if !in.Stream {
 		var buf bytes.Buffer
 		em := &emitter{w: &buf}
-		if err := relay(resp.Body, em, model, custom); err != nil {
-			writeError(w, http.StatusBadGateway, "local model stream broke: "+err.Error())
-			return
-		}
+		emit(em, model, info, res)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(em.completed)
 		return
@@ -100,16 +109,48 @@ func (b *Bridge) responses(w http.ResponseWriter, r *http.Request, ep routing.Lo
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
-	em := &emitter{w: w, flush: func() {
+	emit(&emitter{w: w, flush: func() {
 		if flusher != nil {
 			flusher.Flush()
 		}
-	}}
-	if err := relay(resp.Body, em, model, custom); err != nil {
-		log.Printf("ossbridge %s: upstream stream broke: %v", ep.ID, err)
-		em.event("response.failed", map[string]any{"response": map[string]any{"status": "failed",
-			"error": map[string]any{"code": "server_error", "message": "local model stream broke: " + err.Error()}}})
+	}}, model, info, res)
+}
+
+// continueNudge is the one follow-up sent when an answer only announced a step.
+const continueNudge = "지금 바로 필요한 도구를 호출해서 진행하세요. 하겠다고 설명만 하지 말고 도구를 호출하세요. (Call the tool now; do not just describe the next step.)"
+
+// ask sends one chat request and collects the whole answer.
+func (b *Bridge) ask(r *http.Request, ep routing.LocalEndpoint, body []byte) (chatResult, error) {
+	resp, err := b.Client.Stream(r.Context(), ep, http.MethodPost, "/v1/chat/completions", body)
+	if err != nil {
+		return chatResult{}, errors.New("local model server unreachable: " + err.Error())
 	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2000))
+		return chatResult{}, errors.New("local model server returned " + resp.Status + ": " + strings.TrimSpace(string(snippet)))
+	}
+	res, err := collect(resp.Body)
+	if err != nil {
+		return chatResult{}, errors.New("local model stream broke: " + err.Error())
+	}
+	return res, nil
+}
+
+func addUsage(a, b map[string]any) map[string]any {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	out := map[string]any{}
+	for _, k := range []string{"input_tokens", "output_tokens", "total_tokens"} {
+		x, _ := a[k].(int)
+		y, _ := b[k].(int)
+		out[k] = x + y
+	}
+	return out
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

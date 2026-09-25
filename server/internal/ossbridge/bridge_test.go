@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -92,7 +94,7 @@ data: [DONE]
 
 func TestRelayTextThenToolCall(t *testing.T) {
 	var b strings.Builder
-	if err := relay(strings.NewReader(chatStream), &emitter{w: &b}, "m", nil); err != nil {
+	if err := relay(strings.NewReader(chatStream), &emitter{w: &b}, "m", turnInfo{}); err != nil {
 		t.Fatal(err)
 	}
 	evs := readSSE(t, strings.NewReader(b.String()))
@@ -161,7 +163,8 @@ func TestBridgeEndToEndWithFakeUpstream(t *testing.T) {
 func TestEditFileBecomesApplyPatch(t *testing.T) {
 	tools := []json.RawMessage{json.RawMessage(`{"type":"custom","name":"apply_patch","description":"Edit files.","format":{"type":"grammar"}}`),
 		json.RawMessage(`{"type":"function","name":"read_mcp_resource","parameters":{}}`)}
-	out, custom := toChat(responsesRequest{Input: json.RawMessage(`"hi"`), Tools: tools}, "m")
+	out, info := toChat(responsesRequest{Input: json.RawMessage(`"hi"`), Tools: tools}, "m")
+	custom := info.custom
 	names := []string{}
 	for _, t := range out.Tools {
 		names = append(names, t.Function.Name)
@@ -173,7 +176,7 @@ func TestEditFileBecomesApplyPatch(t *testing.T) {
 	chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{
 		map[string]any{"index": 0, "id": "e1", "function": map[string]any{"name": "edit_file", "arguments": args}}}}}}})
 	var b strings.Builder
-	if err := relay(strings.NewReader("data: "+string(chunk)+"\n\ndata: [DONE]\n\n"), &emitter{w: &b}, "m", custom); err != nil {
+	if err := relay(strings.NewReader("data: "+string(chunk)+"\n\ndata: [DONE]\n\n"), &emitter{w: &b}, "m", info); err != nil {
 		t.Fatal(err)
 	}
 	evs := readSSE(t, strings.NewReader(b.String()))
@@ -189,14 +192,14 @@ func TestEditFileBecomesApplyPatch(t *testing.T) {
 }
 
 func TestPatchFor(t *testing.T) {
-	p, err := patchFor("create_file", `{"path":"a/b.txt","content":"one\ntwo\n"}`)
+	p, err := patchFor("create_file", `{"path":"a/b.txt","content":"one\ntwo\n"}`, "")
 	if err != nil || p != "*** Begin Patch\n*** Add File: a/b.txt\n+one\n+two\n*** End Patch" {
 		t.Fatalf("create %q %v", p, err)
 	}
-	if p, err := patchFor("edit_file", `{"path":"x","old_string":"","new_string":"y\n"}`); err != nil || p != "*** Begin Patch\n*** Update File: x\n@@\n+y\n*** End of File\n*** End Patch" {
+	if p, err := patchFor("edit_file", `{"path":"x","old_string":"","new_string":"y\n"}`, ""); err != nil || p != "*** Begin Patch\n*** Update File: x\n@@\n+y\n*** End of File\n*** End Patch" {
 		t.Fatalf("append %q %v", p, err)
 	}
-	if _, err := patchFor("edit_file", `{"old_string":"a","new_string":"b"}`); err == nil {
+	if _, err := patchFor("edit_file", `{"old_string":"a","new_string":"b"}`, ""); err == nil {
 		t.Fatal("missing path accepted")
 	}
 }
@@ -217,7 +220,7 @@ func TestMaxTokensAndEmptyLengthAnswer(t *testing.T) {
 	}
 	var b strings.Builder
 	stream := `data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":"length"}]}` + "\n\ndata: [DONE]\n\n"
-	if err := relay(strings.NewReader(stream), &emitter{w: &b}, "m", nil); err != nil {
+	if err := relay(strings.NewReader(stream), &emitter{w: &b}, "m", turnInfo{}); err != nil {
 		t.Fatal(err)
 	}
 	evs := readSSE(t, strings.NewReader(b.String()))
@@ -225,5 +228,106 @@ func TestMaxTokensAndEmptyLengthAnswer(t *testing.T) {
 	text := item["content"].([]any)[0].(map[string]any)["text"].(string)
 	if !strings.Contains(text, "길이 제한") {
 		t.Fatalf("empty cut answer not reported: %q", text)
+	}
+}
+
+// create_file on an existing file would be an Add File that silently replaces
+// it; the bridge refuses using Codex's working directory from the request.
+func TestCreateFileRefusesExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("original\n"), 0600)
+	if _, err := patchFor("create_file", `{"path":"test.txt","content":"123\n"}`, dir); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("existing file: %v", err)
+	}
+	if _, err := patchFor("create_file", `{"path":"new.txt","content":"x"}`, dir); err != nil {
+		t.Fatalf("new file refused: %v", err)
+	}
+	_, info := toChat(responsesRequest{Input: json.RawMessage(`[{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>` + dir + `</cwd>\n</environment_context>"}]}]`)}, "m")
+	if info.cwd != dir {
+		t.Fatalf("cwd %q", info.cwd)
+	}
+}
+
+// A tool call written as text is turned into a real call for offered tools.
+func TestRecoverTextToolCalls(t *testing.T) {
+	offered := map[string]bool{"exec_command": true, "edit_file": true}
+	fenced := "확인할게요.\n```bash\nexec_command\n{\n  \"cmd\": \"cat test.txt\"\n}\n```"
+	if c := recoverToolCalls(fenced, offered); len(c) != 1 || c[0].name != "exec_command" || !strings.Contains(c[0].args, "cat test.txt") {
+		t.Fatalf("fenced: %+v", c)
+	}
+	tag := `<tool_call>{"name": "edit_file", "arguments": {"path": "a", "old_string": "x", "new_string": "y"}}</tool_call>`
+	if c := recoverToolCalls(tag, offered); len(c) != 1 || c[0].name != "edit_file" {
+		t.Fatalf("tag: %+v", c)
+	}
+	if c := recoverToolCalls("```bash\nrm_everything\n{\"x\":1}\n```", offered); len(c) != 0 {
+		t.Fatalf("unoffered tool recovered: %+v", c)
+	}
+	if c := recoverToolCalls("```python\nprint('hi')\n```", offered); len(c) != 0 {
+		t.Fatalf("plain code recovered: %+v", c)
+	}
+	// End to end: the stream carries only text; the output gains a function call.
+	chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": fenced}}}})
+	var b strings.Builder
+	if err := relay(strings.NewReader("data: "+string(chunk)+"\n\ndata: [DONE]\n\n"), &emitter{w: &b}, "m", turnInfo{offered: offered}); err != nil {
+		t.Fatal(err)
+	}
+	evs := readSSE(t, strings.NewReader(b.String()))
+	out := evs[len(evs)-1].data["response"].(map[string]any)["output"].([]any)
+	if len(out) != 2 || out[1].(map[string]any)["type"] != "function_call" || out[1].(map[string]any)["name"] != "exec_command" {
+		t.Fatalf("output %v", out)
+	}
+}
+
+func TestAnnouncedOnly(t *testing.T) {
+	for text, want := range map[string]bool{
+		"파일 내용을 다시 확인하고, 정확한 기존 내용을 사용해 다시 시도하겠습니다.": true,
+		"test.txt에 123을 추가해 드릴게요.":                   true,
+		"Let me check the file first.":               true,
+		"`test.txt` 파일에 '123'이 성공적으로 추가되었습니다.":       false,
+		"README 오타를 고쳤습니다.":                          false,
+	} {
+		if got := (chatResult{text: text}).announcedOnly(); got != want {
+			t.Errorf("%q: %v, want %v", text, got, want)
+		}
+	}
+	if (chatResult{text: "하겠습니다", calls: []chatCall{{name: "exec_command"}}}).announcedOnly() {
+		t.Fatal("an answer with a call is not announced-only")
+	}
+}
+
+// An answer that only announces a step gets one follow-up request; the tool
+// call from that second answer reaches Codex.
+func TestBridgeAsksAgainAfterAnnouncement(t *testing.T) {
+	calls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var req chatRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if calls == 1 {
+			io.WriteString(w, `data: {"choices":[{"delta":{"content":"파일을 확인하고 다시 시도하겠습니다."},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]\n\n")
+			return
+		}
+		last := req.Messages[len(req.Messages)-1]
+		if last.Role != "user" || !strings.Contains(last.Content.(string), "도구를 호출") {
+			t.Errorf("second request did not carry the nudge: %+v", last)
+		}
+		io.WriteString(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"exec_command","arguments":"{\"cmd\":\"cat test.txt\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
+	}))
+	defer up.Close()
+	br := &Bridge{Client: routing.NewLocalClient(), Endpoints: func() map[string]routing.LocalEndpoint {
+		return map[string]routing.LocalEndpoint{"mac": {ID: "mac", URL: up.URL, Kind: "openai", Model: "m"}}
+	}}
+	srv := httptest.NewServer(br)
+	defer srv.Close()
+	resp, err := http.Post(srv.URL+"/mac/v1/responses", "application/json", strings.NewReader(`{"stream":true,"input":"hi","tools":[{"type":"function","name":"exec_command","parameters":{"type":"object"}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	evs := readSSE(t, resp.Body)
+	out := evs[len(evs)-1].data["response"].(map[string]any)["output"].([]any)
+	if calls != 2 || len(out) != 2 || out[1].(map[string]any)["name"] != "exec_command" {
+		t.Fatalf("upstream calls %d, output %v", calls, out)
 	}
 }
