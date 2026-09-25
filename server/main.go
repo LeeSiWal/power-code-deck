@@ -260,6 +260,11 @@ func main() {
 		})
 		handlers.RegisterRunRoutes(api, runs, runWorker)
 		handlers.RegisterRunApprovalRoutes(api, runs, runProviders.Broker)
+		if coordinator, err := setupRouting(database, runs, runWorker, runProviders); err != nil {
+			log.Printf("Model routing disabled: %v", err)
+		} else {
+			handlers.RegisterRoutingRoutes(api, coordinator)
+		}
 	}
 
 	// Agents

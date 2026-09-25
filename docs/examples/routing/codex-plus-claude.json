@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "mode": "auto",
+  "spend": {"budgetKind": "best_effort"},
+  "switching": {"maxSwitchesPerRun": 2, "maxAttemptsPerRun": 3, "maxRunMinutes": 60, "autoEscalate": true, "stickiness": 0.5},
+  "profiles": [
+    {"id": "codex-luna-medium", "adapter": "codex", "model": "gpt-5.6-luna", "effort": "medium", "accountRef": "personal", "authMethod": "subscription", "billing": "subscription_included", "quotaBucket": "openai:personal", "tiers": ["EASY", "MEDIUM"], "allow": true},
+    {"id": "codex-sol-xhigh", "adapter": "codex", "model": "gpt-5.6-sol", "effort": "xhigh", "accountRef": "personal", "authMethod": "subscription", "billing": "subscription_included", "quotaBucket": "openai:personal", "tiers": ["HIGH"], "allow": true},
+    {"id": "claude-opus-high", "adapter": "claude", "model": "opus", "effort": "high", "accountRef": "personal", "authMethod": "subscription", "billing": "subscription_included", "quotaBucket": "anthropic:personal", "tiers": ["HIGH", "ULTRA"], "allow": true},
+    {"id": "claude-fable-max", "adapter": "claude", "model": "fable", "effort": "max", "accountRef": "personal", "authMethod": "subscription", "billing": "subscription_included", "extraUsageRisk": true, "quotaBucket": "anthropic:personal", "tiers": ["ULTRA"], "allow": true}
+  ],
+  "routellm": {"enabled": true, "url": "http://127.0.0.1:8765", "router": "bert", "timeoutMs": 1500,
+    "pairs": [{"weak": "codex-luna-medium", "strong": "claude-opus-high", "threshold": 0.5, "calibration": "uncalibrated", "kinds": ["code"]}]}
+}

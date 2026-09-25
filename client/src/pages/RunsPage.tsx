@@ -8,6 +8,7 @@ import { PlanEditor } from '../components/runs/PlanEditor';
 import { DraftHistory } from '../components/runs/DraftHistory';
 import { WorkspaceCleanup } from '../components/runs/WorkspaceCleanup';
 import { AttemptHistory, ConflictDetails, visibleArtifact } from '../components/runs/AttemptEvidence';
+import { RoutingPanel } from '../components/runs/RoutingPanel';
 
 const activeStates = new Set(['queued', 'planning', 'running', 'awaiting_checks', 'plan_running', 'integrating']);
 
@@ -48,6 +49,10 @@ function artifactLabel(artifact: RunArtifact) {
   if (artifact.kind === 'review_log') return '독립 리뷰';
   if (artifact.kind === 'integration_log') return '통합 오류 로그';
   if (artifact.kind === 'resolution_plan') return '적용한 충돌 수정안';
+  if (artifact.kind === 'checkpoint.patch') return '체크포인트 변경분';
+  if (artifact.kind === 'checkpoint.json') return '체크포인트 파일 목록';
+  if (artifact.kind === 'handoff') return '모델 인계 문서';
+  if (artifact.kind === 'inherited_checkpoint') return '이어받은 변경분';
   if (artifact.kind.startsWith('check_log:')) return `${artifact.kind.slice('check_log:'.length)} 로그`;
   return artifact.kind;
 }
@@ -418,6 +423,7 @@ export function RunsPage() {
               </div>
 
               {['queued', 'planning'].includes(run.state) && run.executions.length === 0 && <PlanEditor key={run.id} run={run} refresh={refreshPlanEditor} />}
+              {!plan && !['planned', 'plan_running', 'awaiting_integration', 'integrating', 'integration_failed'].includes(run.state) && <RoutingPanel key={`routing-${run.id}`} run={run} onChanged={() => { loadRun(run.id); loadList(); }} />}
               <DraftHistory key={`draft-history-${run.id}`} runId={run.id} refreshKey={run.state} />
               <WorkspaceCleanup key={`cleanup-${run.id}`} runId={run.id} state={run.state} />
 

@@ -27,11 +27,16 @@ type Worker struct {
 	factories map[string]Factory
 	reviewer  Factory
 	planner   Factory
-	mu        sync.Mutex
-	run       string
-	cancel    context.CancelFunc
-	done      chan struct{}
-	closed    bool
+	launch    LaunchFactory
+	observer  func(AttemptResult)
+	// quiesceWait bounds how long a finished attempt waits for processes left
+	// in its workspace before reporting "unverified".
+	quiesceWait time.Duration
+	mu          sync.Mutex
+	run         string
+	cancel      context.CancelFunc
+	done        chan struct{}
+	closed      bool
 }
 
 // SetReviewer installs a fresh-context reviewer factory. The application should
@@ -61,7 +66,9 @@ func NewWorker(store *Store, root string, factories map[string]Factory) (*Worker
 	return &Worker{store: store, root: root, factories: copy}, nil
 }
 
-func (w *Worker) Start(id string) (string, error) {
+func (w *Worker) Start(id string) (string, error) { return w.start(id, nil) }
+
+func (w *Worker) start(id string, l *Launch) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed || w.cancel != nil {
@@ -72,6 +79,15 @@ func (w *Worker) Start(id string) (string, error) {
 		return "", err
 	}
 	factory := w.factories[run.Provider]
+	launch := Launch{Provider: run.Provider}
+	if l != nil {
+		launch = *l
+		if w.launch == nil {
+			return "", fmt.Errorf("%w: routed launch is not connected", ErrInvalid)
+		}
+		lf := w.launch
+		factory = func(id, cwd string) (providers.Execution, error) { return lf(id, cwd, launch) }
+	}
 	if factory == nil {
 		return "", fmt.Errorf("%w: provider worker not connected", ErrInvalid)
 	}
@@ -86,7 +102,7 @@ func (w *Worker) Start(id string) (string, error) {
 	if err := w.store.RequireChecks(id, required...); err != nil {
 		return "", err
 	}
-	reviewer := w.reviewer
+	reviewer, observer := w.reviewer, w.observer
 	attempt, err := w.store.StartAttempt(id)
 	if err != nil {
 		return "", err
@@ -94,8 +110,33 @@ func (w *Worker) Start(id string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	w.run, w.cancel, w.done = id, cancel, make(chan struct{})
 	go func() {
-		defer func() { cancel(); w.mu.Lock(); w.cancel = nil; close(w.done); w.mu.Unlock() }()
-		w.execute(ctx, run, attempt, factory, reviewer, plan)
+		result := w.execute(ctx, run, attempt, factory, reviewer, plan, launch)
+		result.Routed = l != nil
+		// Every process that ran in this attempt's workspace must be gone before
+		// anyone may start another writer on the Run's work.
+		if result.Workspace != "" {
+			wait := w.quiesceWait
+			if wait <= 0 {
+				wait = 10 * time.Second
+			}
+			result.QuiesceVerified, result.QuiesceDetail = quiesce(result.Workspace, wait)
+		}
+		cancel()
+		w.mu.Lock()
+		w.cancel = nil
+		close(w.done)
+		w.mu.Unlock()
+		if observer != nil {
+			if saved, err := w.store.Get(run.ID); err == nil {
+				result.RunState = saved.State
+				for _, e := range saved.Executions {
+					if e.ID == attempt {
+						result.Checks = e.Checks
+					}
+				}
+			}
+			observer(result)
+		}
 	}()
 	return attempt, nil
 }
@@ -202,8 +243,12 @@ func writeExclusive(path string, content []byte) error {
 	return closeErr
 }
 
-func (w *Worker) execute(ctx context.Context, run Run, id string, factory, reviewer Factory, plan []CheckSpec) {
+func (w *Worker) execute(ctx context.Context, run Run, id string, factory, reviewer Factory, plan []CheckSpec, launch Launch) (res AttemptResult) {
+	res = AttemptResult{RunID: run.ID, ExecutionID: id, Launch: launch, Stage: "prepare", ProviderStatus: "not_started"}
 	fail := func(err error) {
+		if res.Diagnostics == "" {
+			res.Diagnostics = err.Error()
+		}
 		if saveErr := w.store.FinishAttempt(id, false, err.Error()); saveErr != nil && !errors.Is(saveErr, ErrConflict) {
 			log.Printf("run %s failed to persist failure: %v", run.ID, saveErr)
 		}
@@ -233,6 +278,7 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory, revie
 		return
 	}
 	base = strings.TrimSpace(base)
+	res.BaseCommit = base
 	if err := w.store.BindBase(run.ID, base); err != nil {
 		fail(fmt.Errorf("source revision changed since the first attempt: %w", err))
 		return
@@ -257,6 +303,36 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory, revie
 		fail(err)
 		return
 	}
+	res.Workspace = worktree
+	prompt := run.Prompt
+	if launch.InheritFrom != "" {
+		inherited, err := w.store.Artifact(run.ID, launch.InheritFrom, "checkpoint.patch")
+		if err == nil && inherited.BaseCommit != "" && inherited.BaseCommit != base {
+			err = fmt.Errorf("inherited checkpoint was taken at another base commit")
+		}
+		if err == nil {
+			err = applyCheckpoint(ctx, worktree, inherited.Path)
+		}
+		if err == nil {
+			err = w.store.AddArtifact(id, "inherited_checkpoint", inherited.Path, base)
+		}
+		if err != nil {
+			fail(fmt.Errorf("could not carry over the previous attempt's changes: %w", err))
+			return
+		}
+	}
+	if launch.Handoff != "" {
+		path := filepath.Join(dir, "handoff.md")
+		if err := writeExclusive(path, []byte(launch.Handoff)); err != nil {
+			fail(err)
+			return
+		}
+		if err := w.store.AddArtifact(id, "handoff", path, ""); err != nil {
+			fail(err)
+			return
+		}
+		prompt = launch.Handoff
+	}
 	e, err := factory(id, worktree)
 	if err != nil {
 		fail(err)
@@ -267,7 +343,7 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory, revie
 		return
 	}
 	defer e.Stop()
-	if e.Identity().ExecutionID != id || string(e.Identity().Provider) != run.Provider {
+	if e.Identity().ExecutionID != id || string(e.Identity().Provider) != launch.Provider {
 		fail(fmt.Errorf("provider execution identity mismatch"))
 		return
 	}
@@ -275,17 +351,36 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory, revie
 		fail(err)
 		return
 	}
-	if err := e.Send(run.Prompt); err != nil {
+	execStart := time.Now()
+	if err := e.Send(prompt); err != nil {
 		fail(err)
 		return
 	}
+	res.Stage = "provider"
 	var outcome *providers.Outcome
 	for {
 		event, err := e.Next(ctx)
 		if err != nil {
 			e.Stop()
+			res.ProviderStatus = "unknown"
+			if ctx.Err() != nil {
+				res.ProviderStatus = "interrupted"
+			}
+			res.ExecMS = time.Since(execStart).Milliseconds()
+			if launch.routed {
+				// An interrupted attempt (cancel, switch now) keeps its partial
+				// edits for the next writer. The attempt context is already done.
+				cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				if cpErr := w.saveCheckpoint(cctx, id, worktree, dir, base); cpErr != nil {
+					res.Diagnostics = "checkpoint not recorded: " + cpErr.Error()
+				}
+				ccancel()
+			}
 			fail(err)
 			return
+		}
+		if event.Model != "" {
+			res.ObservedModel = event.Model
 		}
 		if event.Kind == providers.TurnFinished {
 			if event.Identity != e.Identity() {
@@ -296,7 +391,32 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory, revie
 			break
 		}
 	}
+	res.ConversationID = e.ConversationID()
 	e.Stop()
+	res.ExecMS = time.Since(execStart).Milliseconds()
+	if outcome != nil {
+		res.ProviderStatus = string(outcome.Status)
+		res.Usage, res.CostUSD, res.Denials = outcome.Usage, outcome.CostUSD, len(outcome.Denials)
+		res.Answer = boundText(outcome.Text, 4000)
+		diag := outcome.Diagnostics
+		if outcome.Reason != "" {
+			diag = strings.TrimSpace(outcome.Reason + "\n" + diag)
+		}
+		if outcome.Status != providers.CompletionSuccess || outcome.IsError {
+			// On failure the provider's text is its error message.
+			diag = strings.TrimSpace(outcome.Text + "\n" + diag)
+		}
+		res.Diagnostics = boundText(diag, 4000)
+	}
+	// The checkpoint is what a later attempt (possibly another provider)
+	// inherits. Failing to record it fails this attempt: a model switch must
+	// never silently drop edits.
+	if launch.routed {
+		if err := w.saveCheckpoint(ctx, id, worktree, dir, base); err != nil {
+			fail(fmt.Errorf("checkpoint: %w", err))
+			return
+		}
+	}
 	status, err = git(ctx, worktree, "status", "--porcelain")
 	if err != nil {
 		fail(err)
@@ -333,6 +453,9 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory, revie
 		return
 	}
 	// No automatic Complete: a human/code review check remains mandatory.
+	res.Stage = "verify"
+	verifyStart := time.Now()
+	defer func() { res.VerifyMS = time.Since(verifyStart).Milliseconds() }()
 	if outcome.Status == providers.CompletionSuccess && !outcome.IsError {
 		_, err := git(ctx, worktree, "diff", "--no-ext-diff", "--no-textconv", "--check", base, "--")
 		checkDetail := "git diff --check passed"
@@ -401,4 +524,16 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory, revie
 			}
 		}
 	}
+	res.Stage = "done"
+	return
+}
+
+func boundText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && s[n]&0xC0 == 0x80 {
+		n--
+	}
+	return s[:n] + "…"
 }

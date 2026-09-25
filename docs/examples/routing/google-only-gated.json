@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "mode": "auto",
+  "spend": {"budgetKind": "best_effort"},
+  "switching": {"maxSwitchesPerRun": 2, "maxAttemptsPerRun": 3, "maxRunMinutes": 60, "autoEscalate": false, "stickiness": 0.5},
+  "profiles": [
+    {"id": "agy-flash-medium", "adapter": "antigravity", "model": "gemini-3.8-flash-medium", "effort": "medium", "accountRef": "personal", "billing": "unknown", "tiers": ["EASY", "MEDIUM"], "allow": true},
+    {"id": "agy-pro-high", "adapter": "antigravity", "model": "gemini-3.1-pro-high", "accountRef": "personal", "billing": "unknown", "tiers": ["HIGH", "ULTRA"], "allow": true}
+  ],
+  "routellm": {"enabled": false}
+}

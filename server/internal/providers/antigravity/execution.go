@@ -26,6 +26,7 @@ type Config struct {
 	PrefixArgs []string // optional executable-wrapper arguments
 	Cwd        string
 	Model      string   // empty lets the installed CLI choose its configured model
+	Effort     string   // --effort (low|medium|high in agy 1.1.28 help; absent from the public reference)
 	Mode       string   // empty uses CLI policy; plan is used by read-only reviewers
 	JSONSchema string   // optional final-result schema; passed as one argv element
 	Sandbox    bool     // ask the CLI to restrict terminal access
@@ -130,6 +131,9 @@ func (e *Execution) Send(prompt string) error {
 	args = append(args, "--add-dir", e.cfg.Cwd)
 	if e.cfg.Model != "" {
 		args = append(args, "--model", e.cfg.Model)
+	}
+	if e.cfg.Effort != "" {
+		args = append(args, "--effort", e.cfg.Effort)
 	}
 	if e.cfg.Mode != "" {
 		args = append(args, "--mode", e.cfg.Mode)

@@ -21,9 +21,12 @@ type CodexConfig struct {
 	SessionID string
 	Cwd       string
 	Model     string
-	Mode      string
-	ResumeID  string
-	Broker    *PermissionBroker
+	// Effort is sent per turn (turn/start.effort). Empty keeps the model default.
+	// Callers must pick a value model/list reports for Model.
+	Effort   string
+	Mode     string
+	ResumeID string
+	Broker   *PermissionBroker
 }
 
 type codexRPCMessage struct {
@@ -189,10 +192,14 @@ func (d *CodexDriver) Send(text string) error {
 	if threadID == "" || stopped {
 		return fmt.Errorf("codex driver: session is not running")
 	}
-	result, err := d.call("turn/start", map[string]any{
+	params := map[string]any{
 		"threadId": threadID,
 		"input":    []map[string]any{{"type": "text", "text": text}},
-	})
+	}
+	if d.cfg.Effort != "" {
+		params["effort"] = d.cfg.Effort
+	}
+	result, err := d.call("turn/start", params)
 	if err != nil {
 		return err
 	}
