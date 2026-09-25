@@ -3,6 +3,8 @@ package ossbridge
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -17,7 +19,7 @@ func errorPatch(err error) string {
 // patchFor turns an edit_file/create_file call into Codex apply_patch input.
 // A hunk of only "-" and "+" lines needs no context: apply_patch locates the
 // removed lines themselves, which is exactly old_string.
-func patchFor(name, args string) (string, error) {
+func patchFor(name, args, cwd string) (string, error) {
 	var a struct {
 		Path      string  `json:"path"`
 		OldString *string `json:"old_string"`
@@ -37,6 +39,14 @@ func patchFor(name, args string) (string, error) {
 	case "create_file":
 		if a.Content == nil {
 			return "", fmt.Errorf("create_file: content is required")
+		}
+		// apply_patch's Add File silently replaces an existing file (checked with
+		// codex --codex-run-as-apply-patch): a model that "creates" README.md
+		// would wipe it. Codex runs on this machine, so the bridge can look.
+		if full := resolve(cwd, path); full != "" {
+			if _, err := os.Stat(full); err == nil {
+				return "", fmt.Errorf("create_file: %s already exists — use edit_file to change an existing file", path)
+			}
 		}
 		b.WriteString("*** Add File: " + path + "\n")
 		for _, l := range lines(*a.Content) {
@@ -105,4 +115,16 @@ func recallCall(callID string) (string, string, bool) {
 	defer callsMu.Unlock()
 	c, ok := calls[callID]
 	return c[0], c[1], ok
+}
+
+// resolve makes path absolute against Codex's working directory ("" when
+// neither is known).
+func resolve(cwd, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	if cwd == "" {
+		return ""
+	}
+	return filepath.Join(cwd, path)
 }
