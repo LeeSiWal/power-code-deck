@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentDeckWS } from '../../lib/ws';
-import { api, type RouteTurnResult } from '../../lib/api';
+import { api, type AutoUsage, type RouteTurnResult } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 import {
   IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconDevices, IconGauge, IconHand,
@@ -14,7 +14,7 @@ import {
 import { writeClipboard } from '../../lib/clipboard';
 import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
-import { TIER_LABELS, autoSwitchNote, modelName, profileName, toolSwitchNote } from '../../lib/routingLabels';
+import { TIER_LABELS, autoSwitchNote, compactTokens, modelName, modelUsageLine, profileName, toolSwitchNote } from '../../lib/routingLabels';
 import { AUTO_TOOL, SESSION_TOOLS, launchUrl, rememberTool, sessionName, setPendingStart, takePendingStart, toolForDriver, type PendingStart, type SessionTool } from '../../lib/sessionTools';
 import { clientCommand, type NativeDriverName } from '../../lib/nativeCommands';
 
@@ -161,6 +161,12 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
   const [autoOn, setAutoOn] = useState(autoRouted && driver !== 'antigravity');
   const autoOnRef = useRef(autoOn);
   autoOnRef.current = autoOn;
+  // This session's recorded auto turns, refreshed whenever the model menu opens.
+  const [usage, setUsage] = useState<AutoUsage | null>(null);
+  useEffect(() => {
+    if (menu !== 'model' || !autoRouted) return;
+    api.autoUsage(agentId).then(setUsage).catch(() => setUsage(null));
+  }, [menu, autoRouted, agentId]);
   const stopAuto = useCallback(() => {
     if (!autoOnRef.current) return;
     setAutoOn(false);
@@ -708,10 +714,19 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
 
         {/* Model switcher menu. */}
         {menu === 'model' && (
-          <div className="absolute bottom-14 right-2 z-20 w-64 max-w-[calc(100vw-1rem)] bg-deck-raised border border-deck-border rounded-lg shadow-xl overflow-hidden">
+          <div className="absolute bottom-14 right-2 z-20 w-64 max-w-[calc(100vw-1rem)] max-h-[min(70vh,36rem)] overflow-y-auto overscroll-contain bg-deck-raised border border-deck-border rounded-lg shadow-xl">
             {autoOn && (
               <div className="px-3 py-2 text-xs text-deck-text-dim border-b border-deck-border">
                 <span className="text-deck-accent">자동 모델 전환 켜짐</span> — 요청 난이도에 맞춰 이 도구 안에서 모델을 바꿉니다. 직접 고르면 꺼집니다.
+              </div>
+            )}
+            {autoRouted && usage && usage.turns > 0 && (
+              <div className="px-3 py-2 text-[11px] text-deck-text-dim border-b border-deck-border space-y-0.5">
+                <div className="text-[10px] uppercase tracking-wide">이 세션 사용량</div>
+                {usage.models.map((m) => <div key={m.tool + m.model + m.effort}>{modelUsageLine(m)}</div>)}
+                {(usage.modelSwitches > 0 || usage.toolSwitches > 0) && (
+                  <div>전환: 모델 {usage.modelSwitches}회 · 도구 {usage.toolSwitches}회{usage.handoffTokens ? ` · 인계 약 ${compactTokens(usage.handoffTokens)}토큰` : ''}</div>
+                )}
               </div>
             )}
             {driver !== 'antigravity' && <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim">모델</div>}
