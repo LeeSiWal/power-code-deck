@@ -116,6 +116,9 @@ func main() {
 	// Remember Claude's own conversation id per agent so reopening (or a server
 	// restart) continues the conversation instead of starting a blank one.
 	nativeSvc.SetPersistence(agentSvc.SetClaudeSessionID, agentSvc.ClaudeSessionID)
+	// Every finished turn of a "자동" session, with the usage its CLI reported.
+	autoUsage := services.NewAutoUsage(database)
+	nativeSvc.AddEventObserver(autoUsage.Observe)
 	nativeSvc.SetHistoryStore(history.New(database))
 	nativeSvc.SetConfigPersistence(agentSvc.SetNativeConfig, agentSvc.NativeConfig)
 	nativeSvc.SetOptionsPersistence(agentSvc.SetNativeOptions, agentSvc.NativeOptions)
@@ -282,8 +285,10 @@ func main() {
 	api.HandleFunc("/agents", handlers.ListAgents(agentSvc)).Methods("GET")
 	api.HandleFunc("/agents", handlers.CreateAgent(agentSvc, hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}", handlers.GetAgent(agentSvc)).Methods("GET")
-	api.HandleFunc("/agents/{id}/route", handlers.RouteAgent(agentSvc, hub, chooseProfile)).Methods("POST")
-	api.HandleFunc("/agents/{id}/route-turn", handlers.RouteTurn(agentSvc, nativeSvc, chooseTurn)).Methods("POST")
+	api.HandleFunc("/agents/{id}/route", handlers.RouteAgent(agentSvc, hub, chooseProfile, autoUsage)).Methods("POST")
+	api.HandleFunc("/agents/{id}/route-turn", handlers.RouteTurn(agentSvc, nativeSvc, chooseTurn, autoUsage)).Methods("POST")
+	api.HandleFunc("/agents/{id}/auto-usage", handlers.AutoUsageOf(autoUsage)).Methods("GET")
+	api.HandleFunc("/auto-usage", handlers.AutoUsageRecent(autoUsage)).Methods("GET")
 	api.HandleFunc("/agents/{id}/auto-profile", handlers.ClearAutoProfile(agentSvc)).Methods("DELETE")
 	api.HandleFunc("/agents/{id}", handlers.DeleteAgent(agentSvc, nativeSvc, hub)).Methods("DELETE")
 	api.HandleFunc("/agents/{id}/restart", handlers.RestartAgent(agentSvc, hub)).Methods("POST")

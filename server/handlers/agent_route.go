@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -44,7 +45,7 @@ type routingProfile struct {
 // RouteAgent binds an auto session to the tool/model routed from its first
 // request. When routing cannot pick, the session becomes Claude Code and the
 // response says why, so the first message is never lost.
-func RouteAgent(agentSvc *services.AgentService, hub *ws.Hub, choose ChooseFunc) http.HandlerFunc {
+func RouteAgent(agentSvc *services.AgentService, hub *ws.Hub, choose ChooseFunc, usage *services.AutoUsage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Goal    string `json:"goal"`
@@ -100,6 +101,9 @@ func RouteAgent(agentSvc *services.AgentService, hub *ws.Hub, choose ChooseFunc)
 			return
 		}
 		resp.Agent = agent
+		if usage != nil && agent.AutoProfile != "" {
+			usage.Note(id, services.TurnMeta{Switch: "start", IdleSeconds: -1})
+		}
 		jsonResponse(w, resp)
 	}
 }
@@ -155,7 +159,7 @@ func toRoutingProfile(p *routing.Profile) *routingProfile {
 // the conversation). It never switches mid-answer, and moves down only after
 // the session has been idle long enough that the prompt cache is cold anyway.
 // Any "not applied" answer is normal — the client just sends the message.
-func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, choose TurnFunc) http.HandlerFunc {
+func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, choose TurnFunc, usage *services.AutoUsage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Goal        string `json:"goal"`
@@ -194,20 +198,30 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 			return
 		}
 		var idle time.Duration
+		idleSeconds := -1
 		if !lastEnd.IsZero() {
 			idle = time.Since(lastEnd)
+			idleSeconds = int(idle.Seconds())
+		}
+		note := func(kind string, handoff int) {
+			if usage != nil {
+				usage.Note(id, services.TurnMeta{Switch: kind, HandoffTokens: handoff, IdleSeconds: idleSeconds})
+			}
 		}
 		// Idle past the cache lifetime: other tools may compete too.
 		if idle >= runroute.TurnIdleDowngrade {
 			if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile); err == nil && wide.Profile.Adapter != adapter {
 				if target, ok := autoBindTargets[wide.Profile.Adapter]; ok && target.Preset != "antigravity" {
-					switchTool(w, agentSvc, native, id, agent, wide, target, body.ConfirmTool)
+					if ok, handoff := switchTool(w, agentSvc, native, id, agent, wide, target, body.ConfirmTool); ok {
+						note("tool", handoff)
+					}
 					return
 				}
 			}
 		}
 		tc, err := choose(r.Context(), body.Goal, adapter, agent.AutoProfile)
 		if err != nil {
+			note("", 0)
 			skip("no_profile")
 			return
 		}
@@ -221,6 +235,9 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 			}
 			agentSvc.SetAutoProfile(id, tc.Profile.ID)
 			resp.Applied = true
+			note("model", 0)
+		} else {
+			note("", 0)
 		}
 		jsonResponse(w, resp)
 	}
@@ -244,7 +261,7 @@ func ClearAutoProfile(agentSvc *services.AgentService) http.HandlerFunc {
 // turns it has not seen (all of them, or — if it had a conversation here before —
 // only those since it left) in front of the next message, and resumes its own
 // earlier conversation when there is one.
-func switchTool(w http.ResponseWriter, agentSvc *services.AgentService, native *services.NativeService, id string, agent *services.Agent, tc runroute.TurnChoice, target services.BindRequest, confirmed bool) {
+func switchTool(w http.ResponseWriter, agentSvc *services.AgentService, native *services.NativeService, id string, agent *services.Agent, tc runroute.TurnChoice, target services.BindRequest, confirmed bool) (switched bool, handoffTokens int) {
 	history := native.History(id)
 	prev, returning := agentSvc.ToolSessionOf(id, tc.Profile.Adapter)
 	since := 0
@@ -257,23 +274,54 @@ func switchTool(w http.ResponseWriter, agentSvc *services.AgentService, native *
 	if resp.HandoffTokens > toolSwitchConfirmTokens && !confirmed {
 		resp.Reason = "confirm_tool_switch"
 		jsonResponse(w, resp)
-		return
+		return false, 0
 	}
 	target.NativeModel, target.NativeEffort, target.AutoProfile = tc.Profile.Model, tc.Profile.Effort, tc.Profile.ID
-	switched, err := agentSvc.SwitchTool(id, target, services.CountUserTurns(history))
+	moved, err := agentSvc.SwitchTool(id, target, services.CountUserTurns(history))
 	if err != nil {
 		resp.Reason = "switch_failed"
 		jsonResponse(w, resp)
-		return
+		return false, 0
 	}
 	kind := map[string]string{"claude-code": "claude", "codex-cli": "codex"}[target.Preset]
 	if err := native.SwitchKind(id, kind, target.NativeModel, target.NativeEffort, handoff); err != nil {
 		// The row already says the new tool; the next open starts it (without the handoff).
 		resp.Reason = "switch_failed"
-		resp.Agent = switched
+		resp.Agent = moved
 		jsonResponse(w, resp)
-		return
+		return false, 0
 	}
-	resp.Applied, resp.Reason, resp.Agent = true, "tool_switch", switched
+	resp.Applied, resp.Reason, resp.Agent = true, "tool_switch", moved
 	jsonResponse(w, resp)
+	return true, resp.HandoffTokens
+}
+
+// AutoUsageOf reports one session's recorded auto turns.
+func AutoUsageOf(usage *services.AutoUsage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sum, err := usage.Summary(mux.Vars(r)["id"], time.Time{})
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sum.IdleThresholdS = int(runroute.TurnIdleDowngrade.Seconds())
+		jsonResponse(w, sum)
+	}
+}
+
+// AutoUsageRecent reports every auto session's turns of the last ?days=N (7).
+func AutoUsageRecent(usage *services.AutoUsage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		days := 7
+		if n, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && n > 0 && n <= 365 {
+			days = n
+		}
+		sum, err := usage.Summary("", time.Now().AddDate(0, 0, -days))
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sum.IdleThresholdS = int(runroute.TurnIdleDowngrade.Seconds())
+		jsonResponse(w, sum)
+	}
 }

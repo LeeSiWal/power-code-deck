@@ -188,6 +188,27 @@ func Migrate(db *sql.DB) error {
 	// can be aimed at only the session's active device. Non-fatal if it already exists.
 	db.Exec("ALTER TABLE push_subscriptions ADD COLUMN device_id TEXT DEFAULT ''")
 
+	// One row per finished turn of a "자동" session: which tool/model answered,
+	// whether routing switched first, how long the session had been idle, and the
+	// usage the CLI reported. NULL usage = not reported (Codex), never 0.
+	db.Exec(`CREATE TABLE IF NOT EXISTS auto_turns (
+		id             INTEGER PRIMARY KEY AUTOINCREMENT,
+		agent_id       TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+		created_at     TEXT DEFAULT (datetime('now')),
+		tool           TEXT NOT NULL,
+		model          TEXT NOT NULL DEFAULT '',
+		effort         TEXT NOT NULL DEFAULT '',
+		switch_kind    TEXT NOT NULL DEFAULT '',
+		handoff_tokens INTEGER NOT NULL DEFAULT 0,
+		idle_seconds   INTEGER,
+		input_tokens   INTEGER,
+		output_tokens  INTEGER,
+		cache_creation INTEGER,
+		cache_read     INTEGER
+	)`)
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_auto_turns_agent ON auto_turns(agent_id)")
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_auto_turns_created ON auto_turns(created_at)")
+
 	// 승인 허용 목록. 에이전트가 아니라 프로젝트(작업 디렉토리)에 속하므로 외래키를
 	// 걸지 않는다 — 세션을 지우고 다시 만들어도 규칙은 살아남아야 한다.
 	// UNIQUE가 중복 저장을 막는다(INSERT OR IGNORE와 짝).

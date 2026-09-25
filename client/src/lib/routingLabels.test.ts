@@ -1,5 +1,5 @@
 // Framework-free assertions (type-checked by tsc like the other *.test.ts files).
-import { CLASS_LABELS, autoPickNote, autoSwitchNote, toolSwitchNote, SKIP_LABELS, modelName, parseRoleLabel, profileName, reasonLabel, skipLabel, tokens } from './routingLabels';
+import { CLASS_LABELS, compactTokens, modelUsageLine, autoPickNote, autoSwitchNote, toolSwitchNote, SKIP_LABELS, modelName, parseRoleLabel, profileName, reasonLabel, skipLabel, tokens } from './routingLabels';
 
 function equal(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
@@ -36,3 +36,8 @@ equal(profileName(undefined, 'gemini-default'), 'Gemini · 기본 모델', 'miss
 equal(autoPickNote({ id: 'claude-opus55-high', adapter: 'claude', model: 'claude-opus-5-5', effort: 'high' }, 'HIGH', 'rule'), '자동 선택: Claude · Opus 5.5 · 높음 (예상 난이도: 어려움)', 'auto pick note');
 equal(autoSwitchNote({ model: 'claude-sonnet-5', effort: 'low' }, { model: 'claude-opus-5-5', effort: 'high' }, 'HIGH'), '모델 변경: Sonnet 5 · 낮음 → Opus 5.5 · 높음 (예상 난이도: 어려움)', 'auto switch note');
 equal(toolSwitchNote({ adapter: 'claude' }, { adapter: 'codex', model: 'gpt-5.6-sol' }, 'HIGH', 4), '도구 전환: Claude → Codex · GPT-5.6 Sol (예상 난이도: 어려움) · 이전 대화 4턴 인계', 'tool switch note');
+equal(compactTokens(950), '950', 'small tokens');
+equal(compactTokens(12345), '12k', 'k tokens');
+equal(compactTokens(1234), '1.2k', 'k tokens with decimal');
+equal(modelUsageLine({ tool: 'codex', model: 'gpt-5.6-sol', effort: '', turns: 2, reported: 0, input: 0, output: 0, cacheCreation: 0, cacheRead: 0 }), 'Codex · GPT-5.6 Sol — 2턴 · 사용량 미보고', 'unreported is not zero');
+equal(modelUsageLine({ tool: 'claude', model: 'claude-sonnet-5', effort: 'low', turns: 3, reported: 3, input: 100, output: 20, cacheCreation: 0, cacheRead: 900 }), 'Claude · Sonnet 5 · 낮음 — 3턴 · 입력 1.0k · 출력 20 · 캐시 90%', 'usage line');

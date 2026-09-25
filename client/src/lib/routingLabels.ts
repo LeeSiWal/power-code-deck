@@ -254,3 +254,24 @@ export function toolSwitchNote(from: { adapter?: string } | undefined, to: { ada
   const target = `${adapterName(to.adapter)} · ${modelName(to.model || '')}${to.effort ? ` · ${EFFORT_LABELS[to.effort] ?? to.effort}` : ''}`;
   return `도구 전환: ${from?.adapter ? adapterName(from.adapter) + ' → ' : ''}${target}${tier ? ` (예상 난이도: ${tier})` : ''}${turns ? ` · 이전 대화 ${turns}턴 인계` : ''}`;
 }
+
+// 12345 → "12.3k". Usage numbers are shown compact; exact values go in tooltips.
+export function compactTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+// Share of the input read from the prompt cache; '—' when nothing was reported.
+export function cacheShare(cacheRead: number, inputTotal: number): string {
+  return inputTotal > 0 ? `${Math.round((cacheRead / inputTotal) * 100)}%` : '—';
+}
+
+// "Sonnet 5 · 낮음 — 3턴 · 입력 12.3k · 출력 2.1k · 캐시 80%" (+ "N턴 미보고").
+export function modelUsageLine(m: { tool: string; model: string; effort: string; turns: number; reported: number; input: number; output: number; cacheCreation: number; cacheRead: number }): string {
+  const name = `${adapterName(m.tool)} · ${modelName(m.model)}${m.effort ? ` · ${EFFORT_LABELS[m.effort] ?? m.effort}` : ''}`;
+  const unreported = m.turns - m.reported;
+  if (!m.reported) return `${name} — ${m.turns}턴 · 사용량 미보고`;
+  const total = m.input + m.cacheCreation + m.cacheRead;
+  return `${name} — ${m.turns}턴 · 입력 ${compactTokens(total)} · 출력 ${compactTokens(m.output)} · 캐시 ${cacheShare(m.cacheRead, total)}${unreported ? ` · ${unreported}턴 미보고` : ''}`;
+}
