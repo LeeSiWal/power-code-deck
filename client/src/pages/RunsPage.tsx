@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ApiError, api, Run, RunApproval, RunArtifact, RunSummary, PlanSnapshot, ApplyPreview, ConflictReport } from '../lib/api';
+import { ApiError, api, isFeatureOff, Run, RunApproval, RunArtifact, RunSummary, PlanSnapshot, ApplyPreview, ConflictReport } from '../lib/api';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack, IconCheck, IconClose, IconPlay, IconRocket, IconSpinner } from '../components/icons';
 import { useGoUp } from '../hooks/useGoUp';
@@ -94,7 +94,7 @@ export function RunsPage() {
       setRuns(result.runs || []);
       setDisabled(false);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) setDisabled(true);
+      if (isFeatureOff(err)) setDisabled(true);
       else setError(err instanceof Error ? err.message : 'Run 목록을 불러오지 못했습니다');
     } finally {
       setLoading(false);

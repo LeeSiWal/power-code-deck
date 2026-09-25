@@ -214,6 +214,13 @@ export async function apiRequest(path: string, options: RequestInit = {}): Promi
   return res;
 }
 
+// An opt-in API that is not registered on the server (e.g. 2.0 without
+// PCD_V2_ENABLED) answers 404, or — through the SPA fallback — 200 with HTML,
+// which fails JSON parsing. Both mean "feature off", not an error.
+export function isFeatureOff(err: unknown): boolean {
+  return (err instanceof ApiError && err.status === 404) || err instanceof SyntaxError;
+}
+
 async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await apiRequest(path, {
     ...options,

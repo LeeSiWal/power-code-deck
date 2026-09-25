@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ApiError, api, RoutingObservation, RoutingSnapshot } from '../../lib/api';
+import { api, isFeatureOff, RoutingObservation, RoutingSnapshot } from '../../lib/api';
 import { MODE_LABELS, STRATEGY_LABELS, reasonLabel } from '../../lib/routingLabels';
 
 /**
@@ -29,7 +29,7 @@ export function RoutingMatrix() {
       setSnap(refresh ? await api.routingRefresh() : await api.routingSnapshot());
       setState('ok');
     } catch (err) {
-      setState(err instanceof ApiError && err.status === 404 ? 'off' : 'error');
+      setState(isFeatureOff(err) ? 'off' : 'error');
     } finally { setBusy(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
