@@ -243,7 +243,10 @@ type Config struct {
 	Switching      SwitchPolicy    `json:"switching"`
 	Profiles       []Profile       `json:"profiles"`
 	LocalEndpoints []LocalEndpoint `json:"localEndpoints,omitempty"`
-	RouteLLM       RouteLLMConfig  `json:"routellm"`
+	// TierJudge (optional): a local model rates request difficulty; the
+	// keyword rules remain the fallback. See judge.go.
+	TierJudge *TierJudgeConfig `json:"tierJudge,omitempty"`
+	RouteLLM  RouteLLMConfig   `json:"routellm"`
 	// Strategy settles ambiguous choices. Empty keeps the old meaning:
 	// routellm when routellm.enabled, otherwise rules.
 	Strategy Strategy `json:"strategy,omitempty"`
@@ -347,6 +350,11 @@ func (c Config) Validate() error {
 			if p.Model == "" {
 				return fmt.Errorf("routing config: profile %q: a local Codex profile needs its model", p.ID)
 			}
+		}
+	}
+	if j := c.TierJudge; j != nil {
+		if !eps[j.EndpointRef] {
+			return fmt.Errorf("routing config: tierJudge references unknown endpoint %q", j.EndpointRef)
 		}
 	}
 	if c.Strategy != "" && !ValidStrategy(c.Strategy) {

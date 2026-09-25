@@ -104,6 +104,15 @@ export function RoutingMatrix() {
             })}
           </div>
 
+          <div className="text-xs">
+            난이도 판단: {snap.tierJudge
+              ? <>로컬 모델 <b>{snap.tierJudge.endpointRef}</b>
+                  {(() => { const up = snap.adapters.find((a) => a.adapterId === `local:${snap.tierJudge!.endpointRef}`)?.installation.value === 'installed';
+                    return <span className={up ? 'text-emerald-400' : 'text-amber-300'}>{up ? ' · 연결됨' : ' · 응답 없음 (규칙으로 판단)'}</span>; })()}
+                  <span className="text-deck-text-dim"> — 답이 없거나 {((snap.tierJudge.timeoutMs || 3000) / 1000).toFixed(0)}초 안에 못 하면 키워드 규칙으로 판단합니다.</span></>
+              : <span className="text-deck-text-dim">키워드 규칙 (routing.json의 tierJudge로 로컬 모델 판단을 켤 수 있습니다)</span>}
+          </div>
+
           <div className="text-xs font-semibold pt-1">작업 배분 판단 · 보조 역할</div>
           <p className="text-xs text-deck-text-dim">
             판단 방식: {STRATEGY_LABELS[snap.decider.strategy]}. 실행 가능한 후보가 둘 이상이고 규칙으로 정해지지 않을 때만 판단 모델을 부릅니다.

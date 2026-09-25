@@ -1,0 +1,287 @@
+{
+ "_note": "Labeled coding requests for the tier judge. dev = written with the prompt in view; heldout = written afterwards, labels fixed before scoring. Labels: easy (small, mechanical, fully specified), medium, hard.",
+ "dev": [
+  {
+   "label": "easy",
+   "goal": "README 오타 고쳐줘"
+  },
+  {
+   "label": "easy",
+   "goal": "package.json 버전을 0.6.0으로 바꿔줘"
+  },
+  {
+   "label": "easy",
+   "goal": "app.py에서 get_user 함수 이름을 fetch_user로 바꾸고 호출하는 곳도 같이 바꿔줘"
+  },
+  {
+   "label": "easy",
+   "goal": "validator.js의 에러 메시지 'Invalid input'을 '입력이 올바르지 않습니다'로 바꿔줘"
+  },
+  {
+   "label": "easy",
+   "goal": ".gitignore 파일을 만들어서 node_modules/ 와 dist/ 를 넣어줘"
+  },
+  {
+   "label": "easy",
+   "goal": "math_utils.py의 add 함수에 두 수를 더한다는 한 줄 독스트링을 추가해줘"
+  },
+  {
+   "label": "easy",
+   "goal": "config.yaml의 timeout 값을 60으로 바꿔줘"
+  },
+  {
+   "label": "easy",
+   "goal": "sum_util.py의 total(n)은 1부터 n까지 더해야 하는데 n이 빠져 있어. 고쳐줘"
+  },
+  {
+   "label": "easy",
+   "goal": "main.py에서 print('DEBUG') 줄을 지워줘"
+  },
+  {
+   "label": "easy",
+   "goal": "CHANGELOG.md의 0.6.0 항목에 '- 로컬 모델 지원' 줄을 추가해줘"
+  },
+  {
+   "label": "easy",
+   "goal": "버튼 텍스트 '저장'을 '저장하기'로 바꿔줘"
+  },
+  {
+   "label": "easy",
+   "goal": "Header.tsx에서 안 쓰는 import 정리해줘"
+  },
+  {
+   "label": "easy",
+   "goal": "fix the typo in the error message in login.ts"
+  },
+  {
+   "label": "easy",
+   "goal": "change the default port from 3000 to 8080 in server.js"
+  },
+  {
+   "label": "easy",
+   "goal": "LICENSE 파일의 연도를 2026으로 업데이트해줘"
+  },
+  {
+   "label": "easy",
+   "goal": "남아있는 console.log 다 지워줘"
+  },
+  {
+   "label": "medium",
+   "goal": "로그인 폼에 비밀번호 보기 토글 버튼을 추가해줘"
+  },
+  {
+   "label": "medium",
+   "goal": "사용자 목록 API에 페이지네이션을 추가해줘"
+  },
+  {
+   "label": "medium",
+   "goal": "utils/date.ts 함수들에 대한 단위 테스트를 작성해줘"
+  },
+  {
+   "label": "medium",
+   "goal": "다크 모드 토글을 설정 화면에 추가하고 localStorage에 저장해줘"
+  },
+  {
+   "label": "medium",
+   "goal": "업로드한 이미지가 가끔 회전되어 보이는 버그 원인을 찾아서 고쳐줘"
+  },
+  {
+   "label": "medium",
+   "goal": "CSV 내보내기 기능을 추가해줘"
+  },
+  {
+   "label": "medium",
+   "goal": "add input validation to the signup endpoint and return 400 on a bad email"
+  },
+  {
+   "label": "medium",
+   "goal": "검색창에 디바운스를 적용해줘"
+  },
+  {
+   "label": "medium",
+   "goal": "에러가 나면 토스트로 보여주도록 공통 에러 처리를 추가해줘"
+  },
+  {
+   "label": "medium",
+   "goal": "빌드가 실패하는데 원인 찾아서 고쳐줘"
+  },
+  {
+   "label": "medium",
+   "goal": "write a script that backs up the sqlite db every night"
+  },
+  {
+   "label": "medium",
+   "goal": "폼 제출 시 로딩 스피너를 보여주고 중복 제출을 막아줘"
+  },
+  {
+   "label": "medium",
+   "goal": "README에 설치 방법과 사용 예시 섹션을 새로 작성해줘"
+  },
+  {
+   "label": "hard",
+   "goal": "테스트가 간헐적으로 실패하는 원인을 찾아서 고쳐줘"
+  },
+  {
+   "label": "hard",
+   "goal": "인증 시스템 전체를 OAuth2로 재설계하고 마이그레이션 계획까지 세워줘"
+  },
+  {
+   "label": "hard",
+   "goal": "결제 모듈을 별도 서비스로 분리해줘"
+  },
+  {
+   "label": "hard",
+   "goal": "DB 스키마를 바꾸고 기존 데이터를 무중단으로 옮겨줘"
+  },
+  {
+   "label": "hard",
+   "goal": "웹소켓 재연결 로직에서 가끔 메시지가 중복되는 레이스 컨디션을 고쳐줘"
+  },
+  {
+   "label": "hard",
+   "goal": "앱 전체의 상태 관리를 Redux에서 Zustand로 바꿔줘"
+  },
+  {
+   "label": "hard",
+   "goal": "find and fix the memory leak in the long-running worker"
+  },
+  {
+   "label": "hard",
+   "goal": "API 서버 응답 속도를 개선해줘"
+  },
+  {
+   "label": "hard",
+   "goal": "권한 체계를 역할 기반(RBAC)으로 새로 짜줘"
+  },
+  {
+   "label": "hard",
+   "goal": "멀티테넌시를 지원하도록 백엔드를 바꿔줘"
+  },
+  {
+   "label": "hard",
+   "goal": "security audit the auth flow and fix any vulnerabilities"
+  }
+ ],
+ "heldout": [
+  {
+   "label": "easy",
+   "goal": "footer의 저작권 연도가 2025로 되어 있는데 2026으로 고쳐줘"
+  },
+  {
+   "label": "easy",
+   "goal": "tsconfig.json에서 strict를 true로 바꿔줘"
+  },
+  {
+   "label": "easy",
+   "goal": "Button 컴포넌트의 기본 색상을 blue에서 indigo로 바꿔줘"
+  },
+  {
+   "label": "easy",
+   "goal": "api.ts의 BASE_URL 상수를 'https://api.example.com'으로 변경해줘"
+  },
+  {
+   "label": "easy",
+   "goal": "rename the variable `tmp` to `tempFile` in upload.go"
+  },
+  {
+   "label": "easy",
+   "goal": "Dockerfile의 node:18 이미지를 node:20으로 올려줘"
+  },
+  {
+   "label": "easy",
+   "goal": "requirements.txt에 requests==2.32.3 한 줄 추가해줘"
+  },
+  {
+   "label": "easy",
+   "goal": "주석 처리된 옛날 코드 블록(// old implementation 아래) 삭제해줘"
+  },
+  {
+   "label": "easy",
+   "goal": "helmet 미들웨어를 app.use(helmet()) 한 줄로 추가해줘"
+  },
+  {
+   "label": "easy",
+   "goal": "Makefile에 test 타겟으로 go test ./... 추가해줘"
+  },
+  {
+   "label": "easy",
+   "goal": "the 404 page says 'Page not fonud' — fix the spelling"
+  },
+  {
+   "label": "medium",
+   "goal": "회원가입 시 이메일 인증 메일을 보내는 기능 추가해줘"
+  },
+  {
+   "label": "medium",
+   "goal": "목록 화면에 정렬 드롭다운(최신순/이름순)을 추가해줘"
+  },
+  {
+   "label": "medium",
+   "goal": "add a /health endpoint that checks the database connection"
+  },
+  {
+   "label": "medium",
+   "goal": "이 컴포넌트를 모바일에서도 잘 보이게 반응형으로 바꿔줘"
+  },
+  {
+   "label": "medium",
+   "goal": "파일 업로드가 10MB를 넘으면 에러 메시지를 보여줘"
+  },
+  {
+   "label": "medium",
+   "goal": "CI에서 린트가 실패하는 것들 고쳐줘"
+  },
+  {
+   "label": "medium",
+   "goal": "로그를 JSON 형식으로 남기도록 바꿔줘"
+  },
+  {
+   "label": "medium",
+   "goal": "write integration tests for the order API"
+  },
+  {
+   "label": "medium",
+   "goal": "날짜가 가끔 하루 밀려서 보이는 타임존 버그 고쳐줘"
+  },
+  {
+   "label": "medium",
+   "goal": "README 전체를 영어로 번역해줘"
+  },
+  {
+   "label": "hard",
+   "goal": "캐시 무효화가 가끔 안 되는 문제를 고쳐줘"
+  },
+  {
+   "label": "hard",
+   "goal": "모놀리식 백엔드를 도메인별 모듈로 쪼개줘"
+  },
+  {
+   "label": "hard",
+   "goal": "API 전체를 GraphQL로 바꿔줘"
+  },
+  {
+   "label": "hard",
+   "goal": "주문 처리에서 동시에 두 번 결제되는 문제 고쳐줘"
+  },
+  {
+   "label": "hard",
+   "goal": "add end-to-end encryption to the chat messages"
+  },
+  {
+   "label": "hard",
+   "goal": "대용량 트래픽에서도 버티도록 작업 처리를 큐 기반으로 바꿔줘"
+  },
+  {
+   "label": "hard",
+   "goal": "프론트엔드를 Vue에서 React로 옮겨줘"
+  },
+  {
+   "label": "hard",
+   "goal": "오프라인에서도 동작하고 온라인이 되면 동기화되게 만들어줘"
+  },
+  {
+   "label": "hard",
+   "goal": "production에서만 나는 간헐적 500 에러 원인을 찾아줘"
+  }
+ ]
+}
