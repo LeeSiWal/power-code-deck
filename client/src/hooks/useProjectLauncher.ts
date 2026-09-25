@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
-import { defaultTool, prefersAuto, rememberTool, sessionName, type SessionTool } from '../lib/sessionTools';
+import { AUTO_TOOL, defaultTool, launchUrl, prefersAuto, rememberTool, sessionName, type SessionTool } from '../lib/sessionTools';
 
 export function useProjectLauncher() {
   const navigate = useNavigate();
@@ -20,15 +20,11 @@ export function useProjectLauncher() {
   // reachable for custom commands and as the fallback if creation fails.
   const launchProject = useCallback(
     async (projectPath: string, tool?: SessionTool) => {
-      if (!tool && prefersAuto()) {
-        navigate(`/start/${encodeURIComponent(projectPath)}`);
-        return;
-      }
-      tool = tool ?? defaultTool();
+      tool = tool ?? (prefersAuto() ? AUTO_TOOL : defaultTool());
       try {
         await launchAgent(tool.preset, sessionName(tool, projectPath), projectPath, tool.command, []);
       } catch {
-        navigate(`/launch/${encodeURIComponent(projectPath)}`);
+        navigate(launchUrl(projectPath));
       }
     },
     [launchAgent, navigate]

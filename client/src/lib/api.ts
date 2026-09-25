@@ -78,6 +78,14 @@ export interface RoutingDecision {
   selected?: string; source: string; reason: string; candidates: { profile: RoutingProfile; excluded?: RoutingExclusion[] }[];
   createdAt: string; durationMs: number; ruleTie?: string[]; decider?: DeciderRecord; strategy?: RoutingStrategy;
 }
+// POST /agents/{id}/route: the auto session bound to its routed (or fallback) tool.
+export interface RouteAgentResult {
+  agent: any;
+  profile?: { id: string; adapter: string; model?: string; effort?: string };
+  ruleTier?: string;
+  source?: string;
+  fallback?: 'routing_off' | 'no_profile' | 'routing_error' | 'unsupported_adapter';
+}
 export interface RoutingChoice { decision: RoutingDecision; profile?: RoutingProfile }
 export interface RoutingRunState { runId: string; mode: RoutingMode; phase: string; epoch: number; currentProfile: string; currentExecution: string; pendingProfile: string; pendingWhen: string; pinProfile: string; pinAdapter: string; switches: number; attempts: number }
 export interface RoutingUsage { scope: string; source: string; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheCreationTokens: number | null; thinkingTokens: number | null; totalTokens: number | null; local: boolean }
@@ -305,6 +313,8 @@ export const api = {
   listAgents: () => apiFetch<any[]>('/agents'),
   createAgent: (data: any) => apiFetch('/agents', { method: 'POST', body: JSON.stringify(data) }),
   getAgent: (id: string) => apiFetch(`/agents/${id}`),
+  routeAgent: (id: string, goal: string, adapter = '') =>
+    apiFetch<RouteAgentResult>(`/agents/${encodeURIComponent(id)}/route`, { method: 'POST', body: JSON.stringify({ goal, adapter }) }),
   deleteAgent: (id: string) => apiFetch(`/agents/${id}`, { method: 'DELETE' }),
   restartAgent: (id: string) => apiFetch(`/agents/${id}/restart`, { method: 'POST' }),
   // Stop a session but KEEP the agent (reversible "정지"), unlike deleteAgent which

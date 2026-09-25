@@ -1,15 +1,14 @@
-import { useParams } from 'react-router-dom';
 import { AgentLauncher } from '../components/agent/AgentLauncher';
 import { useProjectLauncher } from '../hooks/useProjectLauncher';
 import { IconBack } from '../components/icons';
 import { useGoUp } from '../hooks/useGoUp';
+import { useProjectPath } from '../hooks/useProjectPath';
 
 export function AgentLauncherPage() {
-  const { encodedPath } = useParams<{ encodedPath: string }>();
   const goUp = useGoUp('/');
   const { launchAgent } = useProjectLauncher();
 
-  const workingDir = decodeURIComponent(encodedPath || '');
+  const workingDir = useProjectPath();
 
   const handleLaunch = async (preset: string, name: string, command: string, args: string[]) => {
     try {

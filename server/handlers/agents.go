@@ -38,7 +38,8 @@ func CreateAgent(agentSvc *services.AgentService, hub *ws.Hub) http.HandlerFunc 
 			return
 		}
 
-		if req.Preset == "" || req.Name == "" || req.WorkingDir == "" || req.Command == "" {
+		// An auto session has no command until its first message binds a tool.
+		if req.Preset == "" || req.Name == "" || req.WorkingDir == "" || (req.Command == "" && req.Preset != services.AutoPreset) {
 			jsonError(w, "preset, name, workingDir, and command are required", http.StatusBadRequest)
 			return
 		}

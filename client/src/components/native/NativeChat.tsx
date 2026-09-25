@@ -15,7 +15,7 @@ import { writeClipboard } from '../../lib/clipboard';
 import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
 import { modelName } from '../../lib/routingLabels';
-import { AUTO, SESSION_TOOLS, rememberTool, sessionName, takePendingStart, toolForDriver, type PendingStart, type SessionTool } from '../../lib/sessionTools';
+import { AUTO_TOOL, SESSION_TOOLS, launchUrl, rememberTool, sessionName, takePendingStart, toolForDriver, type PendingStart, type SessionTool } from '../../lib/sessionTools';
 import { clientCommand, type NativeDriverName } from '../../lib/nativeCommands';
 
 /**
@@ -653,7 +653,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
               );
             })}
             <button
-              onClick={() => { setMenu(null); rememberTool(AUTO); navigate(`/start/${encodeURIComponent(cwd)}`); }}
+              onClick={() => startWithTool(AUTO_TOOL)}
               className="w-full text-left px-3 py-2 hover:bg-deck-bg/60 flex items-center gap-2"
             >
               <span className="shrink-0 w-3.5" />
@@ -661,7 +661,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
               <span className="ml-auto text-xs text-deck-text-dim">요청 보고 선택</span>
             </button>
             <button
-              onClick={() => { setMenu(null); navigate(`/launch/${encodeURIComponent(cwd)}`); }}
+              onClick={() => { setMenu(null); navigate(launchUrl(cwd)); }}
               className="w-full text-left px-3 py-2 text-xs text-deck-text-dim hover:bg-deck-bg/60"
             >
               기타 · 직접 명령으로 시작…

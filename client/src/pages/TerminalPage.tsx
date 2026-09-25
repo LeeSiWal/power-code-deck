@@ -25,6 +25,7 @@ import { useGoUp } from '../hooks/useGoUp';
 import { IconBack, IconFiles, IconClose, IconTerminal, IconHistory, IconPhone, IconGlobe, IconExpand, IconRefresh, IconBell, AGENT_ICON_MAP } from '../components/icons';
 import { NotificationBadge } from '../components/notification/NotificationBadge';
 import { api } from '../lib/api';
+import { AutoChat } from '../components/native/AutoChat';
 import { writeClipboard, readClipboard } from '../lib/clipboard';
 import { generatePalette } from '../lib/paletteGenerator';
 import { currentZoom } from '../lib/uiScale';
@@ -49,7 +50,7 @@ const UNIFIED_INPUT = typeof window === 'undefined' || !window.location.search.i
 const CLASSIC_TERMINAL = typeof window !== 'undefined' && window.location.search.includes('terminal');
 
 function nativeCapable(agent: { preset?: string; command?: string }): boolean {
-  return agent.preset === 'claude-code' || agent.command === 'claude'
+  return agent.preset === 'auto' || agent.preset === 'claude-code' || agent.command === 'claude'
     || agent.preset === 'codex-cli' || agent.command === 'codex'
     || agent.preset === 'antigravity' && agent.command === 'agy';
 }
@@ -61,7 +62,7 @@ function nativeDriver(agent: { preset?: string; command?: string }): 'claude' | 
 
 /** Whether this agent is rendered as a chat rather than a terminal. */
 function usesNative(agent: { preset?: string; command?: string } | null | undefined): boolean {
-  return !!agent && nativeCapable(agent) && (!CLASSIC_TERMINAL || agent.preset === 'antigravity');
+  return !!agent && nativeCapable(agent) && (!CLASSIC_TERMINAL || agent.preset === 'antigravity' || agent.preset === 'auto');
 }
 
 // Side-panel width bounds. The upper bound is generous because these panels are
@@ -382,7 +383,7 @@ export function TerminalPage() {
           </button>
           {AgentIcon && <AgentIcon size={18} />}
           <span className="font-medium text-sm truncate flex-1">{agent.name}</span>
-          <StatusBadge status={agent.status} />
+          <StatusBadge status={agent.preset === 'auto' ? 'auto' : agent.status} />
           {/* Full reload — iOS standalone PWA has no browser refresh, so a wedged
               session would otherwise be unrecoverable without deleting the app. */}
           <button
@@ -477,7 +478,9 @@ export function TerminalPage() {
         {activeTab === 'terminal' && (
           <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
             {usesNative(agent) ? (
-              <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} />
+              agent.preset === 'auto'
+                ? <AutoChat key={agentId} agentId={agentId} onBound={setAgent} />
+                : <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} />
             ) : (
               <TerminalView
                 key={agentId}
@@ -628,7 +631,7 @@ export function TerminalPage() {
         </button>
         {AgentIcon && <AgentIcon size={16} />}
         <span className="font-medium text-sm truncate">{agent.name}</span>
-        <StatusBadge status={agent.status} />
+        <StatusBadge status={agent.preset === 'auto' ? 'auto' : agent.status} />
         <span className="text-xs ml-auto truncate text-deck-text-dim">{agent.workingDir}</span>
 
         {agent.preset !== 'antigravity' && <button
@@ -786,7 +789,9 @@ export function TerminalPage() {
           {activeTab === 'terminal' && (
             <div className="flex-1 min-h-0">
               {usesNative(agent) ? (
-                <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} />
+                agent.preset === 'auto'
+                ? <AutoChat key={agentId} agentId={agentId} onBound={setAgent} />
+                : <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} />
               ) : (
                 <TerminalView
                   key={agentId}

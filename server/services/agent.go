@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -217,9 +218,19 @@ func (s *AgentService) assignColor() (int, string) {
 	return bestHue, bestName
 }
 
+// AutoPreset is a session whose tool is not chosen yet: no CLI runs until its
+// first message, when Bind attaches the routed tool to this same session.
+const AutoPreset = "auto"
+
+var ErrAlreadyBound = errors.New("session already has a tool")
+
 func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
-	nativeOnly := req.Preset == "antigravity"
-	if nativeOnly && (req.Command != "agy" || len(req.Args) != 0) {
+	auto := req.Preset == AutoPreset
+	if auto {
+		req.Command, req.Args = "", nil
+	}
+	nativeOnly := req.Preset == "antigravity" || auto
+	if req.Preset == "antigravity" && (req.Command != "agy" || len(req.Args) != 0) {
 		return nil, fmt.Errorf("Antigravity requires command agy without custom arguments")
 	}
 	b := make([]byte, 4)
@@ -290,18 +301,76 @@ func (s *AgentService) Create(req CreateAgentRequest) (*Agent, error) {
 	// continuing work doesn't reset those choices back to Auto/수동 every time. (The
 	// /clear and 이어하기 paths copy from their exact source agent afterwards; this is
 	// the general case — a fresh agent from the dashboard or a new project.)
-	driver := "claude"
-	if nativeOnly {
-		driver = "antigravity"
+	if auto {
+		insertAgentLog(s.db, agent.ID, "세션 생성됨 · "+agent.Name+" (자동 · 첫 메시지 때 도구 선택)")
+		return agent, nil
 	}
-	if req.Preset == "codex-cli" || req.Command == "codex" {
-		driver = "codex"
-	}
+	driver := nativeDriverFor(req.Preset, req.Command)
 	if model, mode, effort := s.startingNativeConfig(workingDir, driver, req); model != "" || mode != "" || effort != "" {
 		s.SetNativeConfig(agent.ID, model, mode, effort)
 	}
 
 	insertAgentLog(s.db, agent.ID, "세션 생성됨 · "+agent.Name+" ("+agent.Command+")")
+	s.startActivity(agent)
+	return agent, nil
+}
+
+func nativeDriverFor(preset, command string) string {
+	switch {
+	case preset == "antigravity":
+		return "antigravity"
+	case preset == "codex-cli" || command == "codex":
+		return "codex"
+	}
+	return "claude"
+}
+
+// BindRequest is the tool (and starting model/effort) chosen for an auto session.
+type BindRequest struct {
+	Preset       string
+	Command      string
+	NativeModel  string
+	NativeEffort string
+}
+
+// Bind turns an auto session into a session of the chosen tool, keeping its id,
+// name and folder, and starts it exactly as Create would have. It succeeds once:
+// the preset guard in the UPDATE makes a concurrent second bind fail.
+func (s *AgentService) Bind(id string, req BindRequest) (*Agent, error) {
+	agent, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if agent.Preset != AutoPreset {
+		return nil, ErrAlreadyBound
+	}
+	nativeOnly := req.Preset == "antigravity"
+	status := "running"
+	if nativeOnly {
+		status = "stopped"
+	}
+	res, err := s.db.Exec("UPDATE agents SET preset = ?, command = ?, args = '[]', status = ?, updated_at = datetime('now') WHERE id = ? AND preset = ?",
+		req.Preset, req.Command, status, id, AutoPreset)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrAlreadyBound
+	}
+	agent.Preset, agent.Command, agent.Args, agent.Status = req.Preset, req.Command, []string{}, status
+	driver := nativeDriverFor(req.Preset, req.Command)
+	if model, mode, effort := s.startingNativeConfig(agent.WorkingDir, driver, CreateAgentRequest{NativeModel: req.NativeModel, NativeEffort: req.NativeEffort}); model != "" || mode != "" || effort != "" {
+		s.SetNativeConfig(id, model, mode, effort)
+	}
+	insertAgentLog(s.db, id, "자동 선택 → "+req.Command)
+	if nativeOnly {
+		return agent, nil
+	}
+	if _, err := s.engine.Create(CreateSessionRequest{ID: id, Type: req.Preset, Command: req.Command, Cwd: agent.WorkingDir, Cols: 80, Rows: 24}); err != nil {
+		s.db.Exec("UPDATE agents SET status = 'stopped' WHERE id = ?", id)
+		agent.Status = "stopped"
+		return agent, fmt.Errorf("failed to start session: %w", err)
+	}
 	s.startActivity(agent)
 	return agent, nil
 }
@@ -465,7 +534,7 @@ func (s *AgentService) Restart(id string) (*Agent, error) {
 		return nil, err
 	}
 
-	if agent.Preset == "antigravity" {
+	if agent.Preset == "antigravity" || agent.Preset == AutoPreset {
 		return agent, nil
 	}
 

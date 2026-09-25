@@ -229,3 +229,14 @@ export function autoPickNote(p: NamedProfile, ruleTier: string, source: string):
   const why = source === 'only_candidate' ? '쓸 수 있는 모델이 하나뿐' : `예상 난이도: ${TIER_LABELS[ruleTier] ?? ruleTier}`;
   return `자동 선택: ${profileName(p)} (${why})`;
 }
+
+// Why an auto session started on Claude Code instead of a routed pick.
+export function autoFallbackNote(code: string): string {
+  const why: Record<string, string> = {
+    routing_off: '라우팅 기능이 꺼져 있어',
+    no_profile: '조건에 맞는 모델이 없어',
+    routing_error: '자동 선택에 실패해',
+    unsupported_adapter: '고른 도구를 이 채팅에서 쓸 수 없어',
+  };
+  return `${why[code] ?? '자동 선택을 쓸 수 없어'} Claude Code로 시작했습니다.`;
+}
