@@ -78,6 +78,7 @@ export interface RoutingDecision {
   selected?: string; source: string; reason: string; candidates: { profile: RoutingProfile; excluded?: RoutingExclusion[] }[];
   createdAt: string; durationMs: number; ruleTie?: string[]; decider?: DeciderRecord; strategy?: RoutingStrategy;
 }
+export interface RoutingChoice { decision: RoutingDecision; profile?: RoutingProfile }
 export interface RoutingRunState { runId: string; mode: RoutingMode; phase: string; epoch: number; currentProfile: string; currentExecution: string; pendingProfile: string; pendingWhen: string; pinProfile: string; pinAdapter: string; switches: number; attempts: number }
 export interface RoutingUsage { scope: string; source: string; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheCreationTokens: number | null; thinkingTokens: number | null; totalTokens: number | null; local: boolean }
 export interface RoutingAttempt {
@@ -334,6 +335,7 @@ export const api = {
     apiFetch(`/v2/runs/${encodeURIComponent(run)}/approvals`, { method: 'POST', body: JSON.stringify({ id, behavior }) }),
   getRun: (id: string) => apiFetch<Run>(`/v2/runs/${encodeURIComponent(id)}`),
   routingSnapshot: () => apiFetch<RoutingSnapshot>('/v2/routing'),
+  routingChoose: (goal: string) => apiFetch<RoutingChoice>('/v2/routing/choose', { method: 'POST', body: JSON.stringify({ goal }) }),
   routingRefresh: () => apiFetch<RoutingSnapshot>('/v2/routing/refresh', { method: 'POST' }),
   routingMarkValidated: (adapter: string) => apiFetch<void>(`/v2/routing/adapters/${encodeURIComponent(adapter)}/validated`, { method: 'POST' }),
   runRouting: (id: string) => apiFetch<RoutingTimeline>(`/v2/runs/${encodeURIComponent(id)}/routing`),

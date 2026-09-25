@@ -1,5 +1,5 @@
 // Framework-free assertions (type-checked by tsc like the other *.test.ts files).
-import { CLASS_LABELS, SKIP_LABELS, modelName, parseRoleLabel, profileName, reasonLabel, skipLabel, tokens } from './routingLabels';
+import { CLASS_LABELS, autoPickNote, SKIP_LABELS, modelName, parseRoleLabel, profileName, reasonLabel, skipLabel, tokens } from './routingLabels';
 
 function equal(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
@@ -33,3 +33,4 @@ equal(!role.ok && role.blocked.length, 1, 'role_not_allowed-only profiles are dr
 const okRole = parseRoleLabel('claude-sonnet5-low (claude claude-sonnet-5; different provider from the executor)');
 equal(okRole.ok && okRole.id, 'claude-sonnet5-low', 'available role id');
 equal(profileName(undefined, 'gemini-default'), 'Gemini · 기본 모델', 'missing default profile is named by adapter');
+equal(autoPickNote({ id: 'claude-opus55-high', adapter: 'claude', model: 'claude-opus-5-5', effort: 'high' }, 'HIGH', 'rule'), '자동 선택: Claude · Opus 5.5 · 높음 (예상 난이도: 어려움)', 'auto pick note');

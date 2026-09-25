@@ -55,6 +55,29 @@ func RegisterRoutingRoutes(api *mux.Router, c *runroute.Coordinator) {
 		c.Refresh()
 		jsonResponse(w, c.Snapshot(r.Context()))
 	}).Methods("POST")
+	// Picks the tool/model for a new chat session from its first request.
+	api.HandleFunc("/v2/routing/choose", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Goal string `json:"goal"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&body); err != nil {
+			jsonError(w, "invalid routing request", 400)
+			return
+		}
+		ch, err := c.Choose(r.Context(), body.Goal)
+		if errors.Is(err, runroute.ErrNoProfile) {
+			// The decision says why nothing qualified.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "decision": ch.Decision})
+			return
+		}
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		jsonResponse(w, ch)
+	}).Methods("POST")
 	api.HandleFunc("/v2/routing/adapters/{adapter}/validated", func(w http.ResponseWriter, r *http.Request) {
 		if err := c.MarkValidated(mux.Vars(r)["adapter"]); err != nil {
 			fail(w, err)

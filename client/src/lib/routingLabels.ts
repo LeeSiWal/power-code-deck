@@ -215,3 +215,17 @@ export function parseRoleLabel(label: string): RoleLabel {
   }
   return { ok: false, blocked: blocked.filter((b) => b.reasons.length > 0), note: notes.join('; ') };
 }
+
+export const TIER_LABELS: Record<string, string> = {
+  VERY_EASY: '매우 쉬움',
+  EASY: '쉬움',
+  MEDIUM: '보통',
+  HIGH: '어려움',
+  ULTRA: '매우 어려움',
+};
+
+// One line for the chat: what "자동" picked and the rule behind it.
+export function autoPickNote(p: NamedProfile, ruleTier: string, source: string): string {
+  const why = source === 'only_candidate' ? '쓸 수 있는 모델이 하나뿐' : `예상 난이도: ${TIER_LABELS[ruleTier] ?? ruleTier}`;
+  return `자동 선택: ${profileName(p)} (${why})`;
+}
