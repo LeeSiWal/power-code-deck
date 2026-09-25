@@ -166,6 +166,11 @@ func modelDisplay(m string) string {
 	if m == "" {
 		return "기본 모델"
 	}
+	if rest, ok := strings.CutPrefix(m, "oss:"); ok {
+		if _, model, ok := strings.Cut(rest, ":"); ok {
+			return "로컬 · " + localModelName(model)
+		}
+	}
 	title := func(p string) string {
 		if p == "" || (p[0] >= '0' && p[0] <= '9') {
 			return p
@@ -206,4 +211,25 @@ func adapterDisplay(a string) string {
 		return "Codex"
 	}
 	return a
+}
+
+// localModelName shortens "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit" to
+// "Qwen3 30B A3B": the organization, release date, quantization and the
+// "Instruct" tag say nothing the user needs.
+func localModelName(m string) string {
+	if i := strings.LastIndex(m, "/"); i >= 0 {
+		m = m[i+1:]
+	}
+	var keep []string
+	for _, p := range strings.Split(m, "-") {
+		l := strings.ToLower(p)
+		if l == "instruct" || l == "mlx" || l == "gguf" || strings.HasSuffix(l, "bit") || (len(p) == 4 && strings.Trim(p, "0123456789") == "") {
+			continue
+		}
+		keep = append(keep, p)
+	}
+	if len(keep) == 0 {
+		return m
+	}
+	return strings.Join(keep, " ")
 }

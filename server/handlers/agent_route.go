@@ -81,8 +81,8 @@ func RouteAgent(agentSvc *services.AgentService, hub *ws.Hub, choose ChooseFunc,
 				break
 			}
 			bind = target
-			bind.NativeModel, bind.NativeEffort, bind.AutoProfile = ch.Profile.Model, ch.Profile.Effort, ch.Profile.ID
-			resp.Profile = &routingProfile{ID: ch.Profile.ID, Adapter: ch.Profile.Adapter, Model: ch.Profile.Model, Effort: ch.Profile.Effort}
+			bind.NativeModel, bind.NativeEffort, bind.AutoProfile = ch.Profile.LaunchModel(), ch.Profile.Effort, ch.Profile.ID
+			resp.Profile = toRoutingProfile(ch.Profile)
 			resp.RuleTier, resp.Source = ch.Decision.RuleTier.String(), ch.Decision.Source
 		}
 		agent, err := agentSvc.Bind(id, bind)
@@ -157,7 +157,7 @@ func toRoutingProfile(p *routing.Profile) *routingProfile {
 	if p == nil {
 		return nil
 	}
-	return &routingProfile{ID: p.ID, Adapter: p.Adapter, Model: p.Model, Effort: p.Effort}
+	return &routingProfile{ID: p.ID, Adapter: p.Adapter, Model: p.LaunchModel(), Effort: p.Effort}
 }
 
 // RouteTurn runs before a later message of an auto session is sent: it may move
@@ -242,7 +242,7 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 				if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile); err == nil && autoBindTargets[wide.Profile.Adapter].Preset != "antigravity" {
 					advisor = wide.Profile
 				}
-				target := services.DelegateTarget{ProfileID: advisor.ID, Adapter: advisor.Adapter, Model: advisor.Model, Effort: advisor.Effort}
+				target := services.DelegateTarget{ProfileID: advisor.ID, Adapter: advisor.Adapter, Model: advisor.LaunchModel(), Effort: advisor.Effort}
 				if job, err := delegator.Start(id, agent.WorkingDir, target, services.BuildDelegateBrief(history, body.Goal)); err == nil {
 					note("", 0)
 					snapshot, _ := delegator.Get(id, job.ID) // a copy; the job keeps running
@@ -253,7 +253,7 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 			}
 		}
 		if apply {
-			if err := native.SetModelEffort(id, tc.Profile.Model, tc.Profile.Effort); err != nil {
+			if err := native.SetModelEffort(id, tc.Profile.LaunchModel(), tc.Profile.Effort); err != nil {
 				resp.Reason = "switch_failed"
 				jsonResponse(w, resp)
 				return
@@ -301,7 +301,7 @@ func switchTool(w http.ResponseWriter, agentSvc *services.AgentService, native *
 		jsonResponse(w, resp)
 		return false, 0
 	}
-	target.NativeModel, target.NativeEffort, target.AutoProfile = tc.Profile.Model, tc.Profile.Effort, tc.Profile.ID
+	target.NativeModel, target.NativeEffort, target.AutoProfile = tc.Profile.LaunchModel(), tc.Profile.Effort, tc.Profile.ID
 	moved, err := agentSvc.SwitchTool(id, target, services.CountUserTurns(history))
 	if err != nil {
 		resp.Reason = "switch_failed"

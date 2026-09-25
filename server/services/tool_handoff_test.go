@@ -74,7 +74,7 @@ func TestBuildDelegateBrief(t *testing.T) {
 }
 
 func TestModelDisplay(t *testing.T) {
-	for in, want := range map[string]string{"gpt-5.6-sol": "GPT-5.6 Sol", "claude-opus-5-5": "Opus 5.5", "claude-haiku-4-5-20251001": "Haiku 4.5", "claude-sonnet-5": "Sonnet 5", "": "기본 모델"} {
+	for in, want := range map[string]string{"gpt-5.6-sol": "GPT-5.6 Sol", "claude-opus-5-5": "Opus 5.5", "claude-haiku-4-5-20251001": "Haiku 4.5", "claude-sonnet-5": "Sonnet 5", "": "기본 모델", "oss:mac:mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit": "로컬 · Qwen3 30B A3B"} {
 		if got := modelDisplay(in); got != want {
 			t.Errorf("modelDisplay(%q) = %q, want %q", in, got, want)
 		}

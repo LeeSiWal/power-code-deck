@@ -143,6 +143,9 @@ export const EFFORT_LABELS: Record<string, string> = {
 export function modelName(model: string, displayNames?: Record<string, string>): string {
   if (!model) return '기본 모델';
   if (displayNames?.[model]) return displayNames[model];
+  // "oss:<endpoint>:<model>" — Codex on a local model through the bridge.
+  const local = /^oss:[^:]+:(.+)$/.exec(model);
+  if (local) return `로컬 · ${localModelName(local[1])}`;
   const ctx = /\[(\d+)m\]$/i.exec(model);
   if (ctx) return `${modelName(model.slice(0, ctx.index), displayNames)} · ${ctx[1]}M`;
   const gpt = /^gpt-([\d.]+)(?:-(.+))?$/i.exec(model);
@@ -155,6 +158,12 @@ export function modelName(model: string, displayNames?: Record<string, string>):
     else out.push(/^\d/.test(p) ? p : cap(p));
   }
   return out.join(' ') || model;
+}
+
+// "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit" → "Qwen3 30B A3B".
+export function localModelName(m: string): string {
+  const keep = m.split('/').pop()!.split('-').filter((p) => !/^(instruct|mlx|gguf)$/i.test(p) && !/bit$/i.test(p) && !/^\d{4}$/.test(p));
+  return keep.join(' ') || m;
 }
 
 function cap(s: string): string {

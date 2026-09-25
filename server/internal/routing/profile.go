@@ -325,15 +325,28 @@ func (c Config) Validate() error {
 		seen[p.ID] = true
 	}
 	eps := map[string]bool{}
+	kinds := map[string]string{}
 	for _, e := range c.LocalEndpoints {
 		if err := e.Validate(); err != nil {
 			return err
 		}
-		eps[e.ID] = true
+		eps[e.ID], kinds[e.ID] = true, e.Kind
 	}
 	for _, p := range c.Profiles {
 		if p.Adapter == AdapterLocal && !eps[p.EndpointRef] {
 			return fmt.Errorf("routing config: profile %q references unknown endpoint %q", p.ID, p.EndpointRef)
+		}
+		if p.EndpointRef != "" && p.Adapter != AdapterLocal {
+			// Codex on a local model, through the Responses→Chat bridge.
+			if p.Adapter != AdapterCodex {
+				return fmt.Errorf("routing config: profile %q: endpointRef is supported for local and codex profiles only", p.ID)
+			}
+			if kinds[p.EndpointRef] != "openai" {
+				return fmt.Errorf("routing config: profile %q needs an endpoint of kind \"openai\" (got %q)", p.ID, p.EndpointRef)
+			}
+			if p.Model == "" {
+				return fmt.Errorf("routing config: profile %q: a local Codex profile needs its model", p.ID)
+			}
 		}
 	}
 	if c.Strategy != "" && !ValidStrategy(c.Strategy) {
@@ -436,4 +449,16 @@ func tiersString(ts []Tier) string {
 		parts[i] = t.String()
 	}
 	return strings.Join(parts, ",")
+}
+
+// IsLocalCodex reports a Codex profile that runs on a local model server.
+func (p Profile) IsLocalCodex() bool { return p.Adapter == AdapterCodex && p.EndpointRef != "" }
+
+// LaunchModel is the model string a session is started with. A local Codex
+// profile becomes "oss:<endpoint>:<model>" (see internal/ossbridge.Model).
+func (p Profile) LaunchModel() string {
+	if p.IsLocalCodex() {
+		return "oss:" + p.EndpointRef + ":" + p.Model
+	}
+	return p.Model
 }
