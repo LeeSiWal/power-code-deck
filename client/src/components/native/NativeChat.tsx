@@ -14,6 +14,8 @@ import {
 import { writeClipboard } from '../../lib/clipboard';
 import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
+import { modelName } from '../../lib/routingLabels';
+import { SESSION_TOOLS, rememberTool, sessionName, toolForDriver, type SessionTool } from '../../lib/sessionTools';
 import { clientCommand, type NativeDriverName } from '../../lib/nativeCommands';
 
 /**
@@ -51,8 +53,10 @@ const cloudTargetName = (d: NativeDriverName) => (d === 'antigravity' ? 'Antigra
 // conversation (server SetModel), so nothing is lost.
 const MODELS: { id: string; label: string; desc: string }[] = [
   { id: '', label: 'Auto', desc: 'CLI 기본 선택' },
-  { id: 'claude-fable-5', label: 'Fable 5', desc: '최신 · 복잡하고 긴 작업' },
-  { id: 'claude-opus-5', label: 'Opus 5', desc: '복잡한 에이전틱 코딩 · 기업용 (1M)' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1', desc: '최신 · 복잡하고 긴 작업' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', desc: '최신 Opus · 복잡한 에이전틱 코딩' },
+  { id: 'claude-fable-5', label: 'Fable 5', desc: '이전 세대 · 복잡하고 긴 작업' },
+  { id: 'claude-opus-5', label: 'Opus 5', desc: '이전 세대 · 에이전틱 코딩 (1M)' },
   { id: 'claude-opus-4-8', label: 'Opus 4.8', desc: '이전 세대 · 깊은 추론' },
   { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 · 1M', desc: '초대용량 컨텍스트(1M)' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5', desc: '균형 · 빠르고 똑똑' },
@@ -196,7 +200,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   }, [pickMode, driver]);
 
   const models = driver === 'codex' ? CODEX_MODELS : MODELS;
-  const modelLabel = models.find((m) => m.id === modelId)?.label ?? modelId ?? 'Auto';
+  // Ids the picker doesn't list (dated, [1m], newly released) still read as names.
+  const modelLabel = models.find((m) => m.id === modelId)?.label ?? (modelId ? modelName(modelId) : 'Auto');
   const currentMode = MODES.find((m) => m.id === modeId) ?? MODES[0];
   // Codex has no effort concept, so the control is hidden there rather than shown
   // inert — a setting that silently does nothing is worse than no setting.
@@ -245,6 +250,20 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
       setOpeningSetup(false);
     }
   }, [cwd, driver, navigate]);
+
+  // A session runs one CLI for its whole life, so "switching tools" starts a new
+  // session in the same folder; this one stays in the list untouched.
+  const currentTool = toolForDriver(driver);
+  const startWithTool = useCallback(async (tool: SessionTool) => {
+    setMenu(null);
+    try {
+      const a = await api.createAgent({ preset: tool.preset, name: sessionName(tool, cwd), workingDir: cwd, command: tool.command, args: [] }) as { id: string };
+      rememberTool(tool.preset);
+      navigate(`/agents/${a.id}`);
+    } catch (err) {
+      setError(`${tool.name} 세션을 시작하지 못했습니다: ` + String(err));
+    }
+  }, [cwd, navigate]);
 
   // Grow the input with its content (up to a cap, then it scrolls internally).
   //
@@ -584,8 +603,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         {/* Model switcher menu. */}
         {menu === 'model' && (
           <div className="absolute bottom-14 right-2 z-20 w-64 max-w-[calc(100vw-1rem)] bg-deck-raised border border-deck-border rounded-lg shadow-xl overflow-hidden">
-            <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim">모델</div>
-            {models.map((m) => (
+            {driver !== 'antigravity' && <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim">모델</div>}
+            {driver !== 'antigravity' && models.map((m) => (
               <button
                 key={m.id}
                 onClick={() => pickModel(m.id)}
@@ -598,6 +617,27 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
                 </span>
               </button>
             ))}
+            <div className={`px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim ${driver !== 'antigravity' ? 'border-t border-deck-border' : ''}`}>도구 · 다른 도구는 새 세션으로 시작</div>
+            {SESSION_TOOLS.map((t) => {
+              const on = t.driver === driver;
+              return (
+                <button
+                  key={t.preset}
+                  onClick={() => (on ? setMenu(null) : startWithTool(t))}
+                  className={`w-full text-left px-3 py-2 hover:bg-deck-bg/60 flex items-center gap-2 ${on ? 'bg-deck-bg/40' : ''}`}
+                >
+                  <span className={`shrink-0 w-3.5 ${on ? 'text-deck-accent' : 'text-transparent'}`}><IconCheck size={14} /></span>
+                  <span className={`text-sm ${on ? 'text-deck-accent' : 'text-deck-text'}`}>{t.name}</span>
+                  {!on && <span className="ml-auto text-xs text-deck-text-dim">새 세션</span>}
+                </button>
+              );
+            })}
+            <button
+              onClick={() => { setMenu(null); navigate(`/launch/${encodeURIComponent(cwd)}`); }}
+              className="w-full text-left px-3 py-2 text-xs text-deck-text-dim hover:bg-deck-bg/60"
+            >
+              기타 · 직접 명령으로 시작…
+            </button>
           </div>
         )}
 
@@ -845,14 +885,14 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
             >
               {uploading ? <IconSpinner size={15} className="animate-spin" /> : <IconPlus size={15} />}
             </button>
-            {driver !== 'antigravity' && <button
+            <button
               onClick={() => setMenu(menu === 'model' ? null : 'model')}
               className="shrink-0 h-8 px-2.5 rounded-full bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1.5"
-              title="모델 전환"
+              title="도구 · 모델 전환"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-deck-accent" />
-              {modelLabel}
-            </button>}
+              {driver === 'antigravity' ? currentTool.name : driver === 'codex' ? `Codex · ${modelLabel}` : modelLabel}
+            </button>
             {driver !== 'antigravity' && <button
               onClick={() => setMenu(menu === 'mode' ? null : 'mode')}
               className={`shrink-0 h-8 px-2.5 rounded-full border text-xs font-medium flex items-center gap-1.5 ${currentMode.pill} ${
@@ -863,7 +903,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
               <currentMode.icon size={13} />
               {currentMode.label}
             </button>}
-            {driver === 'antigravity' && <span className="text-xs text-deck-text-dim">Antigravity · CLI 설정 사용</span>}
+            {driver === 'antigravity' && <span className="text-xs text-deck-text-dim">CLI 설정 사용</span>}
             {showEffort && (
               <button
                 onClick={() => { setMenu(null); setOptionsOpen(true); }}

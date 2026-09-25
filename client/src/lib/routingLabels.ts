@@ -114,3 +114,104 @@ export const CLASS_LABELS: Record<string, string> = {
 export function tokens(n: number | null | undefined): string {
   return n === null || n === undefined ? '미보고' : n.toLocaleString();
 }
+
+// ---- Human names for profiles/models. Raw ids like "claude-sonnet5-low" or
+// "gpt-5.6-luna" stay available as tooltips, never as the primary text.
+
+const ADAPTER_NAMES: Record<string, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  antigravity: 'Antigravity',
+  gemini: 'Gemini',
+};
+
+export function adapterName(id: string): string {
+  return ADAPTER_NAMES[id] ?? (id ? id[0].toUpperCase() + id.slice(1) : id);
+}
+
+export const EFFORT_LABELS: Record<string, string> = {
+  minimal: '최소',
+  low: '낮음',
+  medium: '중간',
+  high: '높음',
+  xhigh: '매우 높음',
+  max: '최대',
+};
+
+// "claude-opus-5-5" → "Opus 5.5", "claude-haiku-4-5-20251001" → "Haiku 4.5",
+// "gpt-5.6-luna" → "GPT-5.6 Luna". CLI-reported display names win when known.
+export function modelName(model: string, displayNames?: Record<string, string>): string {
+  if (!model) return '기본 모델';
+  if (displayNames?.[model]) return displayNames[model];
+  const ctx = /\[(\d+)m\]$/i.exec(model);
+  if (ctx) return `${modelName(model.slice(0, ctx.index), displayNames)} · ${ctx[1]}M`;
+  const gpt = /^gpt-([\d.]+)(?:-(.+))?$/i.exec(model);
+  if (gpt) return `GPT-${gpt[1]}${gpt[2] ? ' ' + gpt[2].split('-').map(cap).join(' ') : ''}`;
+  const parts = model.replace(/^(claude|gemini)-/i, '').split('-').filter((p) => !/^\d{8}$/.test(p));
+  const out: string[] = [];
+  for (const p of parts) {
+    const prev = out[out.length - 1];
+    if (/^\d+$/.test(p) && prev && /^\d+(\.\d+)*$/.test(prev)) out[out.length - 1] = `${prev}.${p}`;
+    else out.push(/^\d/.test(p) ? p : cap(p));
+  }
+  return out.join(' ') || model;
+}
+
+function cap(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+export interface NamedProfile { id: string; adapter: string; model?: string; effort?: string }
+
+// "Claude · Sonnet 5 · 낮음". Unknown profiles fall back to their id.
+export function profileName(p: NamedProfile | undefined, id = '', displayNames?: Record<string, string>): string {
+  if (!p) {
+    // Profiles missing from the snapshot (e.g. an uninstalled CLI's default).
+    const m = /^([a-z]+)-default$/.exec(id);
+    return m ? `${adapterName(m[1])} · 기본 모델` : id;
+  }
+  const effort = p.effort ? ` · ${EFFORT_LABELS[p.effort] ?? p.effort}` : '';
+  return `${adapterName(p.adapter)} · ${modelName(p.model || '', displayNames)}${effort}`;
+}
+
+// Adapter observation values (installation/auth/billing/…) in plain words.
+export const OBSERVATION_LABELS: Record<string, string> = {
+  installed: '설치됨',
+  authenticated: '로그인됨',
+  subscription_included: '구독 포함',
+  local: '로컬',
+  supported: '지원',
+  unsupported: '미지원',
+  healthy: '정상',
+  entitled: '사용 가능',
+  allowed_for_scope: '허용',
+  unknown: '확인 안 됨',
+};
+
+export function observationLabel(v: string): string {
+  if (!v) return OBSERVATION_LABELS.unknown;
+  return OBSERVATION_LABELS[v] ?? REASON_LABELS[v] ?? v;
+}
+
+// Server role labels are strings: "<id> (<adapter> <model>; same provider …)"
+// or "unavailable: <id>: code,code; <id>: code". Parse them back into parts so
+// the UI can name profiles and translate codes instead of printing the string.
+export type RoleLabel =
+  | { ok: true; id: string; sameProvider: boolean }
+  | { ok: false; blocked: { id: string; reasons: string[] }[]; note: string };
+
+export function parseRoleLabel(label: string): RoleLabel {
+  if (!label.startsWith('unavailable')) {
+    const id = label.split(' (')[0];
+    return { ok: true, id, sameProvider: label.includes('same provider') };
+  }
+  const rest = label.replace(/^unavailable:\s*/, '');
+  const blocked: { id: string; reasons: string[] }[] = [];
+  const notes: string[] = [];
+  for (const part of rest.split('; ')) {
+    const m = /^([\w.-]+): ([\w,]+)$/.exec(part.trim());
+    if (m) blocked.push({ id: m[1], reasons: m[2].split(',').filter((r) => r !== 'role_not_allowed') });
+    else if (part.trim()) notes.push(part.trim());
+  }
+  return { ok: false, blocked: blocked.filter((b) => b.reasons.length > 0), note: notes.join('; ') };
+}

@@ -1,12 +1,11 @@
 import { Link, useLocation } from 'react-router-dom';
-import { IconBell, IconLog, IconSettings, IconDevices, IconRocket } from '../icons';
+import { IconBell, IconLog, IconSettings, IconDevices } from '../icons';
 import { NotificationBadge } from '../notification/NotificationBadge';
 
 // 통합 후 /dashboard와 /control은 같은 화면이므로 탭도 하나로 합쳤다.
 // 프로젝트 추가는 관제실 헤더 버튼이 담당한다(탭이 아니라 행동이라서).
 const NAV_ITEMS = [
   { href: '/control', label: 'Deck', Icon: IconDevices },
-  { href: '/runs', label: 'Runs', Icon: IconRocket },
   { href: '/notifications', label: 'Alerts', Icon: IconBell },
   { href: '/logs', label: 'Logs', Icon: IconLog },
   { href: '/settings', label: 'Settings', Icon: IconSettings },
@@ -23,7 +22,7 @@ export function BottomNav() {
   return (
     <nav className="md:hidden flex items-center justify-around safe-bottom bg-deck-surface border-t border-deck-border">
       {NAV_ITEMS.map((item) => {
-        const active = pathname === item.href || (item.href === '/runs' && pathname.startsWith('/runs/'));
+        const active = pathname === item.href;
         return (
           <Link
             key={item.href}

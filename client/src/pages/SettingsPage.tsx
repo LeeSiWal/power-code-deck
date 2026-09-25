@@ -31,7 +31,7 @@ export function SettingsPage() {
         <span className="text-sm font-medium">Settings</span>
       </header>
 
-      <main className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4 max-w-lg mx-auto w-full">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 p-4 space-y-4 max-w-lg mx-auto w-full">
         <UiScaleSettings />
         <NotificationSettings />
         <SoundSettings />
