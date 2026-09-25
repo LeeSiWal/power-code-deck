@@ -162,6 +162,30 @@ func (c *LocalClient) do(ctx context.Context, e LocalEndpoint, method, path stri
 	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(out)
 }
 
+// Stream sends one request to the endpoint through the same guarded client (the
+// address checks run at dial time; redirects are not followed) and returns the
+// response for the caller to read and close — the OSS bridge relays streams.
+func (c *LocalClient) Stream(ctx context.Context, e LocalEndpoint, method, path string, body []byte) (*http.Response, error) {
+	if err := e.Validate(); err != nil {
+		return nil, err
+	}
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(e.URL, "/")+path, rd)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if e.TokenEnv != "" && c.Getenv != nil {
+		if t := c.Getenv(e.TokenEnv); t != "" {
+			req.Header.Set("Authorization", "Bearer "+t)
+		}
+	}
+	return c.client(e).Do(req)
+}
+
 func (c *LocalClient) Models(ctx context.Context, e LocalEndpoint) ([]ModelInfo, error) {
 	var out []ModelInfo
 	if e.Kind == "ollama" {

@@ -441,6 +441,8 @@ func main() {
 
 	// Start server in goroutine. BindHost defaults to 127.0.0.1 (localhost only);
 	// set POWERCODEDECK_BIND_HOST=0.0.0.0 to expose it on the LAN for handoff.
+	startOSSBridge()
+
 	srv := &http.Server{
 		Addr:    cfg.BindHost + ":" + cfg.Port,
 		Handler: r,
