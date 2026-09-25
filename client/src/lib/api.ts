@@ -97,12 +97,18 @@ export interface RouteTurnResult {
   agent?: any;
   handoffTurns?: number;
   handoffTokens?: number;
+  // reason "delegating": the hard request went to a stronger model for advice.
+  delegate?: DelegateJob;
+}
+export interface DelegateJob {
+  id: string; agentId: string; status: 'running' | 'done' | 'failed' | 'canceled';
+  target: { id: string; adapter: string; model?: string; effort?: string }; briefTokens: number; error?: string;
 }
 // Recorded turns of "자동" sessions (GET /agents/{id}/auto-usage, /auto-usage).
 // Token sums cover only the turns whose CLI reported usage (reported ≤ turns).
 export interface AutoModelUsage { tool: string; model: string; effort: string; turns: number; reported: number; input: number; output: number; cacheCreation: number; cacheRead: number }
 export interface AutoIdleBucket { label: string; minSeconds: number; turns: number; reported: number; cacheRead: number; inputTotal: number }
-export interface AutoUsage { turns: number; models: AutoModelUsage[]; modelSwitches: number; toolSwitches: number; handoffTokens: number; idle: AutoIdleBucket[]; idleThresholdSeconds: number }
+export interface AutoUsage { turns: number; models: AutoModelUsage[]; modelSwitches: number; toolSwitches: number; delegations: number; handoffTokens: number; idle: AutoIdleBucket[]; idleThresholdSeconds: number }
 export interface RoutingChoice { decision: RoutingDecision; profile?: RoutingProfile }
 export interface RoutingRunState { runId: string; mode: RoutingMode; phase: string; epoch: number; currentProfile: string; currentExecution: string; pendingProfile: string; pendingWhen: string; pinProfile: string; pinAdapter: string; switches: number; attempts: number }
 export interface RoutingUsage { scope: string; source: string; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheCreationTokens: number | null; thinkingTokens: number | null; totalTokens: number | null; local: boolean }
@@ -334,6 +340,8 @@ export const api = {
     apiFetch<RouteTurnResult>(`/agents/${encodeURIComponent(id)}/route-turn`, { method: 'POST', body: JSON.stringify({ goal, confirmTool }) }),
   autoUsage: (id: string) => apiFetch<AutoUsage>(`/agents/${encodeURIComponent(id)}/auto-usage`),
   autoUsageRecent: (days = 7) => apiFetch<AutoUsage>(`/auto-usage?days=${days}`),
+  delegateStatus: (id: string, job: string) => apiFetch<DelegateJob>(`/agents/${encodeURIComponent(id)}/delegate/${encodeURIComponent(job)}`),
+  cancelDelegate: (id: string, job: string) => apiFetch<void>(`/agents/${encodeURIComponent(id)}/delegate/${encodeURIComponent(job)}`, { method: 'DELETE' }),
   clearAutoProfile: (id: string) => apiFetch<void>(`/agents/${encodeURIComponent(id)}/auto-profile`, { method: 'DELETE' }),
   routeAgent: (id: string, goal: string, adapter = '') =>
     apiFetch<RouteAgentResult>(`/agents/${encodeURIComponent(id)}/route`, { method: 'POST', body: JSON.stringify({ goal, adapter }) }),

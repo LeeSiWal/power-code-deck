@@ -98,3 +98,51 @@ func clipRunes(s string, n int) string {
 	}
 	return string(r[:n]) + "…"
 }
+
+// BuildDelegateBrief is the short request an advisor model gets instead of the
+// whole conversation: the session's first request (the goal), the files the
+// conversation touched, the latest reply, and the current request verbatim.
+// The advisor can read the files itself; it must not edit anything.
+func BuildDelegateBrief(events []*StreamEvent, goal string) string {
+	var first, lastReply string
+	seen := map[string]bool{}
+	var files []string
+	for _, ev := range events {
+		if ev.Message == nil || ev.ParentToolUseID != nil && *ev.ParentToolUseID != "" {
+			continue
+		}
+		for _, b := range ev.Message.Content {
+			switch {
+			case ev.Type == "user" && b.Type == "text" && first == "":
+				first = b.Text
+			case ev.Type == "assistant" && b.Type == "text" && strings.TrimSpace(b.Text) != "":
+				lastReply = b.Text
+			case ev.Type == "assistant" && b.Type == "tool_use":
+				var in map[string]any
+				if json.Unmarshal(b.Input, &in) == nil {
+					for _, k := range []string{"file_path", "path", "notebook_path"} {
+						if v, ok := in[k].(string); ok && v != "" && !seen[v] && len(files) < 40 {
+							seen[v] = true
+							files = append(files, v)
+						}
+					}
+				}
+			}
+		}
+	}
+	var b strings.Builder
+	b.WriteString("당신은 조언만 하는 읽기 전용 검토자입니다. 이 프로젝트 폴더에서 다른 AI 코딩 도구가 사용자와 작업 중이고, 아래 요청이 어려워서 당신의 판단을 먼저 구합니다.\n")
+	b.WriteString("- 파일을 수정·생성·삭제하지 말고, 셸 명령도 실행하지 마세요. 필요하면 파일을 읽거나 검색만 하세요.\n")
+	b.WriteString("- 핵심 판단, 접근 방법, 단계별 계획, 주의할 위험을 한국어로 간결하게 답하세요. 구현은 그 도구가 합니다.\n\n")
+	if first != "" && strings.TrimSpace(first) != strings.TrimSpace(goal) {
+		b.WriteString("[이 대화의 처음 요청]\n" + clipRunes(first, 4000) + "\n\n")
+	}
+	if len(files) > 0 {
+		b.WriteString("[지금까지 다룬 파일]\n" + strings.Join(files, "\n") + "\n\n")
+	}
+	if lastReply != "" {
+		b.WriteString("[직전 답변(일부)]\n" + clipRunes(lastReply, 2000) + "\n\n")
+	}
+	b.WriteString("[조언이 필요한 현재 요청]\n" + goal)
+	return b.String()
+}

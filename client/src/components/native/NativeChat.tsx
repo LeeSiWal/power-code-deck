@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentDeckWS } from '../../lib/ws';
-import { api, type AutoUsage, type RouteTurnResult } from '../../lib/api';
+import { api, type AutoUsage, type DelegateJob, type RouteTurnResult } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 import {
   IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconDevices, IconGauge, IconHand,
@@ -511,6 +511,37 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
     onAgentChange?.(r.agent);
   }, [agentId, onAgentChange]);
 
+  // A hard request in a long conversation first goes to a stronger model for
+  // read-only advice (server: the answer is shown and put in front of this
+  // message); the message is sent when it finishes, fails, or the user skips.
+  const [delegating, setDelegating] = useState<{ job: DelegateJob; msg: string } | null>(null);
+  useEffect(() => {
+    if (!delegating) return;
+    const { job, msg } = delegating;
+    const who = profileName(job.target, job.target.id);
+    let stop = false;
+    const tick = async () => {
+      try {
+        const j = await api.delegateStatus(agentId, job.id);
+        if (stop || j.status === 'running') return;
+        setDelegating(null);
+        sendText(msg);
+        setNotice(j.status === 'done'
+          ? `어려운 요청이라 ${who}에게 요청서(약 ${compactTokens(j.briefTokens)}토큰)로 조언을 받았고, 지금 모델이 이어서 작업합니다.`
+          : `조언을 받지 못해 지금 모델로 바로 보냈습니다${j.error ? `: ${j.error}` : '.'}`);
+      } catch { /* keep polling */ }
+    };
+    const t = window.setInterval(tick, 2000);
+    return () => { stop = true; window.clearInterval(t); };
+  }, [delegating, agentId, sendText]);
+  const skipDelegate = useCallback(() => {
+    const d = delegating;
+    setDelegating(null);
+    if (!d) return;
+    api.cancelDelegate(agentId, d.job.id).catch(() => { /* its answer is dropped either way */ });
+    sendText(d.msg);
+  }, [delegating, agentId, sendText]);
+
   // A large handoff waits for the user: move the conversation, or stay here.
   const [toolAsk, setToolAsk] = useState<{ msg: string; goal: string; r: RouteTurnResult } | null>(null);
   const answerToolAsk = useCallback(async (move: boolean) => {
@@ -532,6 +563,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
 
   const send = useCallback(async () => {
     if (driver === 'antigravity' && working) return;
+    if (delegating) return; // the previous message is still waiting for its advice
     const text = draft.trim();
     if (!text && !attachments.length) return;
     const command = !attachments.length ? clientCommand(text) : null;
@@ -604,6 +636,10 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
           applyToolSwitch(r, msg);
           return;
         }
+        if (r.reason === 'delegating' && r.delegate) {
+          setDelegating({ job: r.delegate, msg });
+          return;
+        }
         if (r.applied && r.to) {
           if (r.to.model) {
             setModelId(r.to.model);
@@ -618,7 +654,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
       } catch { /* routing is best-effort; the message still goes out */ }
     }
     sendText(msg);
-  }, [agentId, attachments, draft, navigate, sendText, driver, working, autoOn, startWithTool, applyToolSwitch]);
+  }, [agentId, attachments, draft, navigate, sendText, driver, working, autoOn, startWithTool, applyToolSwitch, delegating]);
 
   const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string, remember?: boolean) => {
     agentDeckWS.send('native:decide', { agentId, id, behavior, message, remember });
@@ -655,6 +691,16 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
           </div>
         )}
       </div>
+
+      {delegating && (
+        <div className="mx-2 mb-1 px-3 py-2 rounded-lg border border-deck-accent/30 bg-deck-accent/10 text-xs flex items-center gap-2">
+          <IconSpinner size={13} className="animate-spin shrink-0 text-deck-accent" />
+          <span className="flex-1 min-w-0 text-deck-text">
+            어려운 요청이라 <b>{profileName(delegating.job.target, delegating.job.target.id)}</b>에게 조언을 받는 중… (대화 전체 대신 요청서 약 {compactTokens(delegating.job.briefTokens)}토큰)
+          </span>
+          <button onClick={skipDelegate} className="shrink-0 px-2.5 py-1 rounded-md border border-deck-border text-deck-text-dim">기다리지 않고 보내기</button>
+        </div>
+      )}
 
       {toolAsk && toolAsk.r.to && (
         <div className="mx-2 mb-1 px-3 py-2 rounded-lg border border-deck-accent/30 bg-deck-accent/10 text-xs space-y-2">
@@ -724,8 +770,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
               <div className="px-3 py-2 text-[11px] text-deck-text-dim border-b border-deck-border space-y-0.5">
                 <div className="text-[10px] uppercase tracking-wide">이 세션 사용량</div>
                 {usage.models.map((m) => <div key={m.tool + m.model + m.effort}>{modelUsageLine(m)}</div>)}
-                {(usage.modelSwitches > 0 || usage.toolSwitches > 0) && (
-                  <div>전환: 모델 {usage.modelSwitches}회 · 도구 {usage.toolSwitches}회{usage.handoffTokens ? ` · 인계 약 ${compactTokens(usage.handoffTokens)}토큰` : ''}</div>
+                {(usage.modelSwitches > 0 || usage.toolSwitches > 0 || usage.delegations > 0) && (
+                  <div>전환: 모델 {usage.modelSwitches}회 · 도구 {usage.toolSwitches}회{usage.delegations ? ` · 조언 ${usage.delegations}회` : ''}{usage.handoffTokens ? ` · 인계·요청서 약 ${compactTokens(usage.handoffTokens)}토큰` : ''}</div>
                 )}
               </div>
             )}
