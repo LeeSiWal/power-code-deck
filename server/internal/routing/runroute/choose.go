@@ -185,3 +185,19 @@ func (c *Coordinator) judgeTurnTier(ctx context.Context, cfg routing.Config, sta
 	}
 	return c.judgeTier(ctx, cfg, statuses, goal)
 }
+
+// CrossToolAllowed decides whether a later turn may move to another tool.
+// Moving costs the new tool a read of the handed-over conversation and drops
+// the old tool's prompt cache; that is worth avoiding only while there is a
+// warm cache on a paid model to lose and a long conversation to hand over.
+func CrossToolAllowed(idle time.Duration, contextTokens int, onLocal bool) (bool, string) {
+	switch {
+	case onLocal:
+		return true, "leaving_local" // no paid cache on a local model
+	case idle >= TurnIdleDowngrade:
+		return true, "idle"
+	case contextTokens < SmallContextTokens:
+		return true, "small_context"
+	}
+	return false, "warm_long_conversation"
+}

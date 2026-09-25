@@ -156,3 +156,22 @@ func TestJudgeTurnTierInheritsForFollowUps(t *testing.T) {
 		t.Fatalf("without a previous request the fragment is judged itself: %v", got)
 	}
 }
+
+func TestCrossToolAllowed(t *testing.T) {
+	big := SmallContextTokens * 3
+	for _, c := range []struct {
+		idle    time.Duration
+		ctx     int
+		onLocal bool
+		want    bool
+	}{
+		{time.Minute, big, true, true},                     // leaving the local model
+		{TurnIdleDowngrade, big, false, true},              // cache already cold
+		{time.Minute, SmallContextTokens - 1, false, true}, // little to hand over
+		{time.Minute, big, false, false},                   // warm, long, paid: stay
+	} {
+		if got, reason := CrossToolAllowed(c.idle, c.ctx, c.onLocal); got != c.want {
+			t.Errorf("%+v: %v (%s)", c, got, reason)
+		}
+	}
+}
