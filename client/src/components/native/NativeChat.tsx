@@ -51,8 +51,10 @@ const cloudTargetName = (d: NativeDriverName) => (d === 'antigravity' ? 'Antigra
 // conversation (server SetModel), so nothing is lost.
 const MODELS: { id: string; label: string; desc: string }[] = [
   { id: '', label: 'Auto', desc: 'CLI 기본 선택' },
-  { id: 'claude-fable-5', label: 'Fable 5', desc: '최신 · 복잡하고 긴 작업' },
-  { id: 'claude-opus-5', label: 'Opus 5', desc: '복잡한 에이전틱 코딩 · 기업용 (1M)' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1', desc: '최신 · 복잡하고 긴 작업' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', desc: '최신 Opus · 복잡한 에이전틱 코딩' },
+  { id: 'claude-fable-5', label: 'Fable 5', desc: '이전 세대 · 복잡하고 긴 작업' },
+  { id: 'claude-opus-5', label: 'Opus 5', desc: '이전 세대 · 에이전틱 코딩 (1M)' },
   { id: 'claude-opus-4-8', label: 'Opus 4.8', desc: '이전 세대 · 깊은 추론' },
   { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 · 1M', desc: '초대용량 컨텍스트(1M)' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5', desc: '균형 · 빠르고 똑똑' },
