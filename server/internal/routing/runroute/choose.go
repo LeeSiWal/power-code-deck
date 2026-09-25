@@ -3,6 +3,8 @@ package runroute
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,10 +41,18 @@ func (c *Coordinator) Choose(ctx context.Context, goal string) (Choice, error) {
 }
 
 // TurnIdleDowngrade is how long after the last turn a session may move DOWN to a
-// cheaper model. Switching models makes the new model re-read the conversation
-// (caches are per model); past the prompt cache's lifetime (~5 min) staying would
-// re-read it at full price anyway, so the downgrade is then free.
-const TurnIdleDowngrade = 5 * time.Minute
+// cheaper model, or to another tool. Switching makes the new model re-read the
+// conversation (caches are per model); past the prompt cache's lifetime (~5 min)
+// staying would re-read it at full price anyway, so the move is then free.
+// PCD_AUTO_IDLE_SECONDS overrides it (tuning, and end-to-end checks).
+var TurnIdleDowngrade = idleFromEnv(5 * time.Minute)
+
+func idleFromEnv(d time.Duration) time.Duration {
+	if n, err := strconv.Atoi(os.Getenv("PCD_AUTO_IDLE_SECONDS")); err == nil && n > 0 {
+		return time.Duration(n) * time.Second
+	}
+	return d
+}
 
 // TurnChoice is the profile a session's next turn should use, with the one it
 // is on now (nil if that profile no longer exists in the config).

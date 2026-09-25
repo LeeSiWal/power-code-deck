@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentDeckWS } from '../../lib/ws';
-import { api } from '../../lib/api';
+import { api, type RouteTurnResult } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 import {
   IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconDevices, IconGauge, IconHand,
@@ -14,8 +14,8 @@ import {
 import { writeClipboard } from '../../lib/clipboard';
 import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
-import { autoSwitchNote, modelName } from '../../lib/routingLabels';
-import { AUTO_TOOL, SESSION_TOOLS, launchUrl, rememberTool, sessionName, takePendingStart, toolForDriver, type PendingStart, type SessionTool } from '../../lib/sessionTools';
+import { TIER_LABELS, autoSwitchNote, modelName, profileName, toolSwitchNote } from '../../lib/routingLabels';
+import { AUTO_TOOL, SESSION_TOOLS, launchUrl, rememberTool, sessionName, setPendingStart, takePendingStart, toolForDriver, type PendingStart, type SessionTool } from '../../lib/sessionTools';
 import { clientCommand, type NativeDriverName } from '../../lib/nativeCommands';
 
 /**
@@ -44,8 +44,10 @@ interface NativeChatProps {
   cwd: string;
   model?: string;
   driver?: NativeDriverName;
-  // Started as "자동": later turns may move between this tool's models.
+  // Started as "자동": later turns may move between this tool's models, and after
+  // a long idle to another tool (the page then swaps in the new agent).
   autoRouted?: boolean;
+  onAgentChange?: (agent: any) => void;
 }
 
 const cloudTargetName = (d: NativeDriverName) => (d === 'antigravity' ? 'Antigravity' : d === 'codex' ? 'Codex' : 'Claude Code');
@@ -108,7 +110,7 @@ const MODES: { id: string; label: string; desc: string; icon: React.ComponentTyp
   { id: 'bypassPermissions', label: '전체 허용', desc: '모든 도구를 묻지 않고 승인합니다 — 주의해서 사용', icon: IconBolt, pill: 'border-amber-400/45 bg-amber-400/10 text-amber-300' },
 ];
 
-export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted = false }: NativeChatProps) {
+export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted = false, onAgentChange }: NativeChatProps) {
   const navigate = useNavigate(); // /clear swaps to a freshly created session
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pending, setPending] = useState<PendingApproval[]>([]);
@@ -394,7 +396,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
       if (first) {
         pendingStartRef.current = null;
         // Only into a fresh session: a reopened one already has its conversation.
-        if (!(p.events as StreamEvent[]).length) sendTextRef.current(first.message);
+        if (first.afterSwitch || !(p.events as StreamEvent[]).length) sendTextRef.current(first.message);
       }
       // The session's model/mode are authoritative — they may have been chosen on
       // another device, or restored from a past session. Sync the toolbar (and this
@@ -491,6 +493,33 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
   }, [agentId, markJustSent]);
   sendTextRef.current = sendText;
 
+  // The session now runs another tool: hand the message and a note to the chat
+  // that replaces this one (the page remounts it for the new driver).
+  const applyToolSwitch = useCallback((r: RouteTurnResult, msg: string) => {
+    if (!r.to || !r.agent) return;
+    try {
+      if (r.to.model) localStorage.setItem(`pcd:model:${agentId}`, r.to.model);
+      if (r.to.effort) localStorage.setItem(`pcd:effort:${agentId}`, r.to.effort);
+    } catch { /* ignore */ }
+    setPendingStart(agentId, { message: msg, note: toolSwitchNote(r.from, r.to, r.ruleTier || '', r.handoffTurns || 0), afterSwitch: true });
+    onAgentChange?.(r.agent);
+  }, [agentId, onAgentChange]);
+
+  // A large handoff waits for the user: move the conversation, or stay here.
+  const [toolAsk, setToolAsk] = useState<{ msg: string; goal: string; r: RouteTurnResult } | null>(null);
+  const answerToolAsk = useCallback(async (move: boolean) => {
+    const ask = toolAsk;
+    setToolAsk(null);
+    if (!ask) return;
+    if (move) {
+      try {
+        const r = await api.routeTurn(agentId, ask.goal, true);
+        if (r.reason === 'tool_switch' && r.agent) { applyToolSwitch(r, ask.msg); return; }
+      } catch { /* fall through: send here */ }
+    }
+    sendText(ask.msg);
+  }, [toolAsk, agentId, applyToolSwitch, sendText]);
+
   const interrupt = useCallback(() => {
     agentDeckWS.send('native:interrupt', { agentId });
   }, [agentId]);
@@ -507,6 +536,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
     if (command === 'clear') {
       setDraft('');
       setHistIdx(null);
+      // A fresh 자동 session: its first message routes freely, with nothing to hand over.
+      if (autoOn) { startWithTool(AUTO_TOOL); return; }
       try {
         const a = (await api.newSession(agentId)) as { id: string };
         navigate(`/agents/${a.id}`);
@@ -559,6 +590,14 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
     if (autoOn) {
       try {
         const r = await api.routeTurn(agentId, text || msg);
+        if (r.reason === 'confirm_tool_switch' && r.to) {
+          setToolAsk({ msg, goal: text || msg, r });
+          return;
+        }
+        if (r.reason === 'tool_switch' && r.agent && r.to) {
+          applyToolSwitch(r, msg);
+          return;
+        }
         if (r.applied && r.to) {
           if (r.to.model) {
             setModelId(r.to.model);
@@ -573,7 +612,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
       } catch { /* routing is best-effort; the message still goes out */ }
     }
     sendText(msg);
-  }, [agentId, attachments, draft, navigate, sendText, driver, working, autoOn]);
+  }, [agentId, attachments, draft, navigate, sendText, driver, working, autoOn, startWithTool, applyToolSwitch]);
 
   const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string, remember?: boolean) => {
     agentDeckWS.send('native:decide', { agentId, id, behavior, message, remember });
@@ -610,6 +649,19 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
           </div>
         )}
       </div>
+
+      {toolAsk && toolAsk.r.to && (
+        <div className="mx-2 mb-1 px-3 py-2 rounded-lg border border-deck-accent/30 bg-deck-accent/10 text-xs space-y-2">
+          <div className="text-deck-text">
+            이 요청{toolAsk.r.ruleTier ? `(예상 난이도: ${TIER_LABELS[toolAsk.r.ruleTier] ?? toolAsk.r.ruleTier})` : ''}에는 <b>{profileName(toolAsk.r.to, toolAsk.r.to.id)}</b> 쪽이 더 맞습니다.
+            넘기면 이전 대화 {toolAsk.r.handoffTurns}턴(약 {(toolAsk.r.handoffTokens || 0).toLocaleString()}토큰)을 새 도구가 한 번 읽습니다.
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => answerToolAsk(true)} className="px-3 py-1.5 rounded-md bg-deck-accent text-white">넘기기</button>
+            <button onClick={() => answerToolAsk(false)} className="px-3 py-1.5 rounded-md border border-deck-border text-deck-text-dim">지금 도구로 계속</button>
+          </div>
+        </div>
+      )}
 
       {notice && (
         <div className="mx-2 mb-1 px-3 py-2 rounded-lg bg-deck-accent/10 text-deck-text-dim text-xs flex items-start gap-2">

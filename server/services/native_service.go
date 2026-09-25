@@ -120,6 +120,11 @@ type NativeService struct {
 	// snapping back to defaults. Injected for the same reason as the resume id: this
 	// service owns processes, not rows.
 	saveConfig func(agentID, model, mode, effort string)
+	// carry / prefix are set by SwitchKind and consumed once: the history the chat
+	// keeps showing across a tool switch, and the handoff text put in front of the
+	// next message the new tool receives.
+	carry      map[string][]*StreamEvent
+	prefix     map[string]string
 	loadConfig func(agentID string) (model, mode, effort string)
 
 	// saveOptions / loadOptions persist the set-once session options. Unlike the
@@ -520,7 +525,13 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	}
 
 	sess := &nativeSession{id: sessionID, driver: d, kind: kind, cwd: cwd, model: model, mode: mode, effort: effort, opts: opts}
-	if err := s.restoreNativeHistory(sess); err != nil {
+	s.mu.Lock()
+	carried, isSwitch := s.carry[sessionID]
+	delete(s.carry, sessionID)
+	s.mu.Unlock()
+	if isSwitch {
+		sess.history = carried
+	} else if err := s.restoreNativeHistory(sess); err != nil {
 		d.Stop()
 		s.tokens.Revoke(sessionID)
 		return err
@@ -529,7 +540,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	// `claude --resume` — it just continues. So seed history from the transcript on
 	// disk, or the chat opens blank until the next reply. (Only when we actually
 	// resumed a real id, and only useful before the first client renders history.)
-	if resumeID != "" && kind == "claude" {
+	if resumeID != "" && kind == "claude" && !isSwitch {
 		seedNativeHistory(sess, cwd, resumeID)
 	}
 	s.mu.Lock()
@@ -686,6 +697,18 @@ func (s *NativeService) restart(sessionID, model, mode, effort string) error {
 	resumeID := old.driver.ConversationID()
 	cwd := old.cwd
 	kind := old.kind
+	// Keep what the chat shows: the new process starts with the same history rather
+	// than a re-read transcript (Codex has none to re-read, so a model switch used
+	// to blank its chat).
+	old.mu.RLock()
+	carried := append([]*StreamEvent(nil), old.history...)
+	old.mu.RUnlock()
+	s.mu.Lock()
+	if s.carry == nil {
+		s.carry = map[string][]*StreamEvent{}
+	}
+	s.carry[sessionID] = carried
+	s.mu.Unlock()
 	old.driver.Stop() // its pump exits; the pump guard keeps it from evicting the new one
 	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, effort, false)
 }
@@ -821,10 +844,9 @@ func (s *NativeService) emit(sess *nativeSession, ev *StreamEvent) {
 		}
 	}
 	sess.history = append(sess.history, events...)
-	switch {
-	case ev.Type == "user" && ev.Message != nil && hasTextBlock(ev.Message.Content):
-		sess.turnActive = true
-	case ev.Type == "result":
+	// A turn starts when a message is sent (SendWithDisplayText, before the CLI can
+	// answer — a fast reply's result must not arrive before the start is recorded).
+	if ev.Type == "result" {
 		sess.turnActive, sess.lastTurnEnd = false, time.Now()
 	}
 	if len(sess.history) > maxNativeHistory {
@@ -865,7 +887,19 @@ func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText s
 		sess.sendMu.Lock()
 		defer sess.sendMu.Unlock()
 	}
+	s.mu.Lock()
+	if p := s.prefix[sessionID]; p != "" {
+		driverText = p + driverText
+		delete(s.prefix, sessionID)
+	}
+	s.mu.Unlock()
+	sess.mu.Lock()
+	sess.turnActive = true
+	sess.mu.Unlock()
 	if err := sess.driver.Send(driverText); err != nil {
+		sess.mu.Lock()
+		sess.turnActive = false
+		sess.mu.Unlock()
 		return err
 	}
 	// Record the user turn in history NOW — at its real position, before the reply
@@ -915,6 +949,44 @@ func (s *NativeService) Pending(sessionID string) []PermissionRequest {
 }
 
 // Running reports whether a native session is live.
+// SwitchKind replaces a running session's CLI with another tool's, keeping the
+// chat history on screen (the new process starts with a copy of it rather than
+// its own transcript) and putting prefix in front of the next message sent. The
+// resume id is read from storage as on any open ("" = a fresh conversation).
+func (s *NativeService) SwitchKind(sessionID, kind, model, effort, prefix string) error {
+	s.mu.Lock()
+	old := s.sessions[sessionID]
+	if old == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("native session %s is not running", sessionID)
+	}
+	delete(s.sessions, sessionID)
+	old.mu.RLock()
+	carried := append([]*StreamEvent(nil), old.history...)
+	old.mu.RUnlock()
+	if s.carry == nil {
+		s.carry = map[string][]*StreamEvent{}
+	}
+	if s.prefix == nil {
+		s.prefix = map[string]string{}
+	}
+	s.carry[sessionID] = carried
+	if prefix != "" {
+		s.prefix[sessionID] = prefix
+	}
+	cwd, mode := old.cwd, old.mode
+	s.mu.Unlock()
+	old.driver.Stop()
+	if err := s.startSession(sessionID, kind, cwd, model, "", mode, effort, false); err != nil {
+		s.mu.Lock()
+		delete(s.carry, sessionID)
+		delete(s.prefix, sessionID)
+		s.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
 func hasTextBlock(blocks []ContentBlock) bool {
 	for _, b := range blocks {
 		if b.Type == "text" {

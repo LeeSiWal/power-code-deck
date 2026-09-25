@@ -166,6 +166,10 @@ func Migrate(db *sql.DB) error {
 		// The routing profile a "자동" session is on. Non-empty means later turns may
 		// move it between models of the same tool (POST /agents/{id}/route-turn).
 		"ALTER TABLE agents ADD COLUMN auto_profile TEXT DEFAULT ''",
+		// Per-tool conversation ids of an auto session that moved between tools:
+		// {"claude":{"conv":"…","turns":3}}, so coming back resumes that tool's own
+		// conversation and only the turns it missed are handed over.
+		"ALTER TABLE agents ADD COLUMN tool_sessions TEXT DEFAULT ''",
 	} {
 		db.Exec(stmt)
 	}

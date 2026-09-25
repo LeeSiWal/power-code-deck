@@ -247,3 +247,10 @@ export function autoSwitchNote(from: { model?: string; effort?: string } | undef
   const tier = TIER_LABELS[ruleTier] ?? ruleTier;
   return `모델 변경: ${from ? name(from) + ' → ' : ''}${name(to)}${tier ? ` (예상 난이도: ${tier})` : ''}`;
 }
+
+// One line for the chat when an idle "자동" session moved to another tool.
+export function toolSwitchNote(from: { adapter?: string } | undefined, to: { adapter: string; model?: string; effort?: string }, ruleTier: string, turns: number): string {
+  const tier = TIER_LABELS[ruleTier] ?? ruleTier;
+  const target = `${adapterName(to.adapter)} · ${modelName(to.model || '')}${to.effort ? ` · ${EFFORT_LABELS[to.effort] ?? to.effort}` : ''}`;
+  return `도구 전환: ${from?.adapter ? adapterName(from.adapter) + ' → ' : ''}${target}${tier ? ` (예상 난이도: ${tier})` : ''}${turns ? ` · 이전 대화 ${turns}턴 인계` : ''}`;
+}

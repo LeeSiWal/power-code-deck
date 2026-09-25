@@ -125,7 +125,23 @@ type routeTurnResponse struct {
 	From     *routingProfile `json:"from,omitempty"`
 	To       *routingProfile `json:"to,omitempty"`
 	RuleTier string          `json:"ruleTier,omitempty"`
+	// Set when the session moved (or would move) to another tool.
+	Agent         *services.Agent `json:"agent,omitempty"`
+	HandoffTurns  int             `json:"handoffTurns,omitempty"`
+	HandoffTokens int             `json:"handoffTokens,omitempty"`
 }
+
+// Tool switches only happen once a session has been idle this long (the prompt
+// cache is cold, so re-reading is paid either way). A handoff estimated above
+// toolSwitchConfirmTokens asks the user first; maxHandoffChars bounds it.
+const (
+	toolSwitchConfirmTokens = 10000
+	maxHandoffChars         = 120000
+)
+
+// estimateTokens is a rough count for the confirm prompt: ~1 token per 3 bytes
+// (close for Korean, a slight overestimate for English).
+func estimateTokens(s string) int { return len(s) / 3 }
 
 func toRoutingProfile(p *routing.Profile) *routingProfile {
 	if p == nil {
@@ -142,7 +158,8 @@ func toRoutingProfile(p *routing.Profile) *routingProfile {
 func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, choose TurnFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Goal string `json:"goal"`
+			Goal        string `json:"goal"`
+			ConfirmTool bool   `json:"confirmTool"` // the user approved a large tool handoff
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&body); err != nil {
 			jsonError(w, "invalid request", http.StatusBadRequest)
@@ -176,14 +193,23 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 			skip("turn_active")
 			return
 		}
+		var idle time.Duration
+		if !lastEnd.IsZero() {
+			idle = time.Since(lastEnd)
+		}
+		// Idle past the cache lifetime: other tools may compete too.
+		if idle >= runroute.TurnIdleDowngrade {
+			if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile); err == nil && wide.Profile.Adapter != adapter {
+				if target, ok := autoBindTargets[wide.Profile.Adapter]; ok && target.Preset != "antigravity" {
+					switchTool(w, agentSvc, native, id, agent, wide, target, body.ConfirmTool)
+					return
+				}
+			}
+		}
 		tc, err := choose(r.Context(), body.Goal, adapter, agent.AutoProfile)
 		if err != nil {
 			skip("no_profile")
 			return
-		}
-		var idle time.Duration
-		if !lastEnd.IsZero() {
-			idle = time.Since(lastEnd)
 		}
 		apply, reason := runroute.TurnSwitch(tc.Current, *tc.Profile, idle)
 		resp := routeTurnResponse{Reason: reason, From: toRoutingProfile(tc.Current), To: toRoutingProfile(tc.Profile), RuleTier: tc.Decision.RuleTier.String()}
@@ -212,4 +238,42 @@ func ClearAutoProfile(agentSvc *services.AgentService) http.HandlerFunc {
 		agentSvc.SetAutoProfile(id, "")
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// switchTool hands an auto session over to another tool: the new tool gets the
+// turns it has not seen (all of them, or — if it had a conversation here before —
+// only those since it left) in front of the next message, and resumes its own
+// earlier conversation when there is one.
+func switchTool(w http.ResponseWriter, agentSvc *services.AgentService, native *services.NativeService, id string, agent *services.Agent, tc runroute.TurnChoice, target services.BindRequest, confirmed bool) {
+	history := native.History(id)
+	prev, returning := agentSvc.ToolSessionOf(id, tc.Profile.Adapter)
+	since := 0
+	if returning {
+		since = prev.Turns
+	}
+	handoff, turns := services.BuildToolHandoff(history, since, returning, maxHandoffChars)
+	resp := routeTurnResponse{From: toRoutingProfile(tc.Current), To: toRoutingProfile(tc.Profile), RuleTier: tc.Decision.RuleTier.String(),
+		HandoffTurns: turns, HandoffTokens: estimateTokens(handoff)}
+	if resp.HandoffTokens > toolSwitchConfirmTokens && !confirmed {
+		resp.Reason = "confirm_tool_switch"
+		jsonResponse(w, resp)
+		return
+	}
+	target.NativeModel, target.NativeEffort, target.AutoProfile = tc.Profile.Model, tc.Profile.Effort, tc.Profile.ID
+	switched, err := agentSvc.SwitchTool(id, target, services.CountUserTurns(history))
+	if err != nil {
+		resp.Reason = "switch_failed"
+		jsonResponse(w, resp)
+		return
+	}
+	kind := map[string]string{"claude-code": "claude", "codex-cli": "codex"}[target.Preset]
+	if err := native.SwitchKind(id, kind, target.NativeModel, target.NativeEffort, handoff); err != nil {
+		// The row already says the new tool; the next open starts it (without the handoff).
+		resp.Reason = "switch_failed"
+		resp.Agent = switched
+		jsonResponse(w, resp)
+		return
+	}
+	resp.Applied, resp.Reason, resp.Agent = true, "tool_switch", switched
+	jsonResponse(w, resp)
 }
