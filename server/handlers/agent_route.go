@@ -133,6 +133,8 @@ type routeTurnResponse struct {
 	Agent         *services.Agent `json:"agent,omitempty"`
 	HandoffTurns  int             `json:"handoffTurns,omitempty"`
 	HandoffTokens int             `json:"handoffTokens,omitempty"`
+	// Set when a hard request was sent to a stronger model for advice instead.
+	Delegate *services.DelegateJob `json:"delegate,omitempty"`
 }
 
 // Tool switches only happen once a session has been idle this long (the prompt
@@ -141,6 +143,10 @@ type routeTurnResponse struct {
 const (
 	toolSwitchConfirmTokens = 10000
 	maxHandoffChars         = 120000
+	// A conversation at least this long is not moved up to a stronger model for
+	// one hard request (the stronger model would re-read all of it); the request
+	// goes to that model as a short brief for read-only advice instead.
+	delegateMinTokens = 20000
 )
 
 // estimateTokens is a rough count for the confirm prompt: ~1 token per 3 bytes
@@ -159,7 +165,7 @@ func toRoutingProfile(p *routing.Profile) *routingProfile {
 // the conversation). It never switches mid-answer, and moves down only after
 // the session has been idle long enough that the prompt cache is cold anyway.
 // Any "not applied" answer is normal — the client just sends the message.
-func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, choose TurnFunc, usage *services.AutoUsage) http.HandlerFunc {
+func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, choose TurnFunc, usage *services.AutoUsage, delegator *services.Delegator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Goal        string `json:"goal"`
@@ -227,6 +233,25 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 		}
 		apply, reason := runroute.TurnSwitch(tc.Current, *tc.Profile, idle)
 		resp := routeTurnResponse{Reason: reason, From: toRoutingProfile(tc.Current), To: toRoutingProfile(tc.Profile), RuleTier: tc.Decision.RuleTier.String()}
+		// Hard request in a long conversation: ask the stronger model for advice on
+		// a short brief, and let the current model (which has the context) do it.
+		if apply && reason == "harder" && delegator != nil {
+			history := native.History(id)
+			if contextTokens(history) >= delegateMinTokens {
+				advisor := tc.Profile
+				if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile); err == nil && autoBindTargets[wide.Profile.Adapter].Preset != "antigravity" {
+					advisor = wide.Profile
+				}
+				target := services.DelegateTarget{ProfileID: advisor.ID, Adapter: advisor.Adapter, Model: advisor.Model, Effort: advisor.Effort}
+				if job, err := delegator.Start(id, agent.WorkingDir, target, services.BuildDelegateBrief(history, body.Goal)); err == nil {
+					note("", 0)
+					snapshot, _ := delegator.Get(id, job.ID) // a copy; the job keeps running
+					resp.Reason, resp.To, resp.Delegate = "delegating", toRoutingProfile(advisor), &snapshot
+					jsonResponse(w, resp)
+					return
+				}
+			}
+		}
 		if apply {
 			if err := native.SetModelEffort(id, tc.Profile.Model, tc.Profile.Effort); err != nil {
 				resp.Reason = "switch_failed"
@@ -324,4 +349,40 @@ func AutoUsageRecent(usage *services.AutoUsage) http.HandlerFunc {
 		sum.IdleThresholdS = int(runroute.TurnIdleDowngrade.Seconds())
 		jsonResponse(w, sum)
 	}
+}
+
+// DelegateStatus reports an advice call; DELETE cancels it (its answer is then
+// neither shown nor handed to the session).
+func DelegateStatus(delegator *services.Delegator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		if delegator == nil {
+			jsonError(w, "delegation unavailable", http.StatusNotFound)
+			return
+		}
+		if r.Method == http.MethodDelete {
+			delegator.Cancel(vars["id"], vars["job"])
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		job, ok := delegator.Get(vars["id"], vars["job"])
+		if !ok {
+			jsonError(w, "delegation not found", http.StatusNotFound)
+			return
+		}
+		jsonResponse(w, job)
+	}
+}
+
+// contextTokens is how much a model re-reads to continue this conversation: the
+// context the last turn reported (input + cache writes + cache reads). When the
+// CLI reports no usage (Codex), the handoff text size stands in for it.
+func contextTokens(history []*services.StreamEvent) int {
+	for i := len(history) - 1; i >= 0; i-- {
+		if ev := history[i]; ev.Type == "result" && ev.Usage != nil {
+			return ev.Usage.InputTokens + ev.Usage.CacheCreationInputTokens + ev.Usage.CacheReadInputTokens
+		}
+	}
+	full, _ := services.BuildToolHandoff(history, 0, false, maxHandoffChars)
+	return estimateTokens(full)
 }

@@ -29,8 +29,8 @@ export function AutoUsagePanel() {
             {usage.models.map((m) => <div key={m.tool + m.model + m.effort}>{modelUsageLine(m)}</div>)}
           </div>
           <p className="text-xs text-deck-text-dim">
-            전체 {usage.turns}턴 · 모델 전환 {usage.modelSwitches}회 · 도구 전환 {usage.toolSwitches}회
-            {usage.handoffTokens ? ` · 인계 약 ${compactTokens(usage.handoffTokens)}토큰(글자 수 기준 추정)` : ''}
+            전체 {usage.turns}턴 · 모델 전환 {usage.modelSwitches}회 · 도구 전환 {usage.toolSwitches}회 · 조언 {usage.delegations}회
+            {usage.handoffTokens ? ` · 인계·요청서 약 ${compactTokens(usage.handoffTokens)}토큰(글자 수 기준 추정)` : ''}
           </p>
           <div className="text-xs">
             <div className="font-medium mb-1">쉰 시간별 캐시 읽기 비율</div>

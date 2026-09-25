@@ -53,3 +53,30 @@ func TestBuildToolHandoffKeepsGoalWhenClipped(t *testing.T) {
 		t.Fatalf("clipped handoff len=%d wrong", len(out))
 	}
 }
+
+func TestBuildDelegateBrief(t *testing.T) {
+	edit, _ := json.Marshal(map[string]string{"file_path": "auth/session.go"})
+	evs := []*StreamEvent{
+		nativeTextEvent("user", "로그인 버그 고쳐줘"),
+		{Type: "assistant", Message: &StreamMessage{Role: "assistant", Content: []ContentBlock{{Type: "tool_use", Name: "Edit", Input: edit}}}},
+		assistantText("세션 만료 처리를 고쳤습니다."),
+		nativeTextEvent("user", strings.Repeat("긴 대화 ", 5000)),
+	}
+	brief := BuildDelegateBrief(evs, "인증 구조 전체를 재설계해줘")
+	for _, want := range []string{"로그인 버그 고쳐줘", "auth/session.go", "세션 만료 처리를 고쳤습니다.", "인증 구조 전체를 재설계해줘", "수정·생성·삭제하지"} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("brief missing %q", want)
+		}
+	}
+	if strings.Contains(brief, "긴 대화 긴 대화") || len(brief) > 12000 {
+		t.Fatalf("brief carried the conversation (%d bytes)", len(brief))
+	}
+}
+
+func TestModelDisplay(t *testing.T) {
+	for in, want := range map[string]string{"gpt-5.6-sol": "GPT-5.6 Sol", "claude-opus-5-5": "Opus 5.5", "claude-haiku-4-5-20251001": "Haiku 4.5", "claude-sonnet-5": "Sonnet 5", "": "기본 모델"} {
+		if got := modelDisplay(in); got != want {
+			t.Errorf("modelDisplay(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

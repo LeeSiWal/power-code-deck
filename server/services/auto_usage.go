@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"sync"
 	"time"
+
+	"powercodedeck/internal/providers"
 )
 
 // TurnMeta is what routing did right before a turn of a "자동" session.
@@ -96,6 +98,7 @@ type UsageSummary struct {
 	Turns          int          `json:"turns"`
 	Models         []ModelUsage `json:"models"`
 	ModelSwitches  int          `json:"modelSwitches"`
+	Delegations    int          `json:"delegations"`
 	ToolSwitches   int          `json:"toolSwitches"`
 	HandoffTokens  int64        `json:"handoffTokens"` // estimated, from the handoff text size
 	Idle           []IdleBucket `json:"idle"`
@@ -127,8 +130,8 @@ func (u *AutoUsage) Summary(agentID string, since time.Time) (UsageSummary, erro
 		sum.Models = append(sum.Models, m)
 	}
 	rows.Close()
-	_ = u.db.QueryRow(`SELECT COALESCE(SUM(switch_kind = 'model'),0), COALESCE(SUM(switch_kind = 'tool'),0), COALESCE(SUM(handoff_tokens),0)
-		FROM auto_turns WHERE `+where, args...).Scan(&sum.ModelSwitches, &sum.ToolSwitches, &sum.HandoffTokens)
+	_ = u.db.QueryRow(`SELECT COALESCE(SUM(switch_kind = 'model'),0), COALESCE(SUM(switch_kind = 'tool'),0), COALESCE(SUM(switch_kind = 'delegate'),0), COALESCE(SUM(handoff_tokens),0)
+		FROM auto_turns WHERE `+where, args...).Scan(&sum.ModelSwitches, &sum.ToolSwitches, &sum.Delegations, &sum.HandoffTokens)
 	for i, b := range idleBuckets {
 		max := 1 << 30
 		if i+1 < len(idleBuckets) {
@@ -141,4 +144,19 @@ func (u *AutoUsage) Summary(agentID string, since time.Time) (UsageSummary, erro
 		sum.Idle = append(sum.Idle, b)
 	}
 	return sum, nil
+}
+
+// RecordDelegate records an advice call as its own turn (switch_kind "delegate"),
+// with the brief size in handoff_tokens. Nil usage = not reported.
+func (u *AutoUsage) RecordDelegate(agentID string, t DelegateTarget, briefTokens int, usage *providers.Usage) {
+	effort := t.Effort
+	if t.Adapter != "claude" {
+		effort = ""
+	}
+	var in, out, cc, cr any
+	if usage != nil {
+		in, out, cc, cr = usage.InputTokens, usage.OutputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens
+	}
+	_, _ = u.db.Exec(`INSERT INTO auto_turns (agent_id, tool, model, effort, switch_kind, handoff_tokens, input_tokens, output_tokens, cache_creation, cache_read)
+		VALUES (?, ?, ?, ?, 'delegate', ?, ?, ?, ?, ?)`, agentID, t.Adapter, t.Model, effort, briefTokens, in, out, cc, cr)
 }

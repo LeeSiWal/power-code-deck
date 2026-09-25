@@ -123,8 +123,11 @@ type NativeService struct {
 	// carry / prefix are set by SwitchKind and consumed once: the history the chat
 	// keeps showing across a tool switch, and the handoff text put in front of the
 	// next message the new tool receives.
-	carry      map[string][]*StreamEvent
-	prefix     map[string]string
+	carry  map[string][]*StreamEvent
+	prefix map[string]string
+	// notes are shown in the chat right after the next user message (delegated
+	// advice belongs under the request it answers, not above it).
+	notes      map[string]string
 	loadConfig func(agentID string) (model, mode, effort string)
 
 	// saveOptions / loadOptions persist the set-once session options. Unlike the
@@ -892,6 +895,8 @@ func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText s
 		driverText = p + driverText
 		delete(s.prefix, sessionID)
 	}
+	note := s.notes[sessionID]
+	delete(s.notes, sessionID)
 	s.mu.Unlock()
 	sess.mu.Lock()
 	sess.turnActive = true
@@ -907,6 +912,9 @@ func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText s
 	// after the assistant's response, flipping the order). This is also what keeps
 	// the user's half of the conversation across a reconnect.
 	s.emit(sess, nativeTextEvent("user", displayText))
+	if note != "" {
+		s.emit(sess, nativeTextEvent("assistant", note))
+	}
 	return nil
 }
 
@@ -985,6 +993,28 @@ func (s *NativeService) SwitchKind(sessionID, kind, model, effort, prefix string
 		return err
 	}
 	return nil
+}
+
+// SetPrefix puts text in front of the next message sent to the session's CLI
+// (consumed once, like a tool-switch handoff).
+func (s *NativeService) SetPrefix(sessionID, text string) {
+	s.mu.Lock()
+	if s.prefix == nil {
+		s.prefix = map[string]string{}
+	}
+	s.prefix[sessionID] = text
+	s.mu.Unlock()
+}
+
+// SetNextNote shows a message from the deck itself in the chat right after the
+// next user message (kept in history; the CLI does not see it).
+func (s *NativeService) SetNextNote(sessionID, text string) {
+	s.mu.Lock()
+	if s.notes == nil {
+		s.notes = map[string]string{}
+	}
+	s.notes[sessionID] = text
+	s.mu.Unlock()
 }
 
 func hasTextBlock(blocks []ContentBlock) bool {
