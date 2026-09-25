@@ -81,8 +81,8 @@ func RouteAgent(agentSvc *services.AgentService, hub *ws.Hub, choose ChooseFunc,
 				break
 			}
 			bind = target
-			bind.NativeModel, bind.NativeEffort, bind.AutoProfile = ch.Profile.Model, ch.Profile.Effort, ch.Profile.ID
-			resp.Profile = &routingProfile{ID: ch.Profile.ID, Adapter: ch.Profile.Adapter, Model: ch.Profile.Model, Effort: ch.Profile.Effort}
+			bind.NativeModel, bind.NativeEffort, bind.AutoProfile = ch.Profile.LaunchModel(), ch.Profile.Effort, ch.Profile.ID
+			resp.Profile = toRoutingProfile(ch.Profile)
 			resp.RuleTier, resp.Source = ch.Decision.RuleTier.String(), ch.Decision.Source
 		}
 		agent, err := agentSvc.Bind(id, bind)
@@ -121,7 +121,7 @@ func callChoose(ctx context.Context, choose ChooseFunc, goal string) (runroute.C
 
 // TurnFunc re-routes a later message of an auto session within its tool
 // (runroute.Coordinator.ChooseTurn). Nil when the v2 routing runtime is off.
-type TurnFunc func(ctx context.Context, goal, adapter, current string) (runroute.TurnChoice, error)
+type TurnFunc func(ctx context.Context, goal, adapter, current string, noLocal bool) (runroute.TurnChoice, error)
 
 type routeTurnResponse struct {
 	Applied  bool            `json:"applied"`
@@ -157,7 +157,7 @@ func toRoutingProfile(p *routing.Profile) *routingProfile {
 	if p == nil {
 		return nil
 	}
-	return &routingProfile{ID: p.ID, Adapter: p.Adapter, Model: p.Model, Effort: p.Effort}
+	return &routingProfile{ID: p.ID, Adapter: p.Adapter, Model: p.LaunchModel(), Effort: p.Effort}
 }
 
 // RouteTurn runs before a later message of an auto session is sent: it may move
@@ -203,6 +203,7 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 			skip("turn_active")
 			return
 		}
+		noLocal := agentSvc.AutoNoLocal(id)
 		var idle time.Duration
 		idleSeconds := -1
 		if !lastEnd.IsZero() {
@@ -216,7 +217,7 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 		}
 		// Idle past the cache lifetime: other tools may compete too.
 		if idle >= runroute.TurnIdleDowngrade {
-			if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile); err == nil && wide.Profile.Adapter != adapter {
+			if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile, noLocal); err == nil && wide.Profile.Adapter != adapter {
 				if target, ok := autoBindTargets[wide.Profile.Adapter]; ok && target.Preset != "antigravity" {
 					if ok, handoff := switchTool(w, agentSvc, native, id, agent, wide, target, body.ConfirmTool); ok {
 						note("tool", handoff)
@@ -225,7 +226,7 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 				}
 			}
 		}
-		tc, err := choose(r.Context(), body.Goal, adapter, agent.AutoProfile)
+		tc, err := choose(r.Context(), body.Goal, adapter, agent.AutoProfile, noLocal)
 		if err != nil {
 			note("", 0)
 			skip("no_profile")
@@ -239,10 +240,10 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 			history := native.History(id)
 			if contextTokens(history) >= delegateMinTokens {
 				advisor := tc.Profile
-				if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile); err == nil && autoBindTargets[wide.Profile.Adapter].Preset != "antigravity" {
+				if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile, true); err == nil && autoBindTargets[wide.Profile.Adapter].Preset != "antigravity" {
 					advisor = wide.Profile
 				}
-				target := services.DelegateTarget{ProfileID: advisor.ID, Adapter: advisor.Adapter, Model: advisor.Model, Effort: advisor.Effort}
+				target := services.DelegateTarget{ProfileID: advisor.ID, Adapter: advisor.Adapter, Model: advisor.LaunchModel(), Effort: advisor.Effort}
 				if job, err := delegator.Start(id, agent.WorkingDir, target, services.BuildDelegateBrief(history, body.Goal)); err == nil {
 					note("", 0)
 					snapshot, _ := delegator.Get(id, job.ID) // a copy; the job keeps running
@@ -253,7 +254,7 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 			}
 		}
 		if apply {
-			if err := native.SetModelEffort(id, tc.Profile.Model, tc.Profile.Effort); err != nil {
+			if err := native.SetModelEffort(id, tc.Profile.LaunchModel(), tc.Profile.Effort); err != nil {
 				resp.Reason = "switch_failed"
 				jsonResponse(w, resp)
 				return
@@ -301,7 +302,7 @@ func switchTool(w http.ResponseWriter, agentSvc *services.AgentService, native *
 		jsonResponse(w, resp)
 		return false, 0
 	}
-	target.NativeModel, target.NativeEffort, target.AutoProfile = tc.Profile.Model, tc.Profile.Effort, tc.Profile.ID
+	target.NativeModel, target.NativeEffort, target.AutoProfile = tc.Profile.LaunchModel(), tc.Profile.Effort, tc.Profile.ID
 	moved, err := agentSvc.SwitchTool(id, target, services.CountUserTurns(history))
 	if err != nil {
 		resp.Reason = "switch_failed"
@@ -385,4 +386,64 @@ func contextTokens(history []*services.StreamEvent) int {
 	}
 	full, _ := services.BuildToolHandoff(history, 0, false, maxHandoffChars)
 	return estimateTokens(full)
+}
+
+// Escalate re-routes the session's last request to a paid (non-local) model
+// after the user rejected a local answer ("유료 모델로 다시"): same tool → one
+// model switch; another tool → a tool switch with the usual handoff (the user
+// asked, so no confirm step). Local models stay out of this session after.
+func Escalate(agentSvc *services.AgentService, native *services.NativeService, choose TurnFunc, usage *services.AutoUsage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Goal string `json:"goal"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&body); err != nil {
+			jsonError(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		id := mux.Vars(r)["id"]
+		agent, err := agentSvc.Get(id)
+		if err != nil {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		if choose == nil || native == nil || agent.AutoProfile == "" {
+			jsonError(w, "this session is not auto-routed", http.StatusConflict)
+			return
+		}
+		running, active, _ := native.TurnState(id)
+		if !running || active {
+			jsonError(w, "wait for the current answer to finish", http.StatusConflict)
+			return
+		}
+		tc, err := choose(r.Context(), body.Goal, "", agent.AutoProfile, true)
+		if err != nil {
+			jsonError(w, "no paid model is available for this request", http.StatusConflict)
+			return
+		}
+		agentSvc.SetAutoNoLocal(id)
+		adapter := map[string]string{"claude-code": "claude", "codex-cli": "codex"}[agent.Preset]
+		if tc.Profile.Adapter != adapter {
+			target, ok := autoBindTargets[tc.Profile.Adapter]
+			if !ok || target.Preset == "antigravity" {
+				jsonError(w, "no switchable paid model", http.StatusConflict)
+				return
+			}
+			if ok, handoff := switchTool(w, agentSvc, native, id, agent, tc, target, true); ok && usage != nil {
+				usage.Note(id, services.TurnMeta{Switch: "tool", HandoffTokens: handoff, IdleSeconds: -1})
+			}
+			return
+		}
+		resp := routeTurnResponse{Reason: "model", From: toRoutingProfile(tc.Current), To: toRoutingProfile(tc.Profile), RuleTier: tc.Decision.RuleTier.String()}
+		if err := native.SetModelEffort(id, tc.Profile.LaunchModel(), tc.Profile.Effort); err != nil {
+			jsonError(w, "model switch failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		agentSvc.SetAutoProfile(id, tc.Profile.ID)
+		if usage != nil {
+			usage.Note(id, services.TurnMeta{Switch: "model", IdleSeconds: -1})
+		}
+		resp.Applied = true
+		jsonResponse(w, resp)
+	}
 }

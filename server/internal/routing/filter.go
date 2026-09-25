@@ -161,7 +161,21 @@ func Filter(cfg Config, statuses map[string]AdapterStatus, policy PolicyEvidence
 				add(RNotInstalled, "installation not verified")
 			}
 		}
-		switch st.Auth.Value {
+		// Codex on a local model: the model server must answer and list the model;
+		// no ChatGPT sign-in is needed for it.
+		localCodex := p.IsLocalCodex()
+		var est AdapterStatus
+		if localCodex {
+			est = statuses[AdapterLocal+":"+p.EndpointRef]
+			if est.Installation.Value != Installed {
+				add(REndpointUnavailable, "local model server "+p.EndpointRef+" is not answering")
+			}
+		}
+		authValue := st.Auth.Value
+		if localCodex {
+			authValue = Authenticated // the local model server needs no CLI sign-in
+		}
+		switch authValue {
 		case Authenticated:
 		case ConsumerAuthDiscontinued:
 			add(RConsumerAuthEnded, st.Auth.Detail)
@@ -170,21 +184,25 @@ func Filter(cfg Config, statuses map[string]AdapterStatus, policy PolicyEvidence
 		case NotAuthenticated:
 			add(RNotAuthenticated, st.Auth.Detail)
 		default:
-			if p.Adapter != AdapterLocal {
+			if p.Adapter != AdapterLocal && !localCodex {
 				add(RNotAuthenticated, "authentication not verified")
 			}
 		}
-		if p.AuthMethod != "" && st.AuthMethod != "" && p.AuthMethod != st.AuthMethod {
+		if !localCodex && p.AuthMethod != "" && st.AuthMethod != "" && p.AuthMethod != st.AuthMethod {
 			add(RAuthMethodMismatch, "profile expects "+p.AuthMethod+", CLI reports "+st.AuthMethod)
 		}
 		if st.Entitlement.Value == ModelNotEntitled {
 			add(RModelNotEntitled, st.Entitlement.Detail)
 		}
-		if p.Model != "" && len(st.Models) > 0 {
+		models := st.Models
+		if localCodex {
+			models = est.Models
+		}
+		if p.Model != "" && len(models) > 0 {
 			var found *ModelInfo
-			for i := range st.Models {
-				if st.Models[i].ID == p.Model {
-					found = &st.Models[i]
+			for i := range models {
+				if models[i].ID == p.Model {
+					found = &models[i]
 				}
 			}
 			if found == nil {
@@ -241,7 +259,7 @@ func Filter(cfg Config, statuses map[string]AdapterStatus, policy PolicyEvidence
 		if p.ExtraUsageRisk && !sp.AllowExtraUsageRisk {
 			autoOnly(RExtraUsageRisk, "this path can bill extra usage/credits without a prompt")
 		}
-		if len(st.InheritedEnv) > 0 && billing != BillingAPIMetered {
+		if len(st.InheritedEnv) > 0 && billing != BillingAPIMetered && billing != BillingLocal {
 			add(RInheritedBillingEnv, "server environment sets "+joinComma(st.InheritedEnv))
 		}
 

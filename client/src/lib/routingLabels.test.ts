@@ -41,3 +41,4 @@ equal(compactTokens(12345), '12k', 'k tokens');
 equal(compactTokens(1234), '1.2k', 'k tokens with decimal');
 equal(modelUsageLine({ tool: 'codex', model: 'gpt-5.6-sol', effort: '', turns: 2, reported: 0, input: 0, output: 0, cacheCreation: 0, cacheRead: 0 }), 'Codex · GPT-5.6 Sol — 2턴 · 사용량 미보고', 'unreported is not zero');
 equal(modelUsageLine({ tool: 'claude', model: 'claude-sonnet-5', effort: 'low', turns: 3, reported: 3, input: 100, output: 20, cacheCreation: 0, cacheRead: 900 }), 'Claude · Sonnet 5 · 낮음 — 3턴 · 입력 1.0k · 출력 20 · 캐시 90%', 'usage line');
+equal(modelName('oss:mac:mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit'), '로컬 · Qwen3 30B A3B', 'local model name');

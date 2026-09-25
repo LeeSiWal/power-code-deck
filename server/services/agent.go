@@ -408,6 +408,18 @@ func (s *AgentService) SwitchTool(id string, req BindRequest, leavingTurns int) 
 	return agent, nil
 }
 
+// AutoNoLocal reports whether this session opted out of local models.
+func (s *AgentService) AutoNoLocal(id string) bool {
+	var v int
+	_ = s.db.QueryRow("SELECT COALESCE(auto_no_local, 0) FROM agents WHERE id = ?", id).Scan(&v)
+	return v != 0
+}
+
+// SetAutoNoLocal keeps local models out of this session's routing from now on.
+func (s *AgentService) SetAutoNoLocal(id string) {
+	_, _ = s.db.Exec("UPDATE agents SET auto_no_local = 1 WHERE id = ?", id)
+}
+
 // SetAutoProfile records the routing profile an auto session moved to.
 func (s *AgentService) SetAutoProfile(id, profile string) {
 	_, _ = s.db.Exec("UPDATE agents SET auto_profile = ? WHERE id = ?", profile, id)

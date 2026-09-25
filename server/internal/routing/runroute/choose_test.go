@@ -63,9 +63,21 @@ func TestTurnSwitchPolicy(t *testing.T) {
 func TestChooseTurnPinsAdapter(t *testing.T) {
 	h := newHarness(t, deciderRoutingConfig(true), allCLIs())
 	for i := 0; i < 3; i++ {
-		tc, err := h.coord.ChooseTurn(context.Background(), "fix app.txt", "codex", "codex-fast")
+		tc, err := h.coord.ChooseTurn(context.Background(), "fix app.txt", "codex", "codex-fast", false)
 		if err != nil || tc.Profile == nil || tc.Profile.Adapter != "codex" || tc.Current == nil || tc.Current.ID != "codex-fast" {
 			t.Fatalf("turn choice: %+v %v", tc, err)
 		}
+	}
+}
+
+func TestWithoutLocalDropsLocalProfiles(t *testing.T) {
+	cfg := routing.Config{Profiles: []routing.Profile{
+		{ID: "paid", Adapter: "codex", Model: "gpt-5.6-luna"},
+		{ID: "mac", Adapter: "codex", EndpointRef: "mac", Model: "qwen"},
+		{ID: "text", Adapter: routing.AdapterLocal, EndpointRef: "lan"},
+	}}
+	got := withoutLocal(cfg).Profiles
+	if len(got) != 1 || got[0].ID != "paid" || len(cfg.Profiles) != 3 {
+		t.Fatalf("kept %+v (original %d)", got, len(cfg.Profiles))
 	}
 }

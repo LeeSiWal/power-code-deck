@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"powercodedeck/internal/ossbridge"
 	"strconv"
 	"sync"
 	"time"
@@ -86,7 +87,17 @@ func (d *CodexDriver) Start() error {
 	if resolved := findAgentCommand("codex"); resolved != "" {
 		bin = resolved
 	}
-	cmd := exec.Command(bin, "app-server", "--stdio")
+	args := []string{"app-server", "--stdio"}
+	// A bridged local model ("oss:<endpoint>:<model>") runs through the
+	// loopback Responses→Chat bridge; see internal/ossbridge.
+	if ep, model, ok := ossbridge.ParseModel(d.cfg.Model); ok {
+		extra, err := ossbridge.CodexArgs(ep, model)
+		if err != nil {
+			return fmt.Errorf("codex local model setup: %w", err)
+		}
+		args = append(extra, args...)
+	}
+	cmd := exec.Command(bin, args...)
 	cmd.Dir = d.cfg.Cwd
 	locale := utf8Locale()
 	cmd.Env = withAgentPath(append(os.Environ(), "LANG="+locale, "LC_ALL="+locale))
@@ -170,6 +181,9 @@ func (d *CodexDriver) threadParams(resume bool) map[string]any {
 	p := map[string]any{"cwd": d.cfg.Cwd}
 	if d.cfg.Model != "" {
 		p["model"] = d.cfg.Model
+		if _, model, ok := ossbridge.ParseModel(d.cfg.Model); ok {
+			p["model"] = model
+		}
 	}
 	switch d.cfg.Mode {
 	case "plan":

@@ -170,6 +170,9 @@ func Migrate(db *sql.DB) error {
 		// {"claude":{"conv":"…","turns":3}}, so coming back resumes that tool's own
 		// conversation and only the turns it missed are handed over.
 		"ALTER TABLE agents ADD COLUMN tool_sessions TEXT DEFAULT ''",
+		// Set when the user sent a local model's answer to a paid model ("유료 모델로
+		// 다시"): routing then leaves local profiles out for this session.
+		"ALTER TABLE agents ADD COLUMN auto_no_local INTEGER DEFAULT 0",
 	} {
 		db.Exec(stmt)
 	}
