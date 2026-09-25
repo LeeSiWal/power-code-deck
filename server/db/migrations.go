@@ -163,6 +163,9 @@ func Migrate(db *sql.DB) error {
 		// cap, auto-compaction window, fallback model). One JSON blob rather than a
 		// column each: the next knob then costs a struct field, not a migration.
 		"ALTER TABLE agents ADD COLUMN native_options TEXT DEFAULT ''",
+		// The routing profile a "자동" session is on. Non-empty means later turns may
+		// move it between models of the same tool (POST /agents/{id}/route-turn).
+		"ALTER TABLE agents ADD COLUMN auto_profile TEXT DEFAULT ''",
 	} {
 		db.Exec(stmt)
 	}

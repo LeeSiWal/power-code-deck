@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"powercodedeck/internal/providers"
 	"powercodedeck/internal/providers/antigravity"
@@ -146,6 +147,10 @@ type nativeSession struct {
 	// because the events ARE the state.
 	mu      sync.RWMutex
 	history []*StreamEvent
+	// turnActive / lastTurnEnd (under mu) let per-turn routing avoid restarting the
+	// CLI mid-answer and tell whether the prompt cache has likely gone cold.
+	turnActive  bool
+	lastTurnEnd time.Time
 }
 
 // maxNativeHistory bounds per-session memory. Unlike a terminal ring, dropping the
@@ -816,6 +821,12 @@ func (s *NativeService) emit(sess *nativeSession, ev *StreamEvent) {
 		}
 	}
 	sess.history = append(sess.history, events...)
+	switch {
+	case ev.Type == "user" && ev.Message != nil && hasTextBlock(ev.Message.Content):
+		sess.turnActive = true
+	case ev.Type == "result":
+		sess.turnActive, sess.lastTurnEnd = false, time.Now()
+	}
 	if len(sess.history) > maxNativeHistory {
 		sess.history = sess.history[len(sess.history)-maxNativeHistory:]
 	}
@@ -904,6 +915,55 @@ func (s *NativeService) Pending(sessionID string) []PermissionRequest {
 }
 
 // Running reports whether a native session is live.
+func hasTextBlock(blocks []ContentBlock) bool {
+	for _, b := range blocks {
+		if b.Type == "text" {
+			return true
+		}
+	}
+	return false
+}
+
+// TurnState reports whether a session is running, whether a turn is in flight,
+// and when its last turn ended (zero if none since this process started).
+func (s *NativeService) TurnState(sessionID string) (running, active bool, lastEnd time.Time) {
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if sess == nil {
+		return false, false, time.Time{}
+	}
+	sess.mu.RLock()
+	defer sess.mu.RUnlock()
+	return true, sess.turnActive, sess.lastTurnEnd
+}
+
+// SetModelEffort switches model and effort with a single restart (both are spawn
+// flags; the conversation continues via --resume). Codex takes no effort.
+func (s *NativeService) SetModelEffort(sessionID, model, effort string) error {
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if sess == nil {
+		return fmt.Errorf("native session %s is not running", sessionID)
+	}
+	if sess.kind == "antigravity" {
+		return fmt.Errorf("Antigravity model selection uses CLI configuration in this integration")
+	}
+	s.mu.RLock()
+	curModel, mode, curEffort := sess.model, sess.mode, sess.effort
+	s.mu.RUnlock()
+	if sess.kind != "claude" {
+		effort = ""
+	} else if effort == "" {
+		effort = curEffort
+	}
+	if model == curModel && (sess.kind != "claude" || normalizeEffort(effort) == curEffort) {
+		return nil
+	}
+	return s.restart(sessionID, model, mode, effort)
+}
+
 func (s *NativeService) Running(sessionID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
