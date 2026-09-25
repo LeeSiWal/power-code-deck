@@ -93,6 +93,10 @@ export interface RouteTurnResult {
   from?: { id: string; adapter: string; model?: string; effort?: string };
   to?: { id: string; adapter: string; model?: string; effort?: string };
   ruleTier?: string;
+  // Tool switch (reason tool_switch / confirm_tool_switch).
+  agent?: any;
+  handoffTurns?: number;
+  handoffTokens?: number;
 }
 export interface RoutingChoice { decision: RoutingDecision; profile?: RoutingProfile }
 export interface RoutingRunState { runId: string; mode: RoutingMode; phase: string; epoch: number; currentProfile: string; currentExecution: string; pendingProfile: string; pendingWhen: string; pinProfile: string; pinAdapter: string; switches: number; attempts: number }
@@ -321,8 +325,8 @@ export const api = {
   listAgents: () => apiFetch<any[]>('/agents'),
   createAgent: (data: any) => apiFetch('/agents', { method: 'POST', body: JSON.stringify(data) }),
   getAgent: (id: string) => apiFetch(`/agents/${id}`),
-  routeTurn: (id: string, goal: string) =>
-    apiFetch<RouteTurnResult>(`/agents/${encodeURIComponent(id)}/route-turn`, { method: 'POST', body: JSON.stringify({ goal }) }),
+  routeTurn: (id: string, goal: string, confirmTool = false) =>
+    apiFetch<RouteTurnResult>(`/agents/${encodeURIComponent(id)}/route-turn`, { method: 'POST', body: JSON.stringify({ goal, confirmTool }) }),
   clearAutoProfile: (id: string) => apiFetch<void>(`/agents/${encodeURIComponent(id)}/auto-profile`, { method: 'DELETE' }),
   routeAgent: (id: string, goal: string, adapter = '') =>
     apiFetch<RouteAgentResult>(`/agents/${encodeURIComponent(id)}/route`, { method: 'POST', body: JSON.stringify({ goal, adapter }) }),

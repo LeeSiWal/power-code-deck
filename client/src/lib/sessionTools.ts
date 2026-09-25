@@ -46,7 +46,9 @@ export function toolForAdapter(adapter: string): SessionTool | undefined {
 
 // An auto session's first message, handed from its pre-routing chat to the real
 // chat so it is sent once the session is open, plus a line saying what was picked.
-export interface PendingStart { message: string; note: string }
+// afterSwitch: the session moved to another tool and keeps its history on screen,
+// so the message is sent even though the chat is not empty.
+export interface PendingStart { message: string; note: string; afterSwitch?: boolean }
 
 export function setPendingStart(agentId: string, p: PendingStart): void {
   try { sessionStorage.setItem(`pcd:pendingStart:${agentId}`, JSON.stringify(p)); } catch { /* ignore */ }

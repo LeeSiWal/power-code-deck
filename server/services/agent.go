@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -337,6 +338,74 @@ type BindRequest struct {
 	// AutoProfile keeps later turns routable between this tool's models; empty
 	// for a fallback bind (routing unavailable).
 	AutoProfile string
+}
+
+// ToolSession is one tool's conversation inside an auto session: its resume id
+// and how many user turns the session had when the tool last handed off.
+type ToolSession struct {
+	Conv  string `json:"conv"`
+	Turns int    `json:"turns"`
+}
+
+func (s *AgentService) toolSessions(id string) map[string]ToolSession {
+	var raw string
+	_ = s.db.QueryRow("SELECT COALESCE(tool_sessions, '') FROM agents WHERE id = ?", id).Scan(&raw)
+	m := map[string]ToolSession{}
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &m)
+	}
+	return m
+}
+
+// ToolSessionOf reports the conversation a tool already has in this session.
+func (s *AgentService) ToolSessionOf(id, tool string) (ToolSession, bool) {
+	t, ok := s.toolSessions(id)[tool]
+	return t, ok
+}
+
+// SwitchTool moves a bound auto session to another tool, keeping its id, name and
+// folder. The leaving tool's conversation id is kept (with the turn count at
+// which it left) so a later return resumes it; the arriving tool's own earlier
+// conversation, if any, becomes the one to resume. The permission mode carries
+// over; the model/effort are the routed ones. The PTY is replaced like Bind does.
+func (s *AgentService) SwitchTool(id string, req BindRequest, leavingTurns int) (*Agent, error) {
+	agent, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if agent.AutoProfile == "" || agent.Preset == AutoPreset {
+		return nil, fmt.Errorf("session is not an auto-routed session")
+	}
+	from, to := nativeDriverFor(agent.Preset, agent.Command), nativeDriverFor(req.Preset, req.Command)
+	m := s.toolSessions(id)
+	m[from] = ToolSession{Conv: s.ClaudeSessionID(id), Turns: leavingTurns}
+	resume := m[to].Conv
+	raw, _ := json.Marshal(m)
+	res, err := s.db.Exec("UPDATE agents SET preset = ?, command = ?, args = '[]', status = 'running', auto_profile = ?, claude_session_id = ?, tool_sessions = ?, updated_at = datetime('now') WHERE id = ? AND preset = ?",
+		req.Preset, req.Command, req.AutoProfile, resume, string(raw), id, agent.Preset)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("session changed while switching tools")
+	}
+	_, mode, _ := s.NativeConfig(id)
+	effort := req.NativeEffort
+	if to != "claude" {
+		effort = ""
+	}
+	s.SetNativeConfig(id, req.NativeModel, mode, effort)
+	insertAgentLog(s.db, id, "도구 전환 · "+agent.Command+" → "+req.Command)
+	s.stopActivity(id)
+	if s.engine != nil {
+		s.engine.Kill(id)
+		if _, err := s.engine.Create(CreateSessionRequest{ID: id, Type: req.Preset, Command: req.Command, Cwd: agent.WorkingDir, Cols: 80, Rows: 24}); err != nil {
+			log.Printf("switch tool %s: PTY start failed: %v", id, err)
+		}
+	}
+	agent.Preset, agent.Command, agent.Args, agent.Status, agent.AutoProfile = req.Preset, req.Command, []string{}, "running", req.AutoProfile
+	s.startActivity(agent)
+	return agent, nil
 }
 
 // SetAutoProfile records the routing profile an auto session moved to.

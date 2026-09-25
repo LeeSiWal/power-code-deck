@@ -480,7 +480,7 @@ export function TerminalPage() {
             {usesNative(agent) ? (
               agent.preset === 'auto'
                 ? <AutoChat key={agentId} agentId={agentId} onBound={setAgent} />
-                : <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} autoRouted={!!agent.autoProfile} />
+                : <NativeChat key={`${agentId}:${nativeDriver(agent)}`} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} autoRouted={!!agent.autoProfile} onAgentChange={setAgent} />
             ) : (
               <TerminalView
                 key={agentId}
@@ -791,7 +791,7 @@ export function TerminalPage() {
               {usesNative(agent) ? (
                 agent.preset === 'auto'
                 ? <AutoChat key={agentId} agentId={agentId} onBound={setAgent} />
-                : <NativeChat key={agentId} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} autoRouted={!!agent.autoProfile} />
+                : <NativeChat key={`${agentId}:${nativeDriver(agent)}`} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} autoRouted={!!agent.autoProfile} onAgentChange={setAgent} />
               ) : (
                 <TerminalView
                   key={agentId}

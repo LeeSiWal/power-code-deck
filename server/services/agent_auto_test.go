@@ -58,6 +58,8 @@ func (e *recordingEngine) HasSession(id string) bool {
 	return false
 }
 
+func (e *recordingEngine) Kill(id string) error { return nil }
+
 func (e *recordingEngine) Create(req CreateSessionRequest) (*SessionInfo, error) {
 	e.created = append(e.created, req)
 	return &SessionInfo{}, nil
@@ -92,5 +94,50 @@ func TestAutoSessionBindClaudeAppliesRoutedConfig(t *testing.T) {
 	}
 	if m, mode, e := s.NativeConfig(a.ID); m != "claude-sonnet-5" || mode != "plan" || e != "low" {
 		t.Fatalf("native config %q %q %q", m, mode, e)
+	}
+}
+
+// Moving an auto session Claude → Codex → Claude keeps each tool's own
+// conversation: Codex starts fresh, and Claude resumes where it left off, with
+// the turn count at which it left recorded for the delta handoff.
+func TestAutoSessionSwitchToolKeepsEachConversation(t *testing.T) {
+	database, err := sql.Open("sqlite", t.TempDir()+"/agents.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	eng := &recordingEngine{}
+	s := &AgentService{db: database, engine: eng}
+	a, _ := s.Create(CreateAgentRequest{Preset: AutoPreset, Name: "자동", WorkingDir: t.TempDir()})
+	if _, err := s.Bind(a.ID, BindRequest{Preset: "claude-code", Command: "claude", NativeModel: "claude-sonnet-5", NativeEffort: "low", AutoProfile: "claude-sonnet5-low"}); err != nil {
+		t.Fatal(err)
+	}
+	s.SetClaudeSessionID(a.ID, "conv-claude")
+	b, err := s.SwitchTool(a.ID, BindRequest{Preset: "codex-cli", Command: "codex", NativeModel: "gpt-5.6-sol", NativeEffort: "xhigh", AutoProfile: "codex-sol-xhigh"}, 3)
+	if err != nil || b.Preset != "codex-cli" || b.AutoProfile != "codex-sol-xhigh" {
+		t.Fatalf("to codex: %+v %v", b, err)
+	}
+	if sid := s.ClaudeSessionID(a.ID); sid != "" {
+		t.Fatalf("codex should start fresh, resume id %q", sid)
+	}
+	if m, _, e := s.NativeConfig(a.ID); m != "gpt-5.6-sol" || e != "" {
+		t.Fatalf("codex config %q %q", m, e)
+	}
+	s.SetClaudeSessionID(a.ID, "conv-codex")
+	if _, err := s.SwitchTool(a.ID, BindRequest{Preset: "claude-code", Command: "claude", NativeModel: "claude-opus-5-5", NativeEffort: "high", AutoProfile: "claude-opus55-high"}, 5); err != nil {
+		t.Fatal(err)
+	}
+	if sid := s.ClaudeSessionID(a.ID); sid != "conv-claude" {
+		t.Fatalf("claude should resume its own conversation, got %q", sid)
+	}
+	if ts, ok := s.ToolSessionOf(a.ID, "claude"); !ok || ts.Turns != 3 {
+		t.Fatalf("claude left at turn %+v", ts)
+	}
+	if ts, ok := s.ToolSessionOf(a.ID, "codex"); !ok || ts.Conv != "conv-codex" || ts.Turns != 5 {
+		t.Fatalf("codex session %+v", ts)
 	}
 }
