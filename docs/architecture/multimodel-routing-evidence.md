@@ -67,3 +67,10 @@ describe this shell only.
 4. Codex behavior when both a ChatGPT login and `OPENAI_API_KEY` are present (O1).
 5. Whether `claude -p` without `--bare` keeps using the subscription login after
    `--bare` becomes the default (A4).
+
+## Decider call flags (checked 2026-09-25)
+
+| CLI | Flags used | How checked |
+| --- | --- | --- |
+| claude 2.1.239 / 2.1.282 | `-p --output-format json --tools "" --strict-mcp-config --mcp-config {"mcpServers":{}} --setting-sources "" --disable-slash-commands --no-session-persistence --json-schema` | `--help` text; an unauthenticated run accepted every flag and returned the JSON envelope (`is_error: true`, `subtype: "success"`, `modelUsage`, `subagent_stats`) — recorded as `server/internal/routing/testdata/claude_p_auth_expired.json` |
+| codex-cli 0.154.0 | `exec --json --sandbox read-only --ephemeral --ignore-user-config --skip-git-repo-check -C <dir> --output-schema <file> -` | `codex exec --help`; an unauthenticated run returned 401 through the same parser. The shell tool cannot be disabled, so Codex is not tool-free. |

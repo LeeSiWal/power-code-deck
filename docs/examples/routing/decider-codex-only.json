@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "mode": "shadow",
+  "strategy": "commercial_llm",
+  "spend": {
+    "budgetKind": "best_effort"
+  },
+  "switching": {
+    "maxSwitchesPerRun": 2,
+    "maxAttemptsPerRun": 3,
+    "maxRunMinutes": 60,
+    "autoEscalate": false,
+    "stickiness": 0.5
+  },
+  "profiles": [
+    {
+      "id": "codex-luna-medium",
+      "adapter": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "medium",
+      "accountRef": "personal",
+      "authMethod": "subscription",
+      "billing": "subscription_included",
+      "quotaBucket": "openai:personal",
+      "tiers": [
+        "EASY",
+        "MEDIUM"
+      ],
+      "allow": true,
+      "roles": [
+        "executor",
+        "reviewer",
+        "decider"
+      ]
+    },
+    {
+      "id": "codex-sol-xhigh",
+      "adapter": "codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "accountRef": "personal",
+      "authMethod": "subscription",
+      "billing": "subscription_included",
+      "quotaBucket": "openai:personal",
+      "tiers": [
+        "HIGH"
+      ],
+      "allow": true,
+      "roles": [
+        "executor",
+        "reviewer",
+        "planner"
+      ]
+    }
+  ],
+  "decider": {
+    "timeoutSeconds": 60,
+    "maxOutputBytes": 2048,
+    "maxFormatRetries": 1,
+    "maxContextRounds": 1,
+    "shadowMaxCallsPerDay": 20,
+    "cacheMinutes": 30,
+    "allowReadOnlyShell": true
+  },
+  "routellm": {
+    "enabled": false
+  }
+}

@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS v2_routing_attempts(
   report TEXT NOT NULL DEFAULT '', class TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '',
   started_at TEXT NOT NULL, finished_at TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS v2_routing_attempts_run ON v2_routing_attempts(run_id, started_at);
+CREATE TABLE IF NOT EXISTS v2_routing_run_options(
+  run_id TEXT PRIMARY KEY, strategy TEXT NOT NULL DEFAULT '', commercial_shadow INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS v2_routing_decider_calls(
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, decision_id TEXT NOT NULL, request_id TEXT NOT NULL,
+  mode TEXT NOT NULL, profile_id TEXT NOT NULL, purpose TEXT NOT NULL, valid INTEGER NOT NULL, error_class TEXT NOT NULL DEFAULT '',
+  latency_ms INTEGER NOT NULL, usage TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS v2_routing_decider_calls_profile ON v2_routing_decider_calls(profile_id, seq);
 CREATE TABLE IF NOT EXISTS v2_routing_versions(
   adapter TEXT PRIMARY KEY, version TEXT NOT NULL, validated_version TEXT NOT NULL DEFAULT '', seen_at TEXT NOT NULL);
 `
@@ -403,7 +410,7 @@ func (s *Store) DeleteRun(runID string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, q := range []string{`DELETE FROM v2_routing_attempts WHERE run_id=?`, `DELETE FROM v2_routing_decisions WHERE run_id=?`, `DELETE FROM v2_routing_transitions WHERE run_id=?`, `DELETE FROM v2_routing_bindings WHERE run_id=?`, `DELETE FROM v2_routing_runs WHERE run_id=?`} {
+	for _, q := range []string{`DELETE FROM v2_routing_run_options WHERE run_id=?`, `DELETE FROM v2_routing_decider_calls WHERE run_id=?`, `DELETE FROM v2_routing_attempts WHERE run_id=?`, `DELETE FROM v2_routing_decisions WHERE run_id=?`, `DELETE FROM v2_routing_transitions WHERE run_id=?`, `DELETE FROM v2_routing_bindings WHERE run_id=?`, `DELETE FROM v2_routing_runs WHERE run_id=?`} {
 		if _, err := tx.Exec(q, runID); err != nil {
 			return err
 		}
@@ -445,4 +452,115 @@ func (s *Store) NoteVersion(adapter, version string) (validated string, err erro
 func (s *Store) MarkValidated(adapter string) error {
 	res, err := s.db.Exec(`UPDATE v2_routing_versions SET validated_version=version WHERE adapter=?`, adapter)
 	return changedOne(res, err)
+}
+
+// RunOptions are per-Run strategy settings the browser may change.
+type RunOptions struct {
+	Strategy         Strategy `json:"strategy"` // "" = config default
+	CommercialShadow bool     `json:"commercialShadow"`
+}
+
+func (s *Store) Options(runID string) (RunOptions, error) {
+	var o RunOptions
+	var shadow int
+	err := s.db.QueryRow(`SELECT strategy,commercial_shadow FROM v2_routing_run_options WHERE run_id=?`, runID).Scan(&o.Strategy, &shadow)
+	if err == sql.ErrNoRows {
+		return RunOptions{}, nil
+	}
+	o.CommercialShadow = shadow == 1
+	return o, err
+}
+
+func (s *Store) SetOptions(runID string, o RunOptions) error {
+	if o.Strategy != "" && !ValidStrategy(o.Strategy) {
+		return errors.New("invalid strategy")
+	}
+	shadow := 0
+	if o.CommercialShadow {
+		shadow = 1
+	}
+	_, err := s.db.Exec(`INSERT INTO v2_routing_run_options(run_id,strategy,commercial_shadow,updated_at) VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET strategy=excluded.strategy,commercial_shadow=excluded.commercial_shadow,updated_at=excluded.updated_at`, runID, o.Strategy, shadow, s.ts())
+	if err == nil {
+		// Settings changed: an in-flight decision computed under the old ones is stale.
+		_, err = s.db.Exec(`UPDATE v2_routing_runs SET epoch=epoch+1,updated_at=? WHERE run_id=?`, s.ts(), runID)
+	}
+	return err
+}
+
+// SaveDeciderCalls logs every decider invocation, including ones whose
+// decision was later discarded (the usage happened regardless).
+func (s *Store) SaveDeciderCalls(runID, decisionID string, mode Mode, rec DeciderRecord) error {
+	for _, c := range rec.Calls {
+		u, _ := json.Marshal(c.Usage)
+		valid := 0
+		if c.Valid {
+			valid = 1
+		}
+		if _, err := s.db.Exec(`INSERT INTO v2_routing_decider_calls(run_id,decision_id,request_id,mode,profile_id,purpose,valid,error_class,latency_ms,usage,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			runID, decisionID, rec.RequestID, mode, c.ProfileID, c.Purpose, valid, c.ErrorClass, c.LatencyMS, string(u), s.ts()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DeciderStats summarizes the last 200 calls per profile (measured only).
+func (s *Store) DeciderStats() (map[string]DeciderStats, error) {
+	rows, err := s.db.Query(`SELECT profile_id,valid,latency_ms,usage FROM v2_routing_decider_calls WHERE seq > (SELECT COALESCE(MAX(seq),0)-2000 FROM v2_routing_decider_calls) ORDER BY seq`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type acc struct {
+		lat           []int64
+		valid, n      int
+		tokens, known int64
+	}
+	m := map[string]*acc{}
+	for rows.Next() {
+		var id, usage string
+		var valid int
+		var lat int64
+		if err := rows.Scan(&id, &valid, &lat, &usage); err != nil {
+			return nil, err
+		}
+		a := m[id]
+		if a == nil {
+			a = &acc{}
+			m[id] = a
+		}
+		a.n++
+		a.valid += valid
+		a.lat = append(a.lat, lat)
+		var u UsageRecord
+		if json.Unmarshal([]byte(usage), &u) == nil && u.InputTokens != nil && u.OutputTokens != nil {
+			a.tokens += int64(*u.InputTokens + *u.OutputTokens)
+			a.known++
+		}
+	}
+	out := map[string]DeciderStats{}
+	for id, a := range m {
+		sortInt64(a.lat)
+		st := DeciderStats{Calls: a.n, Valid: a.valid, P50MS: a.lat[len(a.lat)/2], P95MS: a.lat[(len(a.lat)*95+99)/100-1], MeanTokens: -1}
+		if a.known > 0 {
+			st.MeanTokens = a.tokens / a.known
+		}
+		out[id] = st
+	}
+	return out, rows.Err()
+}
+
+// ShadowCallsSince counts commercial decider calls made in Shadow mode.
+func (s *Store) ShadowCallsSince(t time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM v2_routing_decider_calls WHERE mode='shadow' AND created_at>=?`, t.UTC().Format(time.RFC3339Nano)).Scan(&n)
+	return n, err
+}
+
+func sortInt64(a []int64) {
+	for i := 1; i < len(a); i++ {
+		for j := i; j > 0 && a[j] < a[j-1]; j-- {
+			a[j], a[j-1] = a[j-1], a[j]
+		}
+	}
 }

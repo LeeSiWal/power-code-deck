@@ -164,4 +164,5 @@ const (
 	KindCode   TaskKind = "code"   // read/edit files, run tools
 	KindReview TaskKind = "review" // read-only inspection
 	KindText   TaskKind = "text"   // summarize/extract/classify/format, no tools
+	KindDecide TaskKind = "decide" // short routing judgement; must run without tools
 )

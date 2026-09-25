@@ -24,6 +24,13 @@ func (p *RunProviders) New(provider providers.ID, id, cwd string) (providers.Exe
 // NewWith launches a Run execution with an explicit model and effort (a routing
 // profile). Empty values keep the CLI's configured defaults.
 func (p *RunProviders) NewWith(provider providers.ID, id, cwd, model, effort string) (providers.Execution, error) {
+	return p.NewRole(provider, id, cwd, model, effort, "")
+}
+
+// NewRole is NewWith plus a read-only mode for auxiliary roles: "plan" maps to
+// Claude's plan permission mode and Codex's read-only sandbox. "" keeps the
+// implementation defaults.
+func (p *RunProviders) NewRole(provider providers.ID, id, cwd, model, effort, mode string) (providers.Execution, error) {
 	if p.Broker == nil || p.Tokens == nil || id == "" || cwd == "" {
 		return nil, fmt.Errorf("Run provider configuration is incomplete")
 	}
@@ -37,9 +44,9 @@ func (p *RunProviders) NewWith(provider providers.ID, id, cwd, model, effort str
 		if err != nil {
 			return nil, err
 		}
-		driver = NewClaudeDriver(ClaudeConfig{SessionID: id, Cwd: cwd, ApproveURL: p.ApproveURL, ApproveToken: token, SelfPath: p.SelfPath, Model: model, Effort: effort})
+		driver = NewClaudeDriver(ClaudeConfig{SessionID: id, Cwd: cwd, ApproveURL: p.ApproveURL, ApproveToken: token, SelfPath: p.SelfPath, Model: model, Effort: effort, PermissionMode: mode})
 	case providers.Codex:
-		driver = NewCodexDriver(CodexConfig{SessionID: id, Cwd: cwd, Broker: p.Broker, Model: model, Effort: effort})
+		driver = NewCodexDriver(CodexConfig{SessionID: id, Cwd: cwd, Broker: p.Broker, Model: model, Effort: effort, Mode: mode})
 	default:
 		return nil, fmt.Errorf("unsupported Run provider %q", provider)
 	}

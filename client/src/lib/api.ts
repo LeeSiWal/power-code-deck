@@ -59,13 +59,24 @@ export interface RoutingSnapshot {
   spend: Record<string, boolean | string>; switching: { maxSwitchesPerRun: number; maxAttemptsPerRun: number; maxRunMinutes: number; autoEscalate: boolean; stickiness: number };
   adapters: RoutingAdapterStatus[]; profiles: RoutingProfileView[] | null; tiers: Record<string, string[]>; routellm: Record<string, unknown>;
   policy: { reviewedAt: string; sources: Record<string, string> };
+  decider: DeciderView;
+}
+export type RoutingStrategy = 'rules' | 'routellm' | 'commercial_llm';
+export interface DeciderCall { profileId: string; purpose: string; latencyMs: number; usage?: RoutingUsage; observedModel?: string; errorClass?: string; error?: string; valid: boolean }
+export interface DeciderRecord { consulted: boolean; skip?: string; requestId?: string; calls?: DeciderCall[]; verdict?: { action: string; profile_id?: string; reason_code: string; evidence_refs?: string[]; needs?: string[] }; applied: boolean; note?: string }
+export interface RoleUsage { role: string; calls: number; reported: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; complete: boolean }
+export interface DeciderStats { calls: number; valid: number; p50Ms: number; p95Ms: number; meanTokens: number }
+export interface DeciderView {
+  strategy: RoutingStrategy; limits: { timeoutSeconds: number; maxOutputBytes: number; maxFormatRetries: number; maxContextRounds: number; shadowMaxCallsPerDay: number; allowReadOnlyShell?: boolean; profile?: string; fallback?: string };
+  ordered: string[] | null; candidates: { profile: RoutingProfile; excluded?: RoutingExclusion[] }[] | null; stats: Record<string, DeciderStats>;
+  shadowCallsLast24h: number; callable: boolean; roles: Record<string, Record<string, string>>;
 }
 export interface RouterVerdict { score: number; choice: string; threshold: number; checkpoint: string; package: string; device: string; latencyMs: number; cached: boolean }
 export interface RoutingDecision {
   id: string; mode: RoutingMode; stage: string; kind: string; ruleTier: string; ruleWhy?: string[];
   router?: RouterVerdict; routerPair?: { weak: string; strong: string; threshold: number; calibration?: string }; routerError?: string;
   selected?: string; source: string; reason: string; candidates: { profile: RoutingProfile; excluded?: RoutingExclusion[] }[];
-  createdAt: string; durationMs: number;
+  createdAt: string; durationMs: number; ruleTie?: string[]; decider?: DeciderRecord; strategy?: RoutingStrategy;
 }
 export interface RoutingRunState { runId: string; mode: RoutingMode; phase: string; epoch: number; currentProfile: string; currentExecution: string; pendingProfile: string; pendingWhen: string; pinProfile: string; pinAdapter: string; switches: number; attempts: number }
 export interface RoutingUsage { scope: string; source: string; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheCreationTokens: number | null; thinkingTokens: number | null; totalTokens: number | null; local: boolean }
@@ -73,10 +84,14 @@ export interface RoutingAttempt {
   executionId: string; profileId: string; adapter: string; model: string; effort: string; decisionId: string; inheritedFrom: string;
   continuation?: { kind: string; reason: string }; class: string; action?: { kind: string; reason: string }; startedAt: string; finishedAt: string;
   report?: { providerStatus: string; observedModel?: string; failedChecks?: string[]; quiesceVerified: boolean; quiesceDetail?: string; usage?: RoutingUsage;
-    timings: { routingMs: number; queueMs: number; handoffMs: number; execMs: number; verifyMs: number } };
+    timings: { routingMs: number; queueMs: number; handoffMs: number; execMs: number; verifyMs: number };
+    reviewer?: string; reviewerModel?: string; reviewUsage?: RoutingUsage };
 }
 export interface RoutingTransition { seq: number; from: string; to: string; cause: string; detail: string; executionId: string; createdAt: string }
-export interface RoutingTimeline { state: RoutingRunState; attempts: RoutingAttempt[]; decisions: RoutingDecision[]; transitions: RoutingTransition[] }
+export interface RoutingTimeline {
+  state: RoutingRunState; attempts: RoutingAttempt[]; decisions: RoutingDecision[]; transitions: RoutingTransition[];
+  strategy: RoutingStrategy; options: { strategy: RoutingStrategy | ''; commercialShadow: boolean }; usage: RoleUsage[]; commercialUsage: RoleUsage;
+}
 
 export interface RunSummary {
   id: string;
@@ -315,12 +330,12 @@ export const api = {
   routingRefresh: () => apiFetch<RoutingSnapshot>('/v2/routing/refresh', { method: 'POST' }),
   routingMarkValidated: (adapter: string) => apiFetch<void>(`/v2/routing/adapters/${encodeURIComponent(adapter)}/validated`, { method: 'POST' }),
   runRouting: (id: string) => apiFetch<RoutingTimeline>(`/v2/runs/${encodeURIComponent(id)}/routing`),
-  setRunRouting: (id: string, body: { mode: RoutingMode; pinProfile: string; pinAdapter: string }) =>
+  setRunRouting: (id: string, body: { mode: RoutingMode; pinProfile: string; pinAdapter: string; strategy?: RoutingStrategy | ''; commercialShadow?: boolean }) =>
     apiFetch<RoutingRunState>(`/v2/runs/${encodeURIComponent(id)}/routing`, { method: 'PUT', body: JSON.stringify(body) }),
   forgetRunRouting: (id: string) => apiFetch<void>(`/v2/runs/${encodeURIComponent(id)}/routing`, { method: 'DELETE' }),
   previewRunRouting: (id: string, profile = '') => apiFetch<RoutingDecision>(`/v2/runs/${encodeURIComponent(id)}/routing/preview?${new URLSearchParams({ profile })}`),
-  startRoutedRun: (id: string, profile = '') =>
-    apiFetch<{ executionId: string; decision: RoutingDecision; launchedProfile: string }>(`/v2/runs/${encodeURIComponent(id)}/routing/start`, { method: 'POST', body: JSON.stringify({ profile }) }),
+  startRoutedRun: (id: string, profile = '', reevaluate = false) =>
+    apiFetch<{ executionId: string; decision: RoutingDecision; launchedProfile: string }>(`/v2/runs/${encodeURIComponent(id)}/routing/start`, { method: 'POST', body: JSON.stringify({ profile, reevaluate }) }),
   switchRunProfile: (id: string, profile: string, when: 'boundary' | 'now') =>
     apiFetch<RoutingRunState>(`/v2/runs/${encodeURIComponent(id)}/routing/switch`, { method: 'POST', body: JSON.stringify({ profile, when }) }),
   createRun: (data: { path: string; prompt: string; provider: string }, key: string) =>

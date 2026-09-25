@@ -75,3 +75,61 @@ func hasExcl(c Candidate, r Reason) bool {
 	}
 	return false
 }
+
+// The commercial_llm examples cover all eight Claude/Codex/Local combinations
+// (the "none" case is any example on a host with nothing installed).
+func TestDeciderExamplesEightCombinations(t *testing.T) {
+	pol := mustPolicy(t)
+	load := func(name string) Config {
+		f, err := os.Open(filepath.Join("..", "..", "..", "docs", "examples", "routing", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		c, err := ParseConfig(f)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return c
+	}
+	cases := []struct {
+		file                 string
+		claude, codex, local bool
+		consult              bool
+		skip                 SkipReason
+		deciders             int
+		reviewer             string
+	}{
+		{"decider-all.json", false, false, false, false, SkipNoCandidates, 0, ""},
+		{"decider-claude-only.json", true, false, false, false, SkipRuleClear, 1, AdapterClaude},
+		{"decider-codex-only.json", false, true, false, false, SkipRuleClear, 1, AdapterCodex},
+		{"decider-claude-codex.json", true, true, false, true, "", 1, AdapterCodex},
+		{"decider-local-only.json", false, false, true, false, SkipNoCandidates, 0, ""},
+		{"decider-claude-local.json", true, false, true, false, SkipRuleClear, 1, AdapterClaude},
+		{"decider-codex-local.json", false, true, true, false, SkipRuleClear, 1, AdapterCodex},
+		{"decider-all.json", true, true, true, true, "", 1, AdapterCodex},
+	}
+	for _, tc := range cases {
+		cfg := load(tc.file)
+		st := map[string]AdapterStatus{}
+		if tc.claude {
+			st[AdapterClaude] = ready(AdapterClaude, BillingSubscription)
+		}
+		if tc.codex {
+			st[AdapterCodex] = ready(AdapterCodex, BillingSubscription)
+		}
+		if tc.local {
+			st["local:lan-gpu"] = ready("local:lan-gpu", BillingLocal)
+		}
+		d := Decide(context.Background(), DecideInput{Config: cfg, Statuses: st, Policy: pol, Task: DescribeTask(mediumGoal, KindCode, nil), Mode: ModeAuto})
+		deciders, _ := SelectDeciders(cfg, st, pol, nil, nil)
+		consult, skip := PlanConsult(ConsultInput{Strategy: cfg.EffectiveStrategy(), Mode: ModeAuto, Distinct: Distinct(d.Candidates), RuleTie: len(d.RuleTie) > 1, Deciders: deciders})
+		if consult != tc.consult || skip != tc.skip || len(deciders) != tc.deciders {
+			t.Fatalf("%s %v/%v/%v: consult=%v skip=%s deciders=%v", tc.file, tc.claude, tc.codex, tc.local, consult, skip, deciders)
+		}
+		aux, _, err := ResolveAux(RoleReviewer, cfg, st, pol, nil, AdapterClaude)
+		if (tc.reviewer == "") != (err != nil) || (err == nil && aux.Profile.Adapter != tc.reviewer) {
+			t.Fatalf("%s reviewer %+v %v", tc.file, aux.Profile.ID, err)
+		}
+	}
+}

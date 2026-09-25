@@ -118,6 +118,136 @@ The mandatory part must fit ¾ of the target context (or 24 KiB when unknown);
 otherwise the Run waits (`context_overflow`). Optional evidence is trimmed
 first. No LLM summarizes anything.
 
+## Lightweight LLM decider (`strategy: "commercial_llm"`) — added 2026-09-25
+
+A second strategy next to `rules` and `routellm`. PCD asks a signed-in, allowed
+profile to *propose* one executor among candidates the rules already allowed.
+It does not code, run tools, explore the repository, spawn agents, change
+requirements, policy, budgets or endpoints, or launch other CLIs. PCD
+validates the answer and launches.
+
+### Roles
+
+Profiles carry `roles`: `decider`, `executor`, `reviewer`, `planner`,
+`summarizer`. Empty = `executor`+`reviewer` (old meaning); `decider` is never
+implied. One profile may hold several roles, and one subscription can supply all of
+them — roles never require another service. Auxiliary roles have their own
+context and permissions: the decider runs in an empty temporary directory
+with no write access to the workspace; reviewers/planners run read-only
+(Claude `--permission-mode plan`, Codex read-only sandbox, Antigravity
+`plan`+`--sandbox`).
+
+### When the decider is NOT called (in this order)
+
+1. `strategy` is not `commercial_llm`, or mode is Off.
+2. No executor passes the gates → nothing runs; reasons are shown.
+3. Manual choice or profile pin → launch directly.
+4. Only one *distinct* executor (aliases with the same adapter/model/effort/
+   quota bucket count once) → launch directly.
+5. Availability failover with a rule-determined fallback.
+6. Rules are clear: no tie between distinct candidates at the top rule score.
+7. A valid cached verdict for the same question (cleared on refresh,
+   validation, any health/auth change, config change).
+8. No allowed decider profile. If all candidates are local, no commercial
+   decider is ever called (`local_only_no_commercial_decider`).
+9. Shadow mode: only with per-Run approval ("이 Run에서 상용 판단 Shadow
+   허용") and within `decider.shadowMaxCallsPerDay`.
+
+The user can force one consultation with "판단 다시 요청 후 실행". Skips are
+shown as optimizations, not errors.
+
+### Choosing the decider (deterministic, never by another model)
+
+Pinned `decider.profile` if eligible → otherwise eligible decider-role profiles
+with `quality.decide.status = verified` first, then by measured p50 latency from
+past calls (unmeasured last). Gates: install/auth/billing/policy/health, the
+optional `decider.adapters` allowlist, and tool control:
+
+| Adapter | One-shot call | Tool-free? |
+| --- | --- | --- |
+| Claude | `claude -p --output-format json --tools "" --strict-mcp-config --mcp-config '{"mcpServers":{}}' --setting-sources "" --disable-slash-commands --no-session-persistence --json-schema …` (prompt on stdin) | built-in tools, MCP, user/project/local settings (hooks, plugins) and skills off by official flags; **managed policy settings cannot be excluded**. Flags accepted by 2.1.239/2.1.282 (verified by an unauthenticated run); a successful live call is not verified. |
+| Codex | `codex exec --json --sandbox read-only --ephemeral --ignore-user-config --skip-git-repo-check -C <empty dir> --output-schema <file> -` | **No** — the shell tool stays (read-only sandbox). Excluded unless `decider.allowReadOnlyShell: true`. |
+| Local | chat completion to an allowlisted endpoint | yes; only with `quality.decide = verified` |
+| Antigravity / Gemini | not implemented as decider | — |
+
+Only one decider fallback, and only the explicitly configured
+`decider.fallback`. Failures never escalate to a more expensive decider.
+
+### Contract
+
+Input (built by code): request kind `pcd.routing.decision` (a Go constant — user
+text cannot set it), goal (redacted, ≤4 KB, marked as data), stage,
+constraints, files, rule floor, current profile, candidates with measured
+capabilities and per-kind quality (`unverified` stated as such), switch/attempt
+budget, evidence items with refs. Output: one JSON object
+`{"action","profile_id","reason_code","evidence_refs","needs"}` with actions
+`dispatch | keep_current | need_context | abstain`, closed `reason_code` and
+`needs` sets, profile ids and evidence refs that exist in the request,
+`MaxOutputBytes` (default 2048). Unknown fields (commands, endpoints, budgets,
+policy flags, confidence) → rejected. Bounds: `maxFormatRetries` (default 1),
+`maxContextRounds` (default 1; PCD adds only evidence it already recorded),
+per-call timeout (default 60 s) and 2× that overall.
+
+A valid verdict **changes the executor only in Auto mode and only when the
+decider profile has `quality.decide.status: "verified"`**; otherwise it is
+recorded as advisory. No profile ships verified — start in Shadow on chosen
+Runs. After deciding, the selected profile is re-checked right before launch
+(auth/quota/policy may have changed); a stale epoch (cancel, settings change,
+concurrent start) discards the decision.
+
+### Failures
+
+Decider failures are recorded as decider calls, not executor failures. A decider
+429 cools the whole quota bucket (executor profiles on the same account too)
+and the rule decision is recomputed; an auth failure invalidates discovery.
+Invalid output/timeout only affect decider stats.
+
+### Hidden calls now under the same policy
+
+The v2 reviewer and planner used to be a fixed Antigravity execution for every
+Run. They now resolve through the same gates: role pin → any allowed profile
+with that role (a different provider first) → the Run's own provider (the user
+chose it for this Run). Antigravity is reached only for Runs the user started on
+Antigravity. When nothing is allowed, the review check fails with
+`reviewer_unavailable` → class `review_blocked` → waits for the user (no
+escalation, never success). Same-provider review is labelled "fresh context —
+not a cross-vendor review". Reviewers still do not have OS-enforced read-only
+file access in every adapter: Codex's sandbox enforces it, Claude plan mode and
+Antigravity plan are CLI policy, and the existing post-review fingerprint
+check detects mutations but does not prevent them.
+
+### Usage by role
+
+`GET /api/v2/runs/{id}/routing` returns `usage` for decision, execution (first
+attempt), retry (later attempts), review and local, plus `commercialUsage`
+(everything except local). Each reported value is counted once; `complete` is
+false when any call in a role did not report usage. These are provider-reported
+tokens, not bills; cache-read semantics differ per provider (Claude reports it
+separately, Codex inside input), so cache reads are never added to input.
+
+### Examples for the eight Claude/Codex/Local combinations
+
+`docs/examples/routing/decider-*.json` (validated by
+`TestDeciderExamplesEightCombinations`; "none" = any file on a host with nothing
+installed):
+
+| Claude | Codex | Local | File | Behavior (MEDIUM code task) |
+| --- | --- | --- | --- | --- |
+| – | – | – | any | no candidates, reasons shown, nothing enabled |
+| ✓ | – | – | `decider-claude-only.json` | rules clear → Claude executes, no decider call; Claude reviews (same provider) |
+| – | ✓ | – | `decider-codex-only.json` | rules clear → Codex executes; Codex decider allowed only because `allowReadOnlyShell` |
+| ✓ | ✓ | – | `decider-claude-codex.json` | tie between services → one Claude decider call (Codex decider excluded: shell) |
+| – | – | ✓ | `decider-local-only.json` | code task: no executor (text-only local); never a commercial call |
+| ✓ | – | ✓ | `decider-claude-local.json` | as Claude only; local is a text summarizer, not a code executor |
+| – | ✓ | ✓ | `decider-codex-local.json` | as Codex only |
+| ✓ | ✓ | ✓ | `decider-all.json` | as Claude+Codex |
+
+### Turning it off
+
+Set `strategy` to `rules` (or `routellm`) in routing.json, or per Run in the
+panel ("판단 전략"). Off mode makes no decider call; spend and policy gates stay
+in force in every mode.
+
 ## Configuration
 
 `routing.json` path: `PCD_ROUTING_CONFIG`, else `<user config dir>/powercodedeck/routing.json`
@@ -271,4 +401,26 @@ Run in its own worktree (default) and do not change criteria after viewing.
 | 25 | observed model recorded and shown vs requested; no automated mismatch test | UI + report |
 | 26 | **NOT_IMPLEMENTED** as new work: existing reviewer detects mutation afterwards (fingerprint) but no adapter here is marked `readOnlyEnforced` | — |
 | 29 | full `go test ./...` passes; client `tsc` + build pass | — |
+| Decider (prompt 2 §14, tests 1–20) | 1–18 fixture/fake-process pass (`decider_test.go`, `runroute/decider_test.go`, `examples_test.go`); 19 full suite passes; 20 preview-only headless UI check of "no executor" and "Claude only" states | see below |
 | Real-account E2E (Claude/Codex/Antigravity executing a routed Run) | **NOT_RUN** — Claude/Codex not logged in in this environment; Antigravity not run to avoid spending quota and because its automatic use is policy-gated | — |
+
+## Real-account observations (2026-09-25, decider work)
+
+- Decider live test (`PCD_DECIDER_LIVE`): Claude → `auth` (expired OAuth) in
+  1.3 s, reported usage 0; Codex → `auth` (401) in 14.9 s, usage unreported.
+  The success path of a decider call is **not verified** (BLOCKED_ENVIRONMENT).
+- **Unapproved spend (my mistake):** a headless UI check clicked the routed start
+  on an isolated test server expecting "no candidates". The server did not
+  inherit the agent shell's `ANTHROPIC_BASE_URL`, so the host's signed-in
+  Claude CLI (2.1.282 by then) was eligible. One Run executed on the disposable
+  test repo: executor `claude-sonnet-low` (Sonnet, effort low) 12.6 s, reported
+  input 6 / output 387 / cache read 91,406 / cache creation 45,873 tokens;
+  the policy-selected same-provider reviewer 8.4 s, input 2 / output 76 (cache
+  unreported). No decider call (rules were clear). The model found nothing to
+  do, the review rejected the empty result, and routing stopped at
+  `waiting_user` — no escalation, no retry. This incidentally confirms the
+  Claude executor + same-provider reviewer path end to end once; it is one
+  sample, not a measurement of quality, time or savings. Later UI checks run
+  with an empty HOME/PATH and preview only.
+- No A/B/C/D comparison (direct / rules / RouteLLM / commercial decider) was
+  run; decider latency, validity rate and net usage effect are unmeasured.

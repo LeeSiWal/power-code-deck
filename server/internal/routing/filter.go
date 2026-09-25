@@ -68,6 +68,7 @@ type Need struct {
 	Automatic     bool // routing picks (ScopePersonalAutomatic) vs user picks
 	PinProfile    string
 	PinAdapter    string
+	Role          Role // "" = no role check
 }
 
 // Health records transient per-bucket conditions learned from failures. Quota is
@@ -305,6 +306,9 @@ func Filter(cfg Config, statuses map[string]AdapterStatus, policy PolicyEvidence
 			if need.MinTier != TierUnset && p.MaxTier() < need.MinTier {
 				add(RTierNotMapped, "highest mapped tier "+p.MaxTier().String()+" < required "+need.MinTier.String())
 			}
+		}
+		if need.Role != "" && !p.Has(need.Role) {
+			add(RRoleNotAllowed, "profile is not allowed the "+string(need.Role)+" role")
 		}
 		if need.PinProfile != "" && p.ID != need.PinProfile {
 			add(RPinned, "run is pinned to profile "+need.PinProfile)

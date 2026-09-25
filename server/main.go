@@ -262,6 +262,11 @@ func main() {
 		handlers.RegisterRunApprovalRoutes(api, runs, runProviders.Broker)
 		if coordinator, err := setupRouting(database, runs, runWorker, runProviders); err != nil {
 			log.Printf("Model routing disabled: %v", err)
+			// Without the policy there is no allowed reviewer/planner: fail
+			// those roles visibly instead of silently calling a fixed provider.
+			runWorker.SetRoleResolver(func(string, orchestration.Run, string) (orchestration.Factory, string, error) {
+				return nil, "", fmt.Errorf("routing policy unavailable: %v", err)
+			})
 		} else {
 			handlers.RegisterRoutingRoutes(api, coordinator)
 		}

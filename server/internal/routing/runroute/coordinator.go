@@ -51,7 +51,9 @@ type Coordinator struct {
 	// async runs automatic continuations; tests replace it to run inline.
 	async func(func())
 	// timings holds routing/handoff durations until the attempt reports.
-	timings sync.Map
+	timings  sync.Map
+	decider  routing.DeciderCaller
+	verdicts verdictCache
 }
 
 type Options struct {
@@ -62,6 +64,7 @@ type Options struct {
 	Worker    Worker
 	Prober    *routing.Prober
 	Policy    routing.PolicyEvidence
+	Decider   routing.DeciderCaller // nil = commercial_llm strategy cannot consult
 }
 
 func New(o Options) (*Coordinator, error) {
@@ -70,7 +73,7 @@ func New(o Options) (*Coordinator, error) {
 		return nil, err
 	}
 	return &Coordinator{cfg: o.Config, cfgErr: o.ConfigErr, store: o.Store, runs: o.Runs, worker: o.Worker, prober: o.Prober, policy: o.Policy,
-		health: routing.NewHealth(), router: router, now: time.Now, probeAge: 60 * time.Second, async: func(f func()) { go f() }}, nil
+		health: routing.NewHealth(), router: router, now: time.Now, probeAge: 60 * time.Second, async: func(f func()) { go f() }, decider: o.Decider}, nil
 }
 
 // Config returns the effective configuration including discovered defaults.
@@ -88,6 +91,7 @@ func (c *Coordinator) config(ctx context.Context) (routing.Config, map[string]ro
 func (c *Coordinator) Refresh() {
 	c.prober.Invalidate()
 	c.router.Invalidate()
+	c.verdicts.clear()
 }
 
 type ProfileView struct {
@@ -110,6 +114,7 @@ type Snapshot struct {
 	Tiers       map[string][]string     `json:"tiers"`
 	RouteLLM    map[string]any          `json:"routellm"`
 	Policy      routing.PolicyEvidence  `json:"policy"`
+	Decider     DeciderView             `json:"decider"`
 }
 
 // Snapshot is the support matrix the UI renders.
@@ -128,6 +133,7 @@ func (c *Coordinator) Snapshot(ctx context.Context) Snapshot {
 		}
 		s.Adapters = append(s.Adapters, a)
 	}
+	s.Decider = c.deciderView(ctx)
 	manual := routing.Filter(cfg, st, c.policy, c.health, routing.Need{Kind: routing.KindCode})
 	auto := routing.Filter(cfg, st, c.policy, c.health, routing.Need{Kind: routing.KindCode, Automatic: true})
 	for i, p := range cfg.Profiles {
@@ -185,7 +191,9 @@ func (c *Coordinator) Preview(ctx context.Context, runID, manual string) (routin
 	if err != nil {
 		return routing.Decision{}, err
 	}
-	return routing.Decide(ctx, in), nil
+	d := routing.Decide(ctx, in)
+	c.applyStrategy(ctx, run, st, c.mode(st), in, &d, startOpts{manual: manual, preview: true})
+	return d, nil
 }
 
 func (c *Coordinator) decideInput(ctx context.Context, run orchestration.Run, st routing.RunState, manual string) (routing.DecideInput, error) {
@@ -232,50 +240,86 @@ type StartResult struct {
 
 // Start is a user-initiated attempt (HTTP). manual names a profile or is empty.
 func (c *Coordinator) Start(ctx context.Context, runID, manual string) (StartResult, error) {
-	return c.start(ctx, runID, manual, false)
+	return c.start(ctx, runID, startOpts{manual: manual})
+}
+
+// Reevaluate starts an attempt and asks the decider even when the skip policy
+// would not (explicit user request). Gates and budgets still apply.
+func (c *Coordinator) Reevaluate(ctx context.Context, runID string) (StartResult, error) {
+	return c.start(ctx, runID, startOpts{reevaluate: true})
 }
 
 var autoFrom = map[routing.Phase]bool{routing.PhaseCheckpointed: true}
 var userFrom = map[routing.Phase]bool{routing.PhaseIdle: true, routing.PhaseCheckpointed: true, routing.PhaseFailed: true, routing.PhaseWaitUser: true,
 	routing.PhaseWaitPolicy: true, routing.PhaseWaitBilling: true, routing.PhaseBlockedEnv: true, routing.PhaseReconcile: true}
 
-func (c *Coordinator) start(ctx context.Context, runID, manual string, auto bool) (StartResult, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+type startOpts struct {
+	manual     string
+	auto       bool // automatic continuation (escalation/failover/requested switch)
+	reevaluate bool // user explicitly asked the decider to re-evaluate
+	failover   bool // previous attempt hit an availability failure
+	preview    bool // compute the decision without any decider call
+}
+
+// precheck validates that a new attempt may start. Caller holds c.mu.
+func (c *Coordinator) precheck(runID string, auto bool) (orchestration.Run, routing.RunState, routing.Mode, error) {
 	run, err := c.runs.Get(runID)
 	if err != nil {
-		return StartResult{}, err
+		return run, routing.RunState{}, "", err
 	}
 	if run.State == "canceled" || run.State == "succeeded" {
-		return StartResult{}, fmt.Errorf("%w: run is %s", orchestration.ErrConflict, run.State)
+		return run, routing.RunState{}, "", fmt.Errorf("%w: run is %s", orchestration.ErrConflict, run.State)
 	}
 	st, err := c.store.Ensure(runID, c.cfg.Mode)
 	if err != nil {
-		return StartResult{}, err
+		return run, st, "", err
 	}
 	mode := c.mode(st)
 	if mode == routing.ModeOff {
-		return StartResult{State: st}, ErrRoutingOff
+		return run, st, mode, ErrRoutingOff
 	}
 	allowed := userFrom
 	if auto {
 		allowed = autoFrom
 	}
 	if !allowed[st.Phase] {
-		return StartResult{State: st}, fmt.Errorf("%w: routing phase %s does not accept a new attempt", orchestration.ErrConflict, st.Phase)
+		return run, st, mode, fmt.Errorf("%w: routing phase %s does not accept a new attempt", orchestration.ErrConflict, st.Phase)
 	}
 	if c.worker.Busy() {
-		return StartResult{State: st}, fmt.Errorf("%w: another attempt owns the worker", orchestration.ErrConflict)
+		return run, st, mode, fmt.Errorf("%w: another attempt owns the worker", orchestration.ErrConflict)
 	}
+	return run, st, mode, nil
+}
+
+func (c *Coordinator) start(ctx context.Context, runID string, o startOpts) (StartResult, error) {
+	manual, auto := o.manual, o.auto
+	c.mu.Lock()
+	run, st, mode, err := c.precheck(runID, auto)
+	c.mu.Unlock()
+	if err != nil {
+		return StartResult{State: st}, err
+	}
+	// Deciding runs without the coordinator lock: a decider call can take up
+	// to its timeout. Everything that happens meanwhile (settings, cancel,
+	// another start) bumps the epoch and the fence below discards this result.
 	started := c.now()
 	in, err := c.decideInput(ctx, run, st, manual)
 	if err != nil {
 		return StartResult{State: st}, err
 	}
 	d := routing.Decide(ctx, in)
+	if c.applyStrategy(ctx, run, st, mode, in, &d, o) {
+		// A decider failure revealed a limit/login problem on a shared bucket:
+		// re-run the rules with that knowledge instead of launching into it.
+		rec, strategy := d.Decider, d.Strategy
+		d = routing.Decide(ctx, in)
+		d.Decider, d.Strategy = rec, strategy
+		d.Reason += "; recomputed after the decider call changed provider health"
+	}
 	routingMS := time.Since(started).Milliseconds()
-	// Fence: anything that changed the Run's settings, a cancel, or a
-	// concurrent start while the router was thinking invalidates this answer.
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if st, err = c.store.Transition(runID, st.Epoch, routing.PhaseRouting, causeFor(auto, manual), d.Reason, ""); err != nil {
 		return StartResult{Decision: d}, err
 	}
@@ -333,6 +377,12 @@ func (c *Coordinator) start(ctx context.Context, runID, manual string, auto bool
 		}
 	}
 	handoffMS := time.Since(handoffStart).Milliseconds()
+	if !strings.HasPrefix(profile.ID, "legacy:") {
+		if err := c.recheck(ctx, profile, d); err != nil {
+			st, _ = c.store.Transition(runID, st.Epoch, routing.PhaseWaitUser, "state_changed", err.Error(), "")
+			return StartResult{Decision: d, State: st}, err
+		}
+	}
 	exec, err := c.worker.StartWith(runID, launch)
 	if err != nil {
 		st, _ = c.store.Transition(runID, st.Epoch, routing.PhaseFailed, "launch_refused", err.Error(), "")
@@ -495,13 +545,12 @@ func (c *Coordinator) OnAttempt(r orchestration.AttemptResult) {
 		if wait == 0 {
 			wait = 5 * time.Minute
 		}
-		c.health.Mark(profile, routing.RateLimited, c.now().Add(wait), routing.Summarize(report.Detail, 200))
-		c.router.Invalidate()
+		c.markHealth(profile, routing.RateLimited, c.now().Add(wait), routing.Summarize(report.Detail, 200))
 	case routing.AuthFailure:
-		c.health.Mark(profile, routing.AuthExpired, time.Time{}, "sign in again through the official CLI")
+		c.markHealth(profile, routing.AuthExpired, time.Time{}, "sign in again through the official CLI")
 		c.prober.Invalidate()
 	case routing.EntitlementFail:
-		c.health.Mark(profile, routing.ModelNotEntitled, time.Time{}, routing.Summarize(report.Detail, 200))
+		c.markHealth(profile, routing.ModelNotEntitled, time.Time{}, routing.Summarize(report.Detail, 200))
 	case routing.NoFailure, routing.QualityFailure:
 		c.health.Clear(profile)
 	}
@@ -558,7 +607,7 @@ func (c *Coordinator) OnAttempt(r orchestration.AttemptResult) {
 	// Escalate/failover/requested switch: a new attempt from the checkpointed
 	// phase only. start() re-validates the Run state and every gate.
 	c.async(func() {
-		if _, err := c.start(context.Background(), r.RunID, "", true); err != nil {
+		if _, err := c.start(context.Background(), r.RunID, startOpts{auto: true, failover: class == routing.AvailabilityFail}); err != nil {
 			log.Printf("routing: automatic continuation for %s stopped: %v", r.RunID, err)
 			c.mu.Lock()
 			if cur, gerr := c.store.Get(r.RunID); gerr == nil && cur.Phase == routing.PhaseCheckpointed {
@@ -575,11 +624,19 @@ func toReport(r orchestration.AttemptResult) routing.AttemptReport {
 		RunSucceeded: r.RunState == "succeeded", EnvironmentErr: r.Stage == "prepare", QuiesceVerified: r.QuiesceVerified, QuiesceDetail: r.QuiesceDetail,
 		ObservedModel: r.ObservedModel, Timings: routing.Timings{ExecMS: r.ExecMS, VerifyMS: r.VerifyMS}, Answer: routing.Summarize(r.Answer, 2000), Workspace: r.Workspace}
 	for _, ch := range r.Checks {
+		if ch.Name == "review" && !ch.Passed && strings.Contains(ch.Detail, "reviewer_unavailable:") {
+			rep.ReviewUnavailable = true
+		}
 		if ch.Passed {
 			rep.PassedChecks = append(rep.PassedChecks, ch.Name)
 		} else {
 			rep.FailedChecks = append(rep.FailedChecks, ch.Name)
 		}
+	}
+	rep.Reviewer, rep.ReviewerModel = r.ReviewerLabel, r.ReviewerModel
+	if u := r.ReviewUsage; u != nil {
+		in, out := u.InputTokens, u.OutputTokens
+		rep.ReviewUsage = &routing.UsageRecord{Scope: string(u.Scope), Source: "reported", InputTokens: &in, OutputTokens: &out}
 	}
 	if u := r.Usage; u != nil {
 		ptr := func(v int) *int { return &v }
@@ -606,6 +663,7 @@ func (c *Coordinator) Timeline(runID string) (routing.Timeline, error) {
 // and drops cached router answers computed before.
 func (c *Coordinator) MarkValidated(adapter string) error {
 	c.router.Invalidate()
+	c.verdicts.clear()
 	return c.store.MarkValidated(adapter)
 }
 

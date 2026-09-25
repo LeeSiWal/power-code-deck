@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"powercodedeck/internal/providers"
@@ -36,6 +38,76 @@ type Launch struct {
 	// routed is set only by StartWith. Legacy starts record exactly the
 	// artifacts they always did.
 	routed bool
+	// reviewLabel names the resolved reviewer profile for the review check.
+	reviewLabel string
+}
+
+// RoleResolver picks the profile for an auxiliary role ("reviewer",
+// "planner") through the same install/auth/billing/policy gates as executors.
+// provider is the adapter executing the work being reviewed.
+type RoleResolver func(role string, run Run, provider string) (Factory, string, error)
+
+// SetRoleResolver replaces the fixed reviewer/planner factories. When a role
+// has no allowed profile the role fails visibly ("<role>_unavailable"); it is
+// never skipped.
+func (w *Worker) SetRoleResolver(r RoleResolver) {
+	w.mu.Lock()
+	w.roles = r
+	w.mu.Unlock()
+}
+
+// roleFactory must be called with w.mu held.
+func (w *Worker) roleFactory(role string, run Run, provider string, legacy Factory) (Factory, string) {
+	if w.roles == nil {
+		return legacy, ""
+	}
+	f, label, err := w.roles(role, run, provider)
+	if err != nil || f == nil {
+		msg := fmt.Sprintf("%s_unavailable: no allowed %s profile (%v); a manual %s is required", role, role, err, role)
+		return func(string, string) (providers.Execution, error) { return nil, errors.New(msg) }, role + "_unavailable"
+	}
+	return f, label
+}
+
+// usageSink records what an auxiliary execution reported, so review usage is
+// counted as review usage and not folded into execution.
+type usageSink struct {
+	mu    sync.Mutex
+	usage *providers.Usage
+	model string
+}
+
+func (s *usageSink) wrap(f Factory) Factory {
+	if f == nil {
+		return nil
+	}
+	return func(id, cwd string) (providers.Execution, error) {
+		e, err := f(id, cwd)
+		if err != nil || e == nil {
+			return e, err
+		}
+		return &sinkExecution{Execution: e, sink: s}, nil
+	}
+}
+
+type sinkExecution struct {
+	providers.Execution
+	sink *usageSink
+}
+
+func (x *sinkExecution) Next(ctx context.Context) (providers.Event, error) {
+	ev, err := x.Execution.Next(ctx)
+	if err == nil {
+		x.sink.mu.Lock()
+		if ev.Model != "" {
+			x.sink.model = ev.Model
+		}
+		if ev.Kind == providers.TurnFinished && ev.Outcome != nil {
+			x.sink.usage = ev.Outcome.Usage
+		}
+		x.sink.mu.Unlock()
+	}
+	return ev, err
 }
 
 // LaunchFactory builds an execution for an explicit profile.
@@ -63,6 +135,9 @@ type AttemptResult struct {
 	Workspace       string
 	BaseCommit      string
 	ConversationID  string // provider-native session/thread ID of this attempt
+	ReviewerLabel   string
+	ReviewerModel   string
+	ReviewUsage     *providers.Usage
 	QuiesceVerified bool
 	QuiesceDetail   string
 }

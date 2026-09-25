@@ -28,6 +28,7 @@ type Worker struct {
 	reviewer  Factory
 	planner   Factory
 	launch    LaunchFactory
+	roles     RoleResolver
 	observer  func(AttemptResult)
 	// quiesceWait bounds how long a finished attempt waits for processes left
 	// in its workspace before reporting "unverified".
@@ -102,7 +103,11 @@ func (w *Worker) start(id string, l *Launch) (string, error) {
 	if err := w.store.RequireChecks(id, required...); err != nil {
 		return "", err
 	}
-	reviewer, observer := w.reviewer, w.observer
+	observer := w.observer
+	reviewer, reviewLabel := w.roleFactory("reviewer", run, launch.Provider, w.reviewer)
+	launch.reviewLabel = reviewLabel
+	sink := &usageSink{}
+	reviewer = sink.wrap(reviewer)
 	attempt, err := w.store.StartAttempt(id)
 	if err != nil {
 		return "", err
@@ -112,6 +117,9 @@ func (w *Worker) start(id string, l *Launch) (string, error) {
 	go func() {
 		result := w.execute(ctx, run, attempt, factory, reviewer, plan, launch)
 		result.Routed = l != nil
+		sink.mu.Lock()
+		result.ReviewerLabel, result.ReviewerModel, result.ReviewUsage = reviewLabel, sink.model, sink.usage
+		sink.mu.Unlock()
 		// Every process that ran in this attempt's workspace must be gone before
 		// anyone may start another writer on the Run's work.
 		if result.Workspace != "" {
@@ -511,6 +519,9 @@ func (w *Worker) execute(ctx context.Context, run Run, id string, factory, revie
 		passed, detail, reviewErr := w.review(ctx, run, id, worktree, base, dir, reviewer)
 		if reviewErr != nil {
 			passed, detail = false, reviewErr.Error()
+		}
+		if launch.reviewLabel != "" {
+			detail = "reviewer: " + launch.reviewLabel + "\n" + detail
 		}
 		if saveErr := w.store.RecordCheck(id, "review", passed, detail); saveErr != nil {
 			if !errors.Is(saveErr, ErrConflict) {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ApiError, api, Run, RoutingDecision, RoutingMode, RoutingSnapshot, RoutingTimeline } from '../../lib/api';
-import { CLASS_LABELS, MODE_LABELS, phaseLabel, reasonLabel, tokens } from '../../lib/routingLabels';
+import { ApiError, api, DeciderRecord, Run, RoutingDecision, RoutingMode, RoutingSnapshot, RoutingStrategy, RoutingTimeline } from '../../lib/api';
+import { CLASS_LABELS, MODE_LABELS, STRATEGY_LABELS, phaseLabel, reasonLabel, skipLabel, tokens } from '../../lib/routingLabels';
 
 /**
  * RoutingPanel — model routing for one single-task Run.
@@ -10,6 +10,24 @@ import { CLASS_LABELS, MODE_LABELS, phaseLabel, reasonLabel, tokens } from '../.
  * live in the server's routing.json, so they are shown here but not editable.
  */
 const busyPhases = new Set(['routing', 'handoff', 'running', 'quiescing', 'waiting_approval']);
+
+function DeciderView({ r }: { r: DeciderRecord }) {
+  if (!r.consulted) {
+    return <p className="text-emerald-400/90">판단 호출 생략(최적화): {skipLabel(r.skip || '')}</p>;
+  }
+  return (
+    <div className="space-y-0.5">
+      {(r.calls || []).map((c, i) => (
+        <p key={i} className="text-deck-text-dim break-all">
+          판단 호출 {i + 1} · {c.profileId} · {c.purpose} · {c.latencyMs}ms · {c.valid ? '유효' : `실패(${c.errorClass})`}
+          {c.observedModel && ` · 사용 모델 ${c.observedModel}`} · 입력 {tokens(c.usage?.inputTokens)} / 출력 {tokens(c.usage?.outputTokens)}
+        </p>
+      ))}
+      {r.verdict && <p>판단: {r.verdict.action}{r.verdict.profile_id ? ` → ${r.verdict.profile_id}` : ''} ({r.verdict.reason_code}) · {r.applied ? <span className="text-emerald-400">실행에 적용</span> : <span className="text-amber-300">적용 안 함</span>}</p>}
+      {r.note && <p className="text-amber-300">{r.note}</p>}
+    </div>
+  );
+}
 
 function DecisionView({ d }: { d: RoutingDecision }) {
   const [open, setOpen] = useState(false);
@@ -28,6 +46,8 @@ function DecisionView({ d }: { d: RoutingDecision }) {
         </p>
       )}
       {d.routerError && <p className="text-amber-300">라우터 사용 불가: {d.routerError}</p>}
+      {d.ruleTie && d.ruleTie.length > 1 && <p className="text-deck-text-dim">규칙상 동점 후보: {d.ruleTie.join(', ')}</p>}
+      {d.decider && <DeciderView r={d.decider} />}
       {excluded.length > 0 && (
         <button className="underline text-deck-text-dim" onClick={() => setOpen(!open)}>
           제외된 후보 {excluded.length}개 {open ? '숨기기' : '보기'}
@@ -98,6 +118,7 @@ export function RoutingPanel({ run, onChanged }: { run: Run; onChanged: () => vo
         <div className="space-y-0.5">
           <div><strong>{a.profileId}</strong> ({a.adapter}{a.model ? ` · 요청 ${a.model}` : ''}{a.effort ? ` · ${a.effort}` : ''}){r?.observedModel ? ` · 관측 ${r.observedModel}` : ''}
             {r?.observedModel && a.model && r.observedModel !== a.model && <span className="text-amber-300"> · 요청 모델과 다름</span>}</div>
+          {r?.reviewer && <div className="text-deck-text-dim">검토: {r.reviewer}{r.reviewUsage ? ` · 입력 ${tokens(r.reviewUsage.inputTokens)} / 출력 ${tokens(r.reviewUsage.outputTokens)}` : ' · 사용량 미보고'}</div>}
           {a.inheritedFrom && <div className="text-deck-text-dim">이전 시도 {a.inheritedFrom}의 변경분을 이어받음 · {a.continuation?.kind}</div>}
           {a.finishedAt && <div>결과: {CLASS_LABELS[a.class] ?? a.class}{a.action ? ` → ${a.action.kind}: ${a.action.reason}` : ''}</div>}
           {r && <div className="text-deck-text-dim">
@@ -153,6 +174,25 @@ export function RoutingPanel({ run, onChanged }: { run: Run; onChanged: () => vo
         </label>
       </div>
 
+      <div className="flex flex-wrap gap-3 items-center text-xs">
+        <label className="flex items-center gap-2">
+          <span className="text-deck-text-dim">판단 전략</span>
+          <select className="bg-deck-bg border border-deck-border rounded-lg px-2 py-1.5" value={timeline?.options.strategy || ''} disabled={busy || running}
+            onChange={(e) => act(() => api.setRunRouting(run.id, { mode, pinProfile: st?.pinProfile || '', pinAdapter: st?.pinAdapter || '', strategy: e.target.value as RoutingStrategy | '' }))}>
+            {(['', 'rules', 'routellm', 'commercial_llm'] as const).map((k) => <option key={k} value={k}>{STRATEGY_LABELS[k]}{k === '' && timeline ? ` (${STRATEGY_LABELS[snapshot?.decider?.strategy || 'rules']})` : ''}</option>)}
+          </select>
+        </label>
+        {timeline?.strategy === 'commercial_llm' && mode === 'shadow' && (
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={!!timeline?.options.commercialShadow} disabled={busy || running}
+              onChange={(e) => act(() => api.setRunRouting(run.id, { mode, pinProfile: st?.pinProfile || '', pinAdapter: st?.pinAdapter || '', commercialShadow: e.target.checked }))} />
+            <span>이 Run에서 상용 판단 Shadow 허용</span>
+          </label>
+        )}
+      </div>
+      {timeline?.strategy === 'commercial_llm' && mode === 'shadow' && (
+        <p className="text-[11px] text-deck-text-dim">RouteLLM Shadow는 로컬 BERT라 구독 사용량이 없지만, 상용 판단 Shadow는 판단 호출마다 해당 구독 사용량을 씁니다(하루 {snapshot?.decider?.limits.shadowMaxCallsPerDay ?? 0}회 한도, 최근 24시간 {snapshot?.decider?.shadowCallsLast24h ?? 0}회 사용).</p>
+      )}
       {mode === 'off' ? (
         <p className="text-xs text-deck-text-dim">라우팅이 꺼져 있습니다. 아래의 기존 실행 버튼이 이 Run의 공급자({run.provider})를 CLI 기본 설정으로 실행합니다.</p>
       ) : (
@@ -176,6 +216,9 @@ export function RoutingPanel({ run, onChanged }: { run: Run; onChanged: () => vo
                 {profile ? '이 프로필로 실행' : mode === 'shadow' ? `${run.provider} 실행 (라우팅 판단 기록)` : '자동 선택으로 실행'}
               </button>
             )}
+            {!running && timeline?.strategy === 'commercial_llm' && mode !== 'manual' && !['succeeded', 'canceled'].includes(run.state) && (
+              <button className="text-xs border border-deck-border rounded-lg px-2 py-1.5" disabled={busy} onClick={() => act(() => api.startRoutedRun(run.id, '', true))}>판단 다시 요청 후 실행</button>
+            )}
             {running && profile && <>
               <button className="text-xs border border-deck-border rounded-lg px-2 py-1.5" disabled={busy} onClick={() => act(() => api.switchRunProfile(run.id, profile, 'boundary'))}>다음 경계에서 전환</button>
               <button className="text-xs border border-amber-500/50 text-amber-300 rounded-lg px-2 py-1.5" disabled={busy} onClick={() => act(() => api.switchRunProfile(run.id, profile, 'now'))}>지금 전환(현재 작업 중단)</button>
@@ -191,6 +234,15 @@ export function RoutingPanel({ run, onChanged }: { run: Run; onChanged: () => vo
       {!blocked && lastDecision && <div className="rounded-lg border border-deck-border p-2"><div className="text-[11px] text-deck-text-dim mb-1">마지막 결정{lastDecision.mode === 'shadow' ? ' (Shadow: 실행에는 적용 안 됨)' : ''}</div><DecisionView d={lastDecision} /></div>}
       {error && <p className="text-xs text-red-400 break-words">{error}</p>}
 
+      {timeline && timeline.usage.length > 0 && (
+        <div className="text-xs space-y-0.5">
+          <div className="text-deck-text-dim">역할별 사용량 (공급자 보고값; 청구액이 아님)</div>
+          {timeline.usage.map((u) => (
+            <div key={u.role}>{({ decision: '판단', execution: '실행', retry: '재시도', review: '검토', local: '로컬' } as Record<string, string>)[u.role] || u.role}: 호출 {u.calls} · 입력 {u.inputTokens.toLocaleString()} / 출력 {u.outputTokens.toLocaleString()}{!u.complete && <span className="text-amber-300"> · 일부 미보고({u.calls - u.reported}건)</span>}</div>
+          ))}
+          <div className="font-medium">상용 합계(판단·검토 포함): 입력 {timeline.commercialUsage.inputTokens.toLocaleString()} / 출력 {timeline.commercialUsage.outputTokens.toLocaleString()}{!timeline.commercialUsage.complete && <span className="text-amber-300"> · 미보고 포함, 실제보다 작을 수 있음</span>}</div>
+        </div>
+      )}
       {events.length > 0 && (
         <details className="text-xs">
           <summary className="cursor-pointer text-deck-text-dim">전환·인계 이력 {events.length}건</summary>

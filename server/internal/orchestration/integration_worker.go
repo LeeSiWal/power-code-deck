@@ -35,7 +35,7 @@ func (w *Worker) startIntegration(id string, request *ResolutionRequest) (string
 	if run.State != "awaiting_integration" && run.State != "integration_failed" {
 		return "", ErrConflict
 	}
-	if w.reviewer == nil {
+	if w.reviewer == nil && w.roles == nil {
 		return "", fmt.Errorf("%w: independent reviewer required", ErrInvalid)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -77,7 +77,7 @@ func (w *Worker) startIntegration(id string, request *ResolutionRequest) (string
 		cancel()
 		return "", err
 	}
-	reviewer := w.reviewer
+	reviewer, _ := w.roleFactory("reviewer", run, run.Provider, w.reviewer)
 	w.run, w.cancel, w.done = id, cancel, make(chan struct{})
 	go func() {
 		defer func() { cancel(); w.mu.Lock(); w.cancel = nil; close(w.done); w.mu.Unlock() }()

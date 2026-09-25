@@ -64,7 +64,7 @@ func (w *Worker) startPlan(id, repairTask string, request *ResolutionRequest) er
 	if request == nil && len(plan.Selection.Ready) == 0 {
 		return ErrConflict
 	}
-	if w.reviewer == nil {
+	if w.reviewer == nil && w.roles == nil {
 		return fmt.Errorf("%w: independent reviewer required", ErrInvalid)
 	}
 	for _, t := range plan.Tasks {
@@ -120,7 +120,7 @@ func (w *Worker) startPlan(id, repairTask string, request *ResolutionRequest) er
 	if request != nil {
 		repairAttempt = tasks[0].AttemptID
 	}
-	reviewer := w.reviewer
+	reviewer, _ := w.roleFactory("reviewer", run, run.Provider, w.reviewer)
 	w.run, w.cancel, w.done = id, cancel, make(chan struct{})
 	go func() {
 		defer func() { cancel(); w.mu.Lock(); w.cancel = nil; close(w.done); w.mu.Unlock() }()

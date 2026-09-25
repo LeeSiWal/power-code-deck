@@ -110,3 +110,15 @@ func (RoutingRunner) RunUntil(ctx context.Context, bin string, args []string, st
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// RunIn runs an official CLI in dir with stdin, returning stdout and stderr
+// separately (bounded). Used for one-shot decider calls in an empty directory.
+func (RoutingRunner) RunIn(ctx context.Context, dir, bin string, args []string, stdin string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(stdin)
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &limited{&out, 1 << 20}, &limited{&errOut, 64 << 10}
+	err := cmd.Run()
+	return out.String(), errOut.String(), err
+}

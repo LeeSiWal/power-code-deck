@@ -21,6 +21,9 @@ const (
 	PermissionFail    FailureClass = "permission"   // denied tool/safety refusal
 	UnknownSideEffect FailureClass = "unknown_side_effect"
 	UserCanceled      FailureClass = "canceled"
+	// ReviewBlocked: the required review had no allowed reviewer profile. It
+	// says nothing about the work's quality and never triggers escalation.
+	ReviewBlocked FailureClass = "review_blocked"
 )
 
 type PriorAttempt struct {

@@ -26,7 +26,14 @@ type Decision struct {
 	Candidates        []Candidate    `json:"candidates"`
 	ConfigFingerprint string         `json:"configFingerprint"`
 	CreatedAt         time.Time      `json:"createdAt"`
-	DurationMS        int64          `json:"durationMs"`
+	// RuleTie lists distinct candidates that share the top rule score — the
+	// only situation in which a decider call can add information.
+	RuleTie []string `json:"ruleTie,omitempty"`
+	// Decider is the commercial_llm strategy record (skip or call).
+	Decider *DeciderRecord `json:"decider,omitempty"`
+	// Strategy that settled this decision.
+	Strategy   Strategy `json:"strategy,omitempty"`
+	DurationMS int64    `json:"durationMs"`
 }
 
 type DecideInput struct {
@@ -56,7 +63,7 @@ func Decide(ctx context.Context, in DecideInput) Decision {
 	d.RuleTier, d.RuleWhy = RuleTier(in.Task)
 
 	if in.Manual != "" {
-		d.Candidates = Filter(in.Config, in.Statuses, in.Policy, in.Health, Need{Kind: in.Task.Kind, ContextTokens: in.ContextTokens, PinProfile: in.PinProfile, PinAdapter: in.PinAdapter})
+		d.Candidates = Filter(in.Config, in.Statuses, in.Policy, in.Health, Need{Kind: in.Task.Kind, ContextTokens: in.ContextTokens, PinProfile: in.PinProfile, PinAdapter: in.PinAdapter, Role: RoleExecutor})
 		for _, c := range d.Candidates {
 			if c.Profile.ID != in.Manual {
 				continue
@@ -78,14 +85,10 @@ func Decide(ctx context.Context, in DecideInput) Decision {
 		return d
 	}
 
-	need := Need{Kind: in.Task.Kind, MinTier: d.RuleTier, ContextTokens: in.ContextTokens, Automatic: true, PinProfile: in.PinProfile, PinAdapter: in.PinAdapter}
+	need := Need{Kind: in.Task.Kind, MinTier: d.RuleTier, ContextTokens: in.ContextTokens, Automatic: true, PinProfile: in.PinProfile, PinAdapter: in.PinAdapter, Role: RoleExecutor}
 	d.Candidates = Filter(in.Config, in.Statuses, in.Policy, in.Health, need)
-	var eligible []Candidate
-	for _, c := range d.Candidates {
-		if c.Eligible() {
-			eligible = append(eligible, c)
-		}
-	}
+	// Aliases of one executor count once.
+	eligible := Distinct(d.Candidates)
 	switch len(eligible) {
 	case 0:
 		// No silent downgrade: the user sees why and chooses.
@@ -109,6 +112,14 @@ func Decide(ctx context.Context, in DecideInput) Decision {
 	}
 	sort.SliceStable(eligible, func(i, j int) bool { return score(eligible[i]) > score(eligible[j]) })
 	best := eligible[0]
+	for _, c := range eligible[1:] {
+		if score(c) >= score(best)-1e-9 && c.Profile.Identity() != best.Profile.Identity() {
+			d.RuleTie = append(d.RuleTie, c.Profile.ID)
+		}
+	}
+	if len(d.RuleTie) > 0 {
+		d.RuleTie = append([]string{best.Profile.ID}, d.RuleTie...)
+	}
 	d.Selected, d.Source, d.Reason = best.Profile.ID, "rule", "lowest adequate tier ("+best.Profile.MaxTier().String()+") for floor "+d.RuleTier.String()
 	if best.Profile.ID == in.Current && len(eligible) > 1 && score(eligible[1]) > score(best)-stick {
 		d.Source, d.Reason = "sticky", "kept current profile (switch cost outweighs tier difference)"
@@ -117,7 +128,7 @@ func Decide(ctx context.Context, in DecideInput) Decision {
 	// RouteLLM may raise within a configured pair whose weak side is the rule
 	// choice. It is skipped for evidence-based escalation, whose floor already
 	// reflects an observed failure.
-	if in.Router == nil || in.Task.Stage == "escalation" {
+	if in.Router == nil || in.Task.Stage == "escalation" || in.Config.EffectiveStrategy() != StrategyRouteLLM {
 		return d
 	}
 	ok := map[string]bool{}

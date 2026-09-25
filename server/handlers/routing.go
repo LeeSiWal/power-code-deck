@@ -63,18 +63,20 @@ func RegisterRoutingRoutes(api *mux.Router, c *runroute.Coordinator) {
 		w.WriteHeader(http.StatusNoContent)
 	}).Methods("POST")
 	api.HandleFunc("/v2/runs/{id}/routing", func(w http.ResponseWriter, r *http.Request) {
-		tl, err := c.Timeline(mux.Vars(r)["id"])
+		v, err := c.View(mux.Vars(r)["id"])
 		if err != nil {
 			fail(w, err)
 			return
 		}
-		jsonResponse(w, tl)
+		jsonResponse(w, v)
 	}).Methods("GET")
 	api.HandleFunc("/v2/runs/{id}/routing", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Mode       routing.Mode `json:"mode"`
-			PinProfile string       `json:"pinProfile"`
-			PinAdapter string       `json:"pinAdapter"`
+			Mode             routing.Mode      `json:"mode"`
+			PinProfile       string            `json:"pinProfile"`
+			PinAdapter       string            `json:"pinAdapter"`
+			Strategy         *routing.Strategy `json:"strategy"`         // "" = config default
+			CommercialShadow *bool             `json:"commercialShadow"` // approve paid decider calls in Shadow for this Run
 		}
 		if !decode(w, r, &body) {
 			return
@@ -83,10 +85,29 @@ func RegisterRoutingRoutes(api *mux.Router, c *runroute.Coordinator) {
 			jsonError(w, "mode must be off, manual, shadow or auto", 400)
 			return
 		}
-		st, err := c.Settings(mux.Vars(r)["id"], body.Mode, body.PinProfile, body.PinAdapter)
+		id := mux.Vars(r)["id"]
+		st, err := c.Settings(id, body.Mode, body.PinProfile, body.PinAdapter)
 		if err != nil {
 			fail(w, err)
 			return
+		}
+		if body.Strategy != nil || body.CommercialShadow != nil {
+			v, err := c.View(id)
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			o := v.Options
+			if body.Strategy != nil {
+				o.Strategy = *body.Strategy
+			}
+			if body.CommercialShadow != nil {
+				o.CommercialShadow = *body.CommercialShadow
+			}
+			if _, err := c.SetOptions(id, o); err != nil {
+				fail(w, err)
+				return
+			}
 		}
 		jsonResponse(w, st)
 	}).Methods("PUT")
@@ -107,12 +128,19 @@ func RegisterRoutingRoutes(api *mux.Router, c *runroute.Coordinator) {
 	}).Methods("GET")
 	api.HandleFunc("/v2/runs/{id}/routing/start", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Profile string `json:"profile"`
+			Profile    string `json:"profile"`
+			Reevaluate bool   `json:"reevaluate"` // ask the decider even if it would be skipped
 		}
 		if !decode(w, r, &body) {
 			return
 		}
-		res, err := c.Start(r.Context(), mux.Vars(r)["id"], body.Profile)
+		var res runroute.StartResult
+		var err error
+		if body.Reevaluate && body.Profile == "" {
+			res, err = c.Reevaluate(r.Context(), mux.Vars(r)["id"])
+		} else {
+			res, err = c.Start(r.Context(), mux.Vars(r)["id"], body.Profile)
+		}
 		if err != nil {
 			// The decision is still useful to the user: why nothing started.
 			if res.Decision.ID != "" {

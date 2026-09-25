@@ -1,5 +1,5 @@
 // Framework-free assertions (type-checked by tsc like the other *.test.ts files).
-import { CLASS_LABELS, reasonLabel, tokens } from './routingLabels';
+import { CLASS_LABELS, SKIP_LABELS, reasonLabel, skipLabel, tokens } from './routingLabels';
 
 function equal(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
@@ -12,3 +12,8 @@ equal(reasonLabel('something_new'), 'something_new', 'unknown codes pass through
 equal(tokens(null), '미보고', 'unreported usage is not zero');
 equal(tokens(0), '0', 'reported zero stays zero');
 equal(CLASS_LABELS['canceled'], '사용자 취소', 'cancel label');
+
+// Every decider skip reason has its own sentence; single-candidate reads as an optimization.
+equal(new Set(Object.values(SKIP_LABELS)).size, Object.keys(SKIP_LABELS).length, 'skip labels are distinct');
+equal(skipLabel('single_distinct_candidate').includes('바로 실행'), true, 'single candidate is shown as direct execution');
+equal(CLASS_LABELS['review_blocked'].includes('수동 리뷰'), true, 'missing reviewer is a manual-review state');

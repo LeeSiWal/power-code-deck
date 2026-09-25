@@ -58,7 +58,7 @@ func (w *Worker) StartPlanning(id string) (string, error) {
 	if w.closed || w.cancel != nil {
 		return "", ErrConflict
 	}
-	if w.planner == nil {
+	if w.planner == nil && w.roles == nil {
 		return "", fmt.Errorf("%w: plan generator not connected", ErrInvalid)
 	}
 	run, err := w.store.Get(id)
@@ -81,7 +81,7 @@ func (w *Worker) StartPlanning(id string) (string, error) {
 		return "", err
 	}
 	run.BaseCommit = base
-	factory := w.planner
+	factory, _ := w.roleFactory("planner", run, run.Provider, w.planner)
 	w.run, w.cancel, w.done = id, cancel, make(chan struct{})
 	go func() {
 		defer func() { cancel(); w.mu.Lock(); w.cancel = nil; close(w.done); w.mu.Unlock() }()

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api, RoutingObservation, RoutingSnapshot } from '../../lib/api';
-import { MODE_LABELS, reasonLabel } from '../../lib/routingLabels';
+import { MODE_LABELS, STRATEGY_LABELS, reasonLabel } from '../../lib/routingLabels';
 
 /**
  * RoutingMatrix — which executors are installed, signed in, billable, allowed
@@ -81,6 +81,28 @@ export function RoutingMatrix() {
               </div>
             ))}
           </div>
+          <div className="text-xs font-semibold pt-1">작업 배분 판단 · 보조 역할</div>
+          <p className="text-xs text-deck-text-dim">
+            기본 판단 전략: {STRATEGY_LABELS[snap.decider.strategy]} · 판단 호출은 실제 후보가 둘 이상이고 규칙으로 가려지지 않을 때만 합니다.
+            제한: 호출당 {snap.decider.limits.timeoutSeconds}초, 출력 {snap.decider.limits.maxOutputBytes}바이트, 형식 재시도 {snap.decider.limits.maxFormatRetries}회, 근거 보강 {snap.decider.limits.maxContextRounds}회.
+            {!snap.decider.callable && ' 판단 실행기가 연결되지 않았습니다.'}
+          </p>
+          <div className="text-xs">판단용 프로필(순서대로): {(snap.decider.ordered || []).length ? (snap.decider.ordered || []).map((id) => {
+            const st = snap.decider.stats[id];
+            const verified = (snap.decider.candidates || []).find((c) => c.profile.id === id)?.profile.quality?.decide?.status === 'verified';
+            return `${id}${st ? ` (실측 ${st.calls}회, p50 ${st.p50Ms}ms, 유효 ${st.valid}/${st.calls})` : ' (미측정)'}${verified ? '' : ' · 품질 미검증 → 기록용'}`;
+          }).join(' → ') : <span className="text-amber-300">없음 — 규칙·직접 선택으로 처리합니다</span>}</div>
+          {(snap.decider.candidates || []).filter((c) => (c.excluded || []).length > 0 && !(c.excluded || []).some((e) => e.reason === 'role_not_allowed')).map((c) => (
+            <div key={c.profile.id} className="text-xs text-deck-text-dim">{c.profile.id}: {(c.excluded || []).map((e) => reasonLabel(e.reason)).join(' · ')}</div>
+          ))}
+          {Object.entries(snap.decider.roles).map(([role, byProvider]) => (
+            <div key={role} className="text-xs">
+              <span className="font-medium">{role === 'reviewer' ? '리뷰어' : '계획'}</span>
+              {Object.entries(byProvider).map(([provider, label]) => (
+                <div key={provider} className={label.startsWith('unavailable') ? 'text-amber-300 pl-2' : 'text-deck-text-dim pl-2'}>{provider} 실행 시: {label.startsWith('unavailable') ? `허용된 프로필 없음 — 수동 확인 필요 (${label.slice(13)})` : label}</div>
+              ))}
+            </div>
+          ))}
           <p className="text-[11px] text-deck-text-dim">이용 검토 상태는 {snap.policy.reviewedAt}에 공식 문서를 검토한 기록이며 법률 판단이 아닙니다. 사용자의 동의 체크로 바뀌지 않습니다.</p>
         </>
       )}

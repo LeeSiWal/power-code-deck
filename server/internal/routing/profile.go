@@ -90,6 +90,52 @@ type Profile struct {
 	EndpointRef      string                     `json:"endpointRef,omitempty"`
 	// Generated marks a profile synthesized from discovery rather than config.
 	Generated bool `json:"generated,omitempty"`
+	// Roles this profile may serve. Empty means executor+reviewer (the meaning
+	// profiles had before roles existed). "decider" is never implied.
+	Roles []Role `json:"roles,omitempty"`
+}
+
+// Role separates what a profile is used for. One profile may hold several
+// roles; roles never require separate subscriptions.
+type Role string
+
+const (
+	RoleDecider    Role = "decider"
+	RoleExecutor   Role = "executor"
+	RoleReviewer   Role = "reviewer"
+	RolePlanner    Role = "planner"
+	RoleSummarizer Role = "summarizer"
+)
+
+func validRole(r Role) bool {
+	switch r {
+	case RoleDecider, RoleExecutor, RoleReviewer, RolePlanner, RoleSummarizer:
+		return true
+	}
+	return false
+}
+
+// Has reports whether the profile may serve role r.
+func (p Profile) Has(r Role) bool {
+	if len(p.Roles) == 0 {
+		return r == RoleExecutor || r == RoleReviewer
+	}
+	for _, x := range p.Roles {
+		if x == r {
+			return true
+		}
+	}
+	return false
+}
+
+// Identity is what makes two profiles the same executor. Profiles that differ
+// only by id are one candidate, not two.
+func (p Profile) Identity() string {
+	bucket := p.QuotaBucket
+	if bucket == "" {
+		bucket = p.Adapter + ":" + p.AccountRef
+	}
+	return p.Adapter + "|" + p.Model + "|" + p.Effort + "|" + bucket + "|" + p.EndpointRef
 }
 
 // Effective returns adapter facts narrowed by the profile's own declaration.
@@ -198,6 +244,24 @@ type Config struct {
 	Profiles       []Profile       `json:"profiles"`
 	LocalEndpoints []LocalEndpoint `json:"localEndpoints,omitempty"`
 	RouteLLM       RouteLLMConfig  `json:"routellm"`
+	// Strategy settles ambiguous choices. Empty keeps the old meaning:
+	// routellm when routellm.enabled, otherwise rules.
+	Strategy Strategy `json:"strategy,omitempty"`
+	// RolePins fixes the profile for an auxiliary role (reviewer, planner,
+	// decider is pinned via decider.profile).
+	RolePins map[Role]string `json:"rolePins,omitempty"`
+	Decider  DeciderConfig   `json:"decider,omitempty"`
+}
+
+// EffectiveStrategy resolves the default.
+func (c Config) EffectiveStrategy() Strategy {
+	if c.Strategy != "" {
+		return c.Strategy
+	}
+	if c.RouteLLM.Enabled {
+		return StrategyRouteLLM
+	}
+	return StrategyRules
 }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -272,6 +336,20 @@ func (c Config) Validate() error {
 			return fmt.Errorf("routing config: profile %q references unknown endpoint %q", p.ID, p.EndpointRef)
 		}
 	}
+	if c.Strategy != "" && !ValidStrategy(c.Strategy) {
+		return fmt.Errorf("routing config: unknown strategy %q", c.Strategy)
+	}
+	if c.Strategy == StrategyRouteLLM && !c.RouteLLM.Enabled {
+		return fmt.Errorf("routing config: strategy routellm needs routellm.enabled")
+	}
+	for r, id := range c.RolePins {
+		if !validRole(r) || r == RoleDecider || (id != "" && !seen[id]) {
+			return fmt.Errorf("routing config: invalid role pin %s=%s", r, id)
+		}
+	}
+	if err := c.Decider.validate(seen); err != nil {
+		return err
+	}
 	if r := c.RouteLLM; r.Enabled {
 		if r.Router == "" {
 			return fmt.Errorf("routing config: routellm.router is required")
@@ -304,6 +382,11 @@ func (p Profile) validate() error {
 	for _, t := range p.Tiers {
 		if t <= TierUnset || t > Ultra {
 			return fmt.Errorf("routing config: profile %q has invalid tier", p.ID)
+		}
+	}
+	for _, r := range p.Roles {
+		if !validRole(r) {
+			return fmt.Errorf("routing config: profile %q has unknown role %q", p.ID, r)
 		}
 	}
 	return nil
@@ -341,7 +424,7 @@ func (c Config) WithDiscoveredDefaults(statuses []AdapterStatus) Config {
 		if have[s.AdapterID] || s.Installation.Value != Installed || s.AdapterID == AdapterLocal {
 			continue
 		}
-		out.Profiles = append(out.Profiles, Profile{ID: s.AdapterID + "-default", Adapter: s.AdapterID, Generated: true, Billing: Unknown})
+		out.Profiles = append(out.Profiles, Profile{ID: s.AdapterID + "-default", Adapter: s.AdapterID, Generated: true, Billing: Unknown, Roles: []Role{RoleExecutor, RoleReviewer, RolePlanner}})
 	}
 	sort.SliceStable(out.Profiles, func(i, j int) bool { return out.Profiles[i].MaxTier() < out.Profiles[j].MaxTier() })
 	return out

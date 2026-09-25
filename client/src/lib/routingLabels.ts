@@ -32,6 +32,36 @@ export const REASON_LABELS: Record<string, string> = {
   context_too_small: '문맥 한도 부족',
   pinned_elsewhere: '다른 프로필/공급자로 고정됨',
   endpoint_unavailable: '로컬 서버 응답 없음',
+  role_not_allowed: '이 역할에 허용되지 않은 프로필',
+  decider_adapter_not_allowed: '판단용으로 허용하지 않은 공급자',
+  decider_tools_not_disableable: '도구를 끌 수 없어 판단용 제외(읽기 전용 셸 허용 필요)',
+};
+
+// Skipping the decider is the normal, optimized path — not an error.
+export const SKIP_LABELS: Record<string, string> = {
+  strategy_not_commercial_llm: '판단 전략이 경량 LLM이 아님',
+  mode_off: '라우팅 꺼짐',
+  manual_or_pinned: '직접 선택·프로필 고정',
+  no_candidates: '실행 가능한 후보 없음',
+  single_distinct_candidate: '실제 후보가 하나뿐이라 바로 실행',
+  rule_choice_clear: '규칙으로 명확히 선택 가능',
+  fallback_predetermined: '정해진 대체 경로 사용',
+  cached_verdict: '같은 질문의 유효한 판단 재사용',
+  no_decider_available: '허용된 판단용 프로필 없음',
+  local_only_no_commercial_decider: '로컬 전용: 상용 판단 호출 안 함',
+  commercial_shadow_not_approved: '상용 Shadow 미승인(비용 발생 방지)',
+  commercial_shadow_budget_exhausted: '상용 Shadow 예산 소진',
+};
+
+export function skipLabel(code: string): string {
+  return SKIP_LABELS[code] ?? code;
+}
+
+export const STRATEGY_LABELS: Record<string, string> = {
+  '': '설정 기본값',
+  rules: '규칙',
+  routellm: 'RouteLLM(로컬 BERT, 기록용)',
+  commercial_llm: '경량 상용 LLM 판단',
 };
 
 export function reasonLabel(code: string): string {
@@ -77,6 +107,7 @@ export const CLASS_LABELS: Record<string, string> = {
   permission: '권한·안전 거부',
   unknown_side_effect: '결과 불명(확인 필요)',
   canceled: '사용자 취소',
+  review_blocked: '허용된 리뷰어 없음(수동 리뷰 필요)',
 };
 
 // Unknown usage stays "미보고", never 0.

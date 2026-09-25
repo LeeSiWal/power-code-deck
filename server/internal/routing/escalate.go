@@ -10,26 +10,30 @@ import (
 // AttemptReport is what the worker knows when an attempt ends. It is the only
 // input to failure classification; nothing is inferred from chat text alone.
 type AttemptReport struct {
-	RunID           string       `json:"runId"`
-	ExecutionID     string       `json:"executionId"`
-	ProfileID       string       `json:"profileId"`
-	Adapter         string       `json:"adapter"`
-	Epoch           int64        `json:"epoch"`
-	Canceled        bool         `json:"canceled"`
-	ProviderStatus  string       `json:"providerStatus"` // success|failed|interrupted|unknown|not_started
-	Detail          string       `json:"detail"`         // bounded provider text + diagnostics
-	Denials         int          `json:"denials"`
-	FailedChecks    []string     `json:"failedChecks,omitempty"`
-	PassedChecks    []string     `json:"passedChecks,omitempty"`
-	RunSucceeded    bool         `json:"runSucceeded"`
-	EnvironmentErr  bool         `json:"environmentErr"` // failed before the provider ran
-	QuiesceVerified bool         `json:"quiesceVerified"`
-	QuiesceDetail   string       `json:"quiesceDetail,omitempty"`
-	ObservedModel   string       `json:"observedModel,omitempty"`
-	Usage           *UsageRecord `json:"usage,omitempty"`
-	Answer          string       `json:"answer,omitempty"` // untrusted model text, bounded
-	Workspace       string       `json:"workspace,omitempty"`
-	Timings         Timings      `json:"timings"`
+	RunID             string       `json:"runId"`
+	ExecutionID       string       `json:"executionId"`
+	ProfileID         string       `json:"profileId"`
+	Adapter           string       `json:"adapter"`
+	Epoch             int64        `json:"epoch"`
+	Canceled          bool         `json:"canceled"`
+	ProviderStatus    string       `json:"providerStatus"` // success|failed|interrupted|unknown|not_started
+	Detail            string       `json:"detail"`         // bounded provider text + diagnostics
+	Denials           int          `json:"denials"`
+	FailedChecks      []string     `json:"failedChecks,omitempty"`
+	PassedChecks      []string     `json:"passedChecks,omitempty"`
+	RunSucceeded      bool         `json:"runSucceeded"`
+	EnvironmentErr    bool         `json:"environmentErr"` // failed before the provider ran
+	QuiesceVerified   bool         `json:"quiesceVerified"`
+	QuiesceDetail     string       `json:"quiesceDetail,omitempty"`
+	ObservedModel     string       `json:"observedModel,omitempty"`
+	Usage             *UsageRecord `json:"usage,omitempty"`
+	Answer            string       `json:"answer,omitempty"` // untrusted model text, bounded
+	Workspace         string       `json:"workspace,omitempty"`
+	Reviewer          string       `json:"reviewer,omitempty"`
+	ReviewerModel     string       `json:"reviewerModel,omitempty"`
+	ReviewUsage       *UsageRecord `json:"reviewUsage,omitempty"`
+	ReviewUnavailable bool         `json:"reviewUnavailable,omitempty"`
+	Timings           Timings      `json:"timings"`
 }
 
 // UsageRecord keeps provider semantics: nil = not reported, never 0.
@@ -74,6 +78,9 @@ func Classify(r AttemptReport) FailureClass {
 		return NoFailure
 	case r.EnvironmentErr:
 		return EnvironmentFail
+	}
+	if r.ReviewUnavailable {
+		return ReviewBlocked
 	}
 	// The provider finished its turn and host checks judged the result: that is
 	// quality evidence. Detail is not scanned here because it may contain the
@@ -162,6 +169,8 @@ func NextAction(mode Mode, pol SwitchPolicy, b Budget, class FailureClass, now t
 		return Action{ActStop, "environment problem; fix installation/paths/dependencies before retrying"}
 	case AuthFailure, EntitlementFail:
 		return Action{ActWaitUser, "sign-in or model access must be fixed through the official CLI"}
+	case ReviewBlocked:
+		return Action{ActWaitUser, "no allowed reviewer profile; configure one or review manually — the review is not skipped"}
 	case UnknownSideEffect:
 		return Action{ActReconcile, "outcome or process shutdown is unverified; inspect workspace before any new writer"}
 	}
