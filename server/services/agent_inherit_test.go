@@ -78,3 +78,33 @@ func TestInheritedNativeConfig(t *testing.T) {
 		t.Fatalf("codex inheritance failed: got %q/%q", m, md)
 	}
 }
+
+// An explicit starting model/effort (the routed "자동" start) beats inheritance;
+// the permission mode is still inherited, and Codex never takes an effort.
+func TestStartingNativeConfigOverridesInheritance(t *testing.T) {
+	database, err := sql.Open("sqlite", t.TempDir()+"/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	s := &AgentService{db: database}
+	if _, err := database.Exec(
+		`INSERT INTO agents (id, preset, name, tmux_session, working_dir, command, native_model, native_mode, native_effort, created_at)
+		 VALUES ('a1', 'claude-code', 'n', 'pcd-a1', '/proj/a', 'claude', '', 'plan', 'high', '2026-09-25 10:00:00')`); err != nil {
+		t.Fatal(err)
+	}
+	m, md, e := s.startingNativeConfig("/proj/a", "claude", CreateAgentRequest{NativeModel: "claude-sonnet-5", NativeEffort: "low"})
+	if m != "claude-sonnet-5" || md != "plan" || e != "low" {
+		t.Fatalf("got %q %q %q", m, md, e)
+	}
+	if m, _, e := s.startingNativeConfig("/proj/a", "claude", CreateAgentRequest{}); m != "" || e != "high" {
+		t.Fatalf("no override should inherit, got %q %q", m, e)
+	}
+	if _, _, e := s.startingNativeConfig("/proj/b", "codex", CreateAgentRequest{NativeModel: "gpt-5.6-sol", NativeEffort: "xhigh"}); e != "" {
+		t.Fatalf("codex took effort %q", e)
+	}
+}

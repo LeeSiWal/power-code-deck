@@ -44,7 +44,9 @@ export function AutoStartPage() {
       }
     }
     try {
-      const a = await api.createAgent({ preset: tool.preset, name: sessionName(tool, workingDir), workingDir, command: tool.command, args: [] }) as { id: string };
+      // The routed model/effort go to the server too: a new session otherwise inherits
+      // the project's last choice, which would override the pick on first open.
+      const a = await api.createAgent({ preset: tool.preset, name: sessionName(tool, workingDir), workingDir, command: tool.command, args: [], nativeModel: model, nativeEffort: effort }) as { id: string };
       // The chat reads these as its starting model/effort (the DB is empty for a new session).
       try {
         if (model) localStorage.setItem(`pcd:model:${a.id}`, model);
