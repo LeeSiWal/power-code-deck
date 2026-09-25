@@ -54,6 +54,11 @@ func idleFromEnv(d time.Duration) time.Duration {
 	return d
 }
 
+// SmallContextTokens is the conversation size below which a session may move
+// down right away: the new model re-reads so little that the idle wait saves
+// nothing.
+const SmallContextTokens = 8000
+
 // TurnChoice is the profile a session's next turn should use, with the one it
 // is on now (nil if that profile no longer exists in the config).
 type TurnChoice struct {
@@ -65,7 +70,9 @@ type TurnChoice struct {
 // the session already runs (moving between tools is a later stage). The current
 // profile gets the configured stickiness, so near-ties stay put.
 // noLocal leaves local-model profiles out (the user rejected a local answer).
-func (c *Coordinator) ChooseTurn(ctx context.Context, goal, adapter, current string, noLocal bool) (TurnChoice, error) {
+// previous is the session's last request, so a short follow-up ("한번더 해줘")
+// is rated like the request it refers to.
+func (c *Coordinator) ChooseTurn(ctx context.Context, goal, adapter, current string, noLocal bool, previous string) (TurnChoice, error) {
 	if strings.TrimSpace(goal) == "" {
 		return TurnChoice{}, fmt.Errorf("%w: empty request", orchestration.ErrInvalid)
 	}
@@ -76,7 +83,7 @@ func (c *Coordinator) ChooseTurn(ctx context.Context, goal, adapter, current str
 	}
 	d := routing.Decide(ctx, routing.DecideInput{Config: cfg, Statuses: statuses, Policy: c.policy, Health: c.health, Router: c.router,
 		Task: routing.DescribeTask(goal, routing.KindCode, nil), Mode: routing.ModeAuto, Current: current, PinAdapter: adapter,
-		JudgeTier: c.judgeTier(ctx, full, statuses, goal)})
+		JudgeTier: c.judgeTurnTier(ctx, full, statuses, goal, previous)})
 	tc := TurnChoice{Choice: Choice{Decision: d}}
 	// The current profile may be a local one that noLocal just left out.
 	if cur, ok := full.ProfileByID(current); ok {
@@ -96,7 +103,7 @@ func (c *Coordinator) ChooseTurn(ctx context.Context, goal, adapter, current str
 // TurnSwitch decides whether to move to next before this turn: up whenever the
 // request needs a higher tier, down only once the session has been idle past
 // TurnIdleDowngrade, never sideways between profiles of the same tier.
-func TurnSwitch(cur *routing.Profile, next routing.Profile, idle time.Duration) (bool, string) {
+func TurnSwitch(cur *routing.Profile, next routing.Profile, idle time.Duration, contextTokens int) (bool, string) {
 	switch {
 	case cur == nil:
 		return true, "current_unknown"
@@ -108,6 +115,10 @@ func TurnSwitch(cur *routing.Profile, next routing.Profile, idle time.Duration) 
 		return false, "same_tier"
 	case idle >= TurnIdleDowngrade:
 		return true, "idle_downgrade"
+	case contextTokens < SmallContextTokens:
+		// Little to re-read: waiting out the cache would only keep a session on
+		// a pricier model after one misjudged request.
+		return true, "small_context_downgrade"
 	}
 	return false, "downgrade_deferred"
 }
@@ -164,4 +175,13 @@ func (c *Coordinator) judgeTier(ctx context.Context, cfg routing.Config, statuse
 	c.judged[key] = judgedTier{tier: tier, exp: c.now().Add(time.Minute)}
 	c.judgedMu.Unlock()
 	return tier
+}
+
+// judgeTurnTier rates a later request; a follow-up takes the previous
+// request's rating (cached, so usually no extra call).
+func (c *Coordinator) judgeTurnTier(ctx context.Context, cfg routing.Config, statuses map[string]routing.AdapterStatus, goal, previous string) routing.Tier {
+	if strings.TrimSpace(previous) != "" && routing.IsFollowUp(goal) {
+		return c.judgeTier(ctx, cfg, statuses, previous)
+	}
+	return c.judgeTier(ctx, cfg, statuses, goal)
 }

@@ -19,7 +19,7 @@ func TestJudgeLive(t *testing.T) {
 	}
 	ep := LocalEndpoint{ID: "judge", URL: os.Getenv("TIER_JUDGE_URL"), Kind: "openai", Model: os.Getenv("TIER_JUDGE_MODEL"), AllowPrivate: true, AllowInsecureHTTP: true}
 	var data struct {
-		Dev, Heldout []struct{ Label, Goal string }
+		Dev, Heldout, Followup []struct{ Label, Goal, Prev string }
 	}
 	b, err := os.ReadFile("testdata/tier_eval.json")
 	if err != nil {
@@ -28,10 +28,14 @@ func TestJudgeLive(t *testing.T) {
 	json.Unmarshal(b, &data)
 	class := map[Tier]string{VeryEasy: "easy", Medium: "medium", High: "hard"}
 	client := NewLocalClient()
-	for name, set := range map[string][]struct{ Label, Goal string }{"dev": data.Dev, "heldout": data.Heldout} {
+	for name, set := range map[string][]struct{ Label, Goal, Prev string }{"dev": data.Dev, "heldout": data.Heldout, "followup": data.Followup} {
 		ok := 0
 		for _, x := range set {
-			tier, err := client.JudgeTier(context.Background(), ep, "", x.Goal)
+			goal := x.Goal
+			if x.Prev != "" && IsFollowUp(goal) {
+				goal = x.Prev // the coordinator rates a follow-up like the previous request
+			}
+			tier, err := client.JudgeTier(context.Background(), ep, "", goal)
 			if err != nil {
 				t.Fatalf("%s: %v", x.Goal, err)
 			}
