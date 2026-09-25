@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
+	"powercodedeck/internal/routing"
 	"powercodedeck/internal/routing/runroute"
 	"powercodedeck/services"
 	"powercodedeck/ws"
@@ -78,7 +80,7 @@ func RouteAgent(agentSvc *services.AgentService, hub *ws.Hub, choose ChooseFunc)
 				break
 			}
 			bind = target
-			bind.NativeModel, bind.NativeEffort = ch.Profile.Model, ch.Profile.Effort
+			bind.NativeModel, bind.NativeEffort, bind.AutoProfile = ch.Profile.Model, ch.Profile.Effort, ch.Profile.ID
 			resp.Profile = &routingProfile{ID: ch.Profile.ID, Adapter: ch.Profile.Adapter, Model: ch.Profile.Model, Effort: ch.Profile.Effort}
 			resp.RuleTier, resp.Source = ch.Decision.RuleTier.String(), ch.Decision.Source
 		}
@@ -111,4 +113,103 @@ func callChoose(ctx context.Context, choose ChooseFunc, goal string) (runroute.C
 		err = runroute.ErrNoProfile
 	}
 	return ch, err
+}
+
+// TurnFunc re-routes a later message of an auto session within its tool
+// (runroute.Coordinator.ChooseTurn). Nil when the v2 routing runtime is off.
+type TurnFunc func(ctx context.Context, goal, adapter, current string) (runroute.TurnChoice, error)
+
+type routeTurnResponse struct {
+	Applied  bool            `json:"applied"`
+	Reason   string          `json:"reason"` // why it did or did not switch
+	From     *routingProfile `json:"from,omitempty"`
+	To       *routingProfile `json:"to,omitempty"`
+	RuleTier string          `json:"ruleTier,omitempty"`
+}
+
+func toRoutingProfile(p *routing.Profile) *routingProfile {
+	if p == nil {
+		return nil
+	}
+	return &routingProfile{ID: p.ID, Adapter: p.Adapter, Model: p.Model, Effort: p.Effort}
+}
+
+// RouteTurn runs before a later message of an auto session is sent: it may move
+// the session to another model of the same tool (one CLI restart that resumes
+// the conversation). It never switches mid-answer, and moves down only after
+// the session has been idle long enough that the prompt cache is cold anyway.
+// Any "not applied" answer is normal — the client just sends the message.
+func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, choose TurnFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Goal string `json:"goal"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&body); err != nil {
+			jsonError(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		id := mux.Vars(r)["id"]
+		agent, err := agentSvc.Get(id)
+		if err != nil {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		skip := func(reason string) { jsonResponse(w, routeTurnResponse{Reason: reason}) }
+		adapter := map[string]string{"claude-code": "claude", "codex-cli": "codex"}[agent.Preset]
+		switch {
+		case agent.AutoProfile == "":
+			skip("not_auto")
+			return
+		case choose == nil || native == nil:
+			skip("routing_off")
+			return
+		case adapter == "":
+			skip("no_model_control")
+			return
+		}
+		running, active, lastEnd := native.TurnState(id)
+		if !running {
+			skip("not_running")
+			return
+		}
+		if active {
+			skip("turn_active")
+			return
+		}
+		tc, err := choose(r.Context(), body.Goal, adapter, agent.AutoProfile)
+		if err != nil {
+			skip("no_profile")
+			return
+		}
+		var idle time.Duration
+		if !lastEnd.IsZero() {
+			idle = time.Since(lastEnd)
+		}
+		apply, reason := runroute.TurnSwitch(tc.Current, *tc.Profile, idle)
+		resp := routeTurnResponse{Reason: reason, From: toRoutingProfile(tc.Current), To: toRoutingProfile(tc.Profile), RuleTier: tc.Decision.RuleTier.String()}
+		if apply {
+			if err := native.SetModelEffort(id, tc.Profile.Model, tc.Profile.Effort); err != nil {
+				resp.Reason = "switch_failed"
+				jsonResponse(w, resp)
+				return
+			}
+			agentSvc.SetAutoProfile(id, tc.Profile.ID)
+			resp.Applied = true
+		}
+		jsonResponse(w, resp)
+	}
+}
+
+// ClearAutoProfile stops per-turn routing for a session (the user picked a
+// model or effort by hand).
+func ClearAutoProfile(agentSvc *services.AgentService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := mux.Vars(r)["id"]
+		if _, err := agentSvc.Get(id); err != nil {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		agentSvc.SetAutoProfile(id, "")
+		w.WriteHeader(http.StatusNoContent)
+	}
 }

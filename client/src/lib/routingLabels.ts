@@ -240,3 +240,10 @@ export function autoFallbackNote(code: string): string {
   };
   return `${why[code] ?? '자동 선택을 쓸 수 없어'} Claude Code로 시작했습니다.`;
 }
+
+// One line for the chat when a later "자동" turn moved to another model.
+export function autoSwitchNote(from: { model?: string; effort?: string } | undefined, to: { model?: string; effort?: string }, ruleTier: string): string {
+  const name = (p: { model?: string; effort?: string }) => modelName(p.model || '') + (p.effort ? ` · ${EFFORT_LABELS[p.effort] ?? p.effort}` : '');
+  const tier = TIER_LABELS[ruleTier] ?? ruleTier;
+  return `모델 변경: ${from ? name(from) + ' → ' : ''}${name(to)}${tier ? ` (예상 난이도: ${tier})` : ''}`;
+}

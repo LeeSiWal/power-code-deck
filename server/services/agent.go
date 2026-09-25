@@ -25,6 +25,8 @@ type Agent struct {
 	ColorName   string   `json:"colorName"`
 	CreatedAt   string   `json:"createdAt"`
 	UpdatedAt   string   `json:"updatedAt"`
+	// AutoProfile is set on sessions started as "자동" (only filled by Get/Bind).
+	AutoProfile string `json:"autoProfile,omitempty"`
 }
 
 var colorPool = []struct {
@@ -150,6 +152,7 @@ func (s *AgentService) Get(id string) (*Agent, error) {
 		return nil, err
 	}
 	json.Unmarshal([]byte(argsJSON), &a.Args)
+	_ = s.db.QueryRow("SELECT COALESCE(auto_profile, '') FROM agents WHERE id = ?", id).Scan(&a.AutoProfile)
 	// Reconcile the stored status against real liveness (PTY engine OR native
 	// session) so a native-track agent that's actively working isn't reported
 	// "stopped" just for lacking a live PTY. Read-only — no DB write on a Get.
@@ -331,6 +334,14 @@ type BindRequest struct {
 	Command      string
 	NativeModel  string
 	NativeEffort string
+	// AutoProfile keeps later turns routable between this tool's models; empty
+	// for a fallback bind (routing unavailable).
+	AutoProfile string
+}
+
+// SetAutoProfile records the routing profile an auto session moved to.
+func (s *AgentService) SetAutoProfile(id, profile string) {
+	_, _ = s.db.Exec("UPDATE agents SET auto_profile = ? WHERE id = ?", profile, id)
 }
 
 // Bind turns an auto session into a session of the chosen tool, keeping its id,
@@ -349,15 +360,15 @@ func (s *AgentService) Bind(id string, req BindRequest) (*Agent, error) {
 	if nativeOnly {
 		status = "stopped"
 	}
-	res, err := s.db.Exec("UPDATE agents SET preset = ?, command = ?, args = '[]', status = ?, updated_at = datetime('now') WHERE id = ? AND preset = ?",
-		req.Preset, req.Command, status, id, AutoPreset)
+	res, err := s.db.Exec("UPDATE agents SET preset = ?, command = ?, args = '[]', status = ?, auto_profile = ?, updated_at = datetime('now') WHERE id = ? AND preset = ?",
+		req.Preset, req.Command, status, req.AutoProfile, id, AutoPreset)
 	if err != nil {
 		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, ErrAlreadyBound
 	}
-	agent.Preset, agent.Command, agent.Args, agent.Status = req.Preset, req.Command, []string{}, status
+	agent.Preset, agent.Command, agent.Args, agent.Status, agent.AutoProfile = req.Preset, req.Command, []string{}, status, req.AutoProfile
 	driver := nativeDriverFor(req.Preset, req.Command)
 	if model, mode, effort := s.startingNativeConfig(agent.WorkingDir, driver, CreateAgentRequest{NativeModel: req.NativeModel, NativeEffort: req.NativeEffort}); model != "" || mode != "" || effort != "" {
 		s.SetNativeConfig(id, model, mode, effort)

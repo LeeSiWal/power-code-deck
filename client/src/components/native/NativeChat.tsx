@@ -14,7 +14,7 @@ import {
 import { writeClipboard } from '../../lib/clipboard';
 import type { ActivityTodo } from '../../stores/appStore';
 import { PluginsPanel } from './PluginsPanel';
-import { modelName } from '../../lib/routingLabels';
+import { autoSwitchNote, modelName } from '../../lib/routingLabels';
 import { AUTO_TOOL, SESSION_TOOLS, launchUrl, rememberTool, sessionName, takePendingStart, toolForDriver, type PendingStart, type SessionTool } from '../../lib/sessionTools';
 import { clientCommand, type NativeDriverName } from '../../lib/nativeCommands';
 
@@ -44,6 +44,8 @@ interface NativeChatProps {
   cwd: string;
   model?: string;
   driver?: NativeDriverName;
+  // Started as "자동": later turns may move between this tool's models.
+  autoRouted?: boolean;
 }
 
 const cloudTargetName = (d: NativeDriverName) => (d === 'antigravity' ? 'Antigravity' : d === 'codex' ? 'Codex' : 'Claude Code');
@@ -106,7 +108,7 @@ const MODES: { id: string; label: string; desc: string; icon: React.ComponentTyp
   { id: 'bypassPermissions', label: '전체 허용', desc: '모든 도구를 묻지 않고 승인합니다 — 주의해서 사용', icon: IconBolt, pill: 'border-amber-400/45 bg-amber-400/10 text-amber-300' },
 ];
 
-export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeChatProps) {
+export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted = false }: NativeChatProps) {
   const navigate = useNavigate(); // /clear swaps to a freshly created session
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pending, setPending] = useState<PendingApproval[]>([]);
@@ -152,6 +154,17 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
   if (pendingStartRef.current === undefined) pendingStartRef.current = takePendingStart(agentId);
   const [notice, setNotice] = useState(() => pendingStartRef.current?.note ?? '');
   const sendTextRef = useRef<(text: string) => void>(() => {});
+  // Per-turn model routing for a "자동" session; a model/effort picked by hand
+  // turns it off for good (server: DELETE /agents/{id}/auto-profile).
+  const [autoOn, setAutoOn] = useState(autoRouted && driver !== 'antigravity');
+  const autoOnRef = useRef(autoOn);
+  autoOnRef.current = autoOn;
+  const stopAuto = useCallback(() => {
+    if (!autoOnRef.current) return;
+    setAutoOn(false);
+    api.clearAutoProfile(agentId).catch(() => { /* next turn simply isn't routed */ });
+    setNotice('직접 고른 설정으로 고정했습니다. 자동 모델 전환이 꺼졌습니다.');
+  }, [agentId]);
   // Session options live on the server, not in localStorage: they describe the agent
   // and are re-validated at every launch, so the client only ever mirrors them.
   const [options, setOptions] = useState<SessionOptions>(EMPTY_OPTIONS);
@@ -176,9 +189,10 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     if (id === modelIdRef.current) return;
     setModelId(id);
     try { localStorage.setItem(`pcd:model:${agentId}`, id); } catch { /* ignore */ }
+    stopAuto();
     // Restart on the same conversation with the new --model.
     agentDeckWS.send('native:setModel', { agentId, model: id });
-  }, [agentId]);
+  }, [agentId, stopAuto]);
 
   const pickMode = useCallback((id: string) => {
     setMenu(null);
@@ -195,8 +209,9 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     if (id === effortIdRef.current) return;
     setEffortId(id);
     try { localStorage.setItem(`pcd:effort:${agentId}`, id); } catch { /* ignore */ }
+    stopAuto();
     agentDeckWS.send('native:setEffort', { agentId, effort: id });
-  }, [agentId]);
+  }, [agentId, stopAuto]);
 
   // Shift+Tab cycles the permission mode, like the Claude Code TUI.
   const cycleMode = useCallback(() => {
@@ -538,8 +553,27 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
     const msg = attachments.length
       ? (text ? text + '\n\n' : '') + '첨부 파일 (Read 도구로 확인해줘):\n' + attachments.map((a) => a.path).join('\n')
       : text;
+    // "자동": before a later turn, the server may move to another model of this
+    // tool (one restart that resumes the conversation). The server refuses while a
+    // turn is in flight (turn_active), so there is no client-side guess about it.
+    if (autoOn) {
+      try {
+        const r = await api.routeTurn(agentId, text || msg);
+        if (r.applied && r.to) {
+          if (r.to.model) {
+            setModelId(r.to.model);
+            try { localStorage.setItem(`pcd:model:${agentId}`, r.to.model); } catch { /* ignore */ }
+          }
+          if (driver === 'claude' && r.to.effort) {
+            setEffortId(r.to.effort);
+            try { localStorage.setItem(`pcd:effort:${agentId}`, r.to.effort); } catch { /* ignore */ }
+          }
+          setNotice(autoSwitchNote(r.from, r.to, r.ruleTier || ''));
+        }
+      } catch { /* routing is best-effort; the message still goes out */ }
+    }
     sendText(msg);
-  }, [agentId, attachments, draft, navigate, sendText, driver, working]);
+  }, [agentId, attachments, draft, navigate, sendText, driver, working, autoOn]);
 
   const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string, remember?: boolean) => {
     agentDeckWS.send('native:decide', { agentId, id, behavior, message, remember });
@@ -623,6 +657,11 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
         {/* Model switcher menu. */}
         {menu === 'model' && (
           <div className="absolute bottom-14 right-2 z-20 w-64 max-w-[calc(100vw-1rem)] bg-deck-raised border border-deck-border rounded-lg shadow-xl overflow-hidden">
+            {autoOn && (
+              <div className="px-3 py-2 text-xs text-deck-text-dim border-b border-deck-border">
+                <span className="text-deck-accent">자동 모델 전환 켜짐</span> — 요청 난이도에 맞춰 이 도구 안에서 모델을 바꿉니다. 직접 고르면 꺼집니다.
+              </div>
+            )}
             {driver !== 'antigravity' && <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-deck-text-dim">모델</div>}
             {driver !== 'antigravity' && models.map((m) => (
               <button
@@ -919,7 +958,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude' }: NativeCha
               title="도구 · 모델 전환"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-deck-accent" />
-              {driver === 'antigravity' ? currentTool.name : driver === 'codex' ? `Codex · ${modelLabel}` : modelLabel}
+              {autoOn && '자동 · '}{driver === 'antigravity' ? currentTool.name : driver === 'codex' ? `Codex · ${modelLabel}` : modelLabel}
             </button>
             {driver !== 'antigravity' && <button
               onClick={() => setMenu(menu === 'mode' ? null : 'mode')}

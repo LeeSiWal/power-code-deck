@@ -222,6 +222,7 @@ func main() {
 	var runWorker *orchestration.Worker
 	// Routing for "자동" sessions; stays nil (→ Claude Code fallback) without v2.
 	var chooseProfile handlers.ChooseFunc
+	var chooseTurn handlers.TurnFunc
 	if os.Getenv("PCD_V2_ENABLED") == "1" {
 		runs, err := orchestration.New(database)
 		if err != nil {
@@ -272,6 +273,7 @@ func main() {
 		} else {
 			handlers.RegisterRoutingRoutes(api, coordinator)
 			chooseProfile = coordinator.Choose
+			chooseTurn = coordinator.ChooseTurn
 		}
 	}
 
@@ -281,6 +283,8 @@ func main() {
 	api.HandleFunc("/agents", handlers.CreateAgent(agentSvc, hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}", handlers.GetAgent(agentSvc)).Methods("GET")
 	api.HandleFunc("/agents/{id}/route", handlers.RouteAgent(agentSvc, hub, chooseProfile)).Methods("POST")
+	api.HandleFunc("/agents/{id}/route-turn", handlers.RouteTurn(agentSvc, nativeSvc, chooseTurn)).Methods("POST")
+	api.HandleFunc("/agents/{id}/auto-profile", handlers.ClearAutoProfile(agentSvc)).Methods("DELETE")
 	api.HandleFunc("/agents/{id}", handlers.DeleteAgent(agentSvc, nativeSvc, hub)).Methods("DELETE")
 	api.HandleFunc("/agents/{id}/restart", handlers.RestartAgent(agentSvc, hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}/stop", handlers.StopAgent(agentSvc, nativeSvc, hub)).Methods("POST")
