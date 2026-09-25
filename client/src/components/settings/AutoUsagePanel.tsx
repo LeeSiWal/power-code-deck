@@ -29,7 +29,7 @@ export function AutoUsagePanel() {
             {usage.models.map((m) => <div key={m.tool + m.model + m.effort}>{modelUsageLine(m)}</div>)}
           </div>
           <p className="text-xs text-deck-text-dim">
-            전체 {usage.turns}턴 · 모델 전환 {usage.modelSwitches}회 · 도구 전환 {usage.toolSwitches}회 · 조언 {usage.delegations}회
+            전체 {usage.turns}턴 · 모델 전환 {usage.modelSwitches}회 · 도구 전환 {usage.toolSwitches}회 · 조언 {usage.delegations}회 · 메모로 새로 시작 {usage.freshStarts ?? 0}회
             {usage.handoffTokens ? ` · 인계·요청서 약 ${compactTokens(usage.handoffTokens)}토큰(글자 수 기준 추정)` : ''}
           </p>
           <div className="text-xs">

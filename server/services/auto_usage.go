@@ -99,6 +99,7 @@ type UsageSummary struct {
 	Models         []ModelUsage `json:"models"`
 	ModelSwitches  int          `json:"modelSwitches"`
 	Delegations    int          `json:"delegations"`
+	FreshStarts    int          `json:"freshStarts"`
 	ToolSwitches   int          `json:"toolSwitches"`
 	HandoffTokens  int64        `json:"handoffTokens"` // estimated, from the handoff text size
 	Idle           []IdleBucket `json:"idle"`
@@ -130,8 +131,8 @@ func (u *AutoUsage) Summary(agentID string, since time.Time) (UsageSummary, erro
 		sum.Models = append(sum.Models, m)
 	}
 	rows.Close()
-	_ = u.db.QueryRow(`SELECT COALESCE(SUM(switch_kind = 'model'),0), COALESCE(SUM(switch_kind = 'tool'),0), COALESCE(SUM(switch_kind = 'delegate'),0), COALESCE(SUM(handoff_tokens),0)
-		FROM auto_turns WHERE `+where, args...).Scan(&sum.ModelSwitches, &sum.ToolSwitches, &sum.Delegations, &sum.HandoffTokens)
+	_ = u.db.QueryRow(`SELECT COALESCE(SUM(switch_kind = 'model'),0), COALESCE(SUM(switch_kind = 'tool'),0), COALESCE(SUM(switch_kind = 'delegate'),0), COALESCE(SUM(switch_kind = 'fresh'),0), COALESCE(SUM(handoff_tokens),0)
+		FROM auto_turns WHERE `+where, args...).Scan(&sum.ModelSwitches, &sum.ToolSwitches, &sum.Delegations, &sum.FreshStarts, &sum.HandoffTokens)
 	for i, b := range idleBuckets {
 		max := 1 << 30
 		if i+1 < len(idleBuckets) {
@@ -149,6 +150,15 @@ func (u *AutoUsage) Summary(agentID string, since time.Time) (UsageSummary, erro
 // RecordDelegate records an advice call as its own turn (switch_kind "delegate"),
 // with the brief size in handoff_tokens. Nil usage = not reported.
 func (u *AutoUsage) RecordDelegate(agentID string, t DelegateTarget, briefTokens int, usage *providers.Usage) {
+	u.recordAux(agentID, "delegate", t, briefTokens, usage)
+}
+
+// RecordMemo records a handoff-memo call (a fresh start's cost).
+func (u *AutoUsage) RecordMemo(agentID string, w MemoWriter, inputTokens int, usage *providers.Usage) {
+	u.recordAux(agentID, "memo", DelegateTarget{Adapter: w.Adapter, Model: w.Model, Effort: w.Effort}, inputTokens, usage)
+}
+
+func (u *AutoUsage) recordAux(agentID, kind string, t DelegateTarget, briefTokens int, usage *providers.Usage) {
 	effort := t.Effort
 	if t.Adapter != "claude" {
 		effort = ""
@@ -158,5 +168,5 @@ func (u *AutoUsage) RecordDelegate(agentID string, t DelegateTarget, briefTokens
 		in, out, cc, cr = usage.InputTokens, usage.OutputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens
 	}
 	_, _ = u.db.Exec(`INSERT INTO auto_turns (agent_id, tool, model, effort, switch_kind, handoff_tokens, input_tokens, output_tokens, cache_creation, cache_read)
-		VALUES (?, ?, ?, ?, 'delegate', ?, ?, ?, ?, ?)`, agentID, t.Adapter, t.Model, effort, briefTokens, in, out, cc, cr)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, agentID, t.Adapter, t.Model, effort, kind, briefTokens, in, out, cc, cr)
 }

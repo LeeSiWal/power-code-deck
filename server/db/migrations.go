@@ -173,6 +173,11 @@ func Migrate(db *sql.DB) error {
 		// Set when the user sent a local model's answer to a paid model ("유료 모델로
 		// 다시"): routing then leaves local profiles out for this session.
 		"ALTER TABLE agents ADD COLUMN auto_no_local INTEGER DEFAULT 0",
+		// Last fresh start of an auto session: the user turn it happened at and the
+		// handoff memo. Later tool handoffs start there (with the memo) instead of
+		// handing over the whole conversation again.
+		"ALTER TABLE agents ADD COLUMN fresh_turn INTEGER DEFAULT 0",
+		"ALTER TABLE agents ADD COLUMN fresh_memo TEXT DEFAULT ''",
 	} {
 		db.Exec(stmt)
 	}

@@ -715,3 +715,14 @@ func (c *Coordinator) Reload(cfg routing.Config) {
 	c.judged = nil
 	c.judgedMu.Unlock()
 }
+
+// FreshStart is the fresh-start setting of the current routing config (nil =
+// off).
+func (c *Coordinator) FreshStart() *routing.FreshStartConfig {
+	cfg, err := c.currentConfig()
+	if err != nil || cfg.FreshStart == nil || !cfg.FreshStart.Enabled {
+		return nil
+	}
+	f := *cfg.FreshStart
+	return &f
+}

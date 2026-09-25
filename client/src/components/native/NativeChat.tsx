@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { agentDeckWS } from '../../lib/ws';
-import { api, type AutoUsage, type DelegateJob, type RouteTurnResult } from '../../lib/api';
+import { api, type AutoUsage, type DelegateJob, type FreshJob, type RouteTurnResult } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
 import {
   IconBolt, IconCheck, IconClose, IconCodeSlash, IconCopy, IconDevices, IconGauge, IconHand,
@@ -542,6 +542,52 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
     sendText(d.msg);
   }, [delegating, agentId, sendText]);
 
+  // Back after a pause in a long conversation: a cheap model writes a one-page
+  // handoff memo and the session continues in a new conversation from it (the
+  // old one would be re-read at full price). The message is sent when the move
+  // is done; if the memo fails or the user skips, it goes to the old one.
+  const [freshening, setFreshening] = useState<{ job: FreshJob; msg: string } | null>(null);
+  useEffect(() => {
+    if (!freshening) return;
+    const { job, msg } = freshening;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const j = await api.freshStatus(agentId, job.id);
+        if (stop || j.status === 'running') return;
+        setFreshening(null);
+        const saved = j.status === 'done'
+          ? `긴 대화(약 ${compactTokens(j.beforeTokens)}토큰)를 인계 메모(약 ${compactTokens(j.prefixTokens || 0)}토큰)로 정리해 새 대화로 이어갑니다.`
+          : `인계 메모를 만들지 못해 이전 대화로 이어서 보냈습니다${j.error ? `: ${j.error}` : '.'}`;
+        if (j.status === 'done' && j.agent && j.to) {
+          applyToolSwitch({ applied: true, reason: 'tool_switch', from: j.from, to: j.to, agent: j.agent }, msg);
+          return;
+        }
+        if (j.status === 'done' && j.to) {
+          if (j.to.model) {
+            setModelId(j.to.model);
+            try { localStorage.setItem(`pcd:model:${agentId}`, j.to.model); } catch { /* ignore */ }
+          }
+          if (driver === 'claude' && j.to.effort) {
+            setEffortId(j.to.effort);
+            try { localStorage.setItem(`pcd:effort:${agentId}`, j.to.effort); } catch { /* ignore */ }
+          }
+        }
+        sendText(msg);
+        setNotice(saved);
+      } catch { /* keep polling */ }
+    };
+    const t = window.setInterval(tick, 1500);
+    return () => { stop = true; window.clearInterval(t); };
+  }, [freshening, agentId, sendText, applyToolSwitch, driver]);
+  const skipFresh = useCallback(() => {
+    const f = freshening;
+    setFreshening(null);
+    if (!f) return;
+    api.cancelFresh(agentId, f.job.id).catch(() => { /* the old conversation is kept either way */ });
+    sendText(f.msg);
+  }, [freshening, agentId, sendText]);
+
   // A large handoff waits for the user: move the conversation, or stay here.
   const [toolAsk, setToolAsk] = useState<{ msg: string; goal: string; r: RouteTurnResult } | null>(null);
   const answerToolAsk = useCallback(async (move: boolean) => {
@@ -596,7 +642,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
 
   const send = useCallback(async () => {
     if (driver === 'antigravity' && working) return;
-    if (delegating) return; // the previous message is still waiting for its advice
+    if (delegating || freshening) return; // the previous message is still waiting (advice / handoff memo)
     const text = draft.trim();
     if (!text && !attachments.length) return;
     const command = !attachments.length ? clientCommand(text) : null;
@@ -673,6 +719,10 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
           setDelegating({ job: r.delegate, msg });
           return;
         }
+        if (r.reason === 'fresh_start' && r.fresh) {
+          setFreshening({ job: r.fresh, msg });
+          return;
+        }
         if (r.applied && r.to) {
           if (r.to.model) {
             setModelId(r.to.model);
@@ -687,7 +737,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
       } catch { /* routing is best-effort; the message still goes out */ }
     }
     sendText(msg);
-  }, [agentId, attachments, draft, navigate, sendText, driver, working, autoOn, startWithTool, applyToolSwitch, delegating]);
+  }, [agentId, attachments, draft, navigate, sendText, driver, working, autoOn, startWithTool, applyToolSwitch, delegating, freshening]);
 
   const decide = useCallback((id: string, behavior: 'allow' | 'deny', message?: string, remember?: boolean) => {
     agentDeckWS.send('native:decide', { agentId, id, behavior, message, remember });
@@ -732,6 +782,16 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
             어려운 요청이라 <b>{profileName(delegating.job.target, delegating.job.target.id)}</b>에게 조언을 받는 중… (대화 전체 대신 요청서 약 {compactTokens(delegating.job.briefTokens)}토큰)
           </span>
           <button onClick={skipDelegate} className="shrink-0 px-2.5 py-1 rounded-md border border-deck-border text-deck-text-dim">기다리지 않고 보내기</button>
+        </div>
+      )}
+
+      {freshening && (
+        <div className="mx-2 mb-1 px-3 py-2 rounded-lg border border-deck-accent/30 bg-deck-accent/10 text-xs flex items-center gap-2">
+          <IconSpinner size={13} className="animate-spin shrink-0 text-deck-accent" />
+          <span className="flex-1 min-w-0 text-deck-text">
+            긴 대화(약 {compactTokens(freshening.job.beforeTokens)}토큰)를 다시 읽는 대신 한 장짜리 인계 메모로 정리하는 중… (<b>{modelName(freshening.job.writer)}</b>)
+          </span>
+          <button onClick={skipFresh} className="shrink-0 px-2.5 py-1 rounded-md border border-deck-border text-deck-text-dim">이전 대화로 바로 보내기</button>
         </div>
       )}
 
@@ -803,8 +863,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
               <div className="px-3 py-2 text-[11px] text-deck-text-dim border-b border-deck-border space-y-0.5">
                 <div className="text-[10px] uppercase tracking-wide">이 세션 사용량</div>
                 {usage.models.map((m) => <div key={m.tool + m.model + m.effort}>{modelUsageLine(m)}</div>)}
-                {(usage.modelSwitches > 0 || usage.toolSwitches > 0 || usage.delegations > 0) && (
-                  <div>전환: 모델 {usage.modelSwitches}회 · 도구 {usage.toolSwitches}회{usage.delegations ? ` · 조언 ${usage.delegations}회` : ''}{usage.handoffTokens ? ` · 인계·요청서 약 ${compactTokens(usage.handoffTokens)}토큰` : ''}</div>
+                {(usage.modelSwitches > 0 || usage.toolSwitches > 0 || usage.delegations > 0 || usage.freshStarts > 0) && (
+                  <div>전환: 모델 {usage.modelSwitches}회 · 도구 {usage.toolSwitches}회{usage.delegations ? ` · 조언 ${usage.delegations}회` : ''}{usage.freshStarts ? ` · 메모로 새로 시작 ${usage.freshStarts}회` : ''}{usage.handoffTokens ? ` · 인계·요청서 약 ${compactTokens(usage.handoffTokens)}토큰` : ''}</div>
                 )}
               </div>
             )}

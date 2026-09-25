@@ -24,6 +24,23 @@ func CountUserTurns(events []*StreamEvent) int {
 // (0 = everything). Over maxChars, the first request and the newest entries are
 // kept. It returns "" when there is nothing to hand over, and the turn count.
 func BuildToolHandoff(events []*StreamEvent, sinceTurn int, returning bool, maxChars int) (string, int) {
+	head := "아래는 같은 프로젝트 폴더에서 다른 AI 코딩 도구와 나눈 이전 대화입니다. 그 도구가 한 파일 변경은 이미 작업 폴더에 반영되어 있습니다. 맥락으로만 참고하고, 맨 끝의 [현재 요청]에 답하세요."
+	if returning {
+		head = "당신이 이 대화를 잠시 떠난 사이, 같은 프로젝트 폴더에서 다른 AI 코딩 도구와 아래 대화가 이어졌습니다. 그 도구가 한 파일 변경은 이미 작업 폴더에 반영되어 있습니다. 맥락으로만 참고하고, 맨 끝의 [현재 요청]에 답하세요."
+	}
+	tail := "\n\n[현재 요청]\n"
+	body, turns := handoffBody(events, sinceTurn, maxChars-len(head)-len(tail))
+	if body == "" {
+		return "", 0
+	}
+	return "<이전 대화 인계>\n" + head + "\n\n" + body + "\n</이전 대화 인계>" + tail, turns
+}
+
+// handoffBody renders the turns after sinceTurn as plain text: user messages
+// verbatim, replies clipped, one line per tool call, tool results left out.
+// Over maxChars it keeps the first request (it states the goal) and as many
+// newest entries as fit. It also returns the number of turns rendered.
+func handoffBody(events []*StreamEvent, sinceTurn int, maxChars int) (string, int) {
 	var entries []string
 	turn, first := 0, ""
 	for _, ev := range events {
@@ -55,15 +72,9 @@ func BuildToolHandoff(events []*StreamEvent, sinceTurn int, returning bool, maxC
 	if len(entries) == 0 {
 		return "", 0
 	}
-	head := "아래는 같은 프로젝트 폴더에서 다른 AI 코딩 도구와 나눈 이전 대화입니다. 그 도구가 한 파일 변경은 이미 작업 폴더에 반영되어 있습니다. 맥락으로만 참고하고, 맨 끝의 [현재 요청]에 답하세요."
-	if returning {
-		head = "당신이 이 대화를 잠시 떠난 사이, 같은 프로젝트 폴더에서 다른 AI 코딩 도구와 아래 대화가 이어졌습니다. 그 도구가 한 파일 변경은 이미 작업 폴더에 반영되어 있습니다. 맥락으로만 참고하고, 맨 끝의 [현재 요청]에 답하세요."
-	}
-	tail := "\n\n[현재 요청]\n"
 	body := strings.Join(entries, "\n\n")
-	if len(head)+len(body)+len(tail) > maxChars {
-		// Keep the first request (it states the goal) and as many newest entries as fit.
-		budget := maxChars - len(head) - len(tail) - len(first) - 64
+	if len(body) > maxChars {
+		budget := maxChars - len(first) - 64
 		kept := []string{}
 		for i := len(entries) - 1; i > 0 && budget > 0; i-- {
 			if len(entries[i])+2 > budget {
@@ -75,7 +86,7 @@ func BuildToolHandoff(events []*StreamEvent, sinceTurn int, returning bool, maxC
 		skipped := len(entries) - 1 - len(kept)
 		body = first + fmt.Sprintf("\n\n(중간 %d개 항목 생략)\n\n", skipped) + strings.Join(kept, "\n\n")
 	}
-	return "<이전 대화 인계>\n" + head + "\n\n" + body + "\n</이전 대화 인계>" + tail, turn - sinceTurn
+	return body, turn - sinceTurn
 }
 
 func toolInputSummary(raw json.RawMessage) string {
