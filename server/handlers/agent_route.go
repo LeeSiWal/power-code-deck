@@ -136,6 +136,9 @@ type routeTurnResponse struct {
 	HandoffTokens int             `json:"handoffTokens,omitempty"`
 	// Set when a hard request was sent to a stronger model for advice instead.
 	Delegate *services.DelegateJob `json:"delegate,omitempty"`
+	// Set when the session continues in a new conversation from a handoff memo
+	// (reason "fresh_start"); the client sends the message once it is done.
+	Fresh *freshJob `json:"fresh,omitempty"`
 }
 
 // Tool switches only happen once a session has been idle this long (the prompt
@@ -166,7 +169,7 @@ func toRoutingProfile(p *routing.Profile) *routingProfile {
 // the conversation). It never switches mid-answer, and moves down only after
 // the session has been idle long enough that the prompt cache is cold anyway.
 // Any "not applied" answer is normal — the client just sends the message.
-func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, choose TurnFunc, usage *services.AutoUsage, delegator *services.Delegator) http.HandlerFunc {
+func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, choose TurnFunc, usage *services.AutoUsage, delegator *services.Delegator, fresh FreshFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Goal        string `json:"goal"`
@@ -216,6 +219,19 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 		note := func(kind string, handoff int) {
 			if usage != nil {
 				usage.Note(id, services.TurnMeta{Switch: kind, HandoffTokens: handoff, IdleSeconds: idleSeconds})
+			}
+		}
+		// Back after a pause with a long conversation: the cache is cold, so the
+		// whole conversation would be re-read at full price. Continue in a new
+		// conversation from a handoff memo instead, on the model routing picks for
+		// this request (a new conversation costs the same on any model or tool).
+		// A follow-up ("다시 해줘") needs the exact last turns, so it just resumes.
+		if fc := freshConfig(fresh); fc != nil && !lastEnd.IsZero() && idle >= runroute.TurnIdleDowngrade &&
+			contextTokens(history) >= fc.MinTokens() && !routing.IsFollowUp(body.Goal) {
+			if target, cur, ok := freshTargetFor(r.Context(), choose, body.Goal, adapter, agent, noLocal, previous); ok {
+				job := startFresh(agentSvc, native, usage, *fc, agent, cur, target, history, body.Goal, contextTokens(history), idleSeconds)
+				jsonResponse(w, routeTurnResponse{Reason: "fresh_start", From: toRoutingProfile(cur), To: toRoutingProfile(target.profile), Fresh: job})
+				return
 			}
 		}
 		// Other tools compete when moving there loses nothing: idle past the
@@ -300,7 +316,16 @@ func switchTool(w http.ResponseWriter, agentSvc *services.AgentService, native *
 	if returning {
 		since = prev.Turns
 	}
+	// After a fresh start, what came before it is in the memo: hand over the
+	// memo and the turns since, never the whole conversation again.
+	freshTurn, memo := agentSvc.FreshPoint(id)
+	if since < freshTurn {
+		since, returning = freshTurn, false
+	}
 	handoff, turns := services.BuildToolHandoff(history, since, returning, maxHandoffChars)
+	if memo != "" && since == freshTurn {
+		handoff = services.WithMemo(memo, handoff)
+	}
 	resp := routeTurnResponse{From: toRoutingProfile(tc.Current), To: toRoutingProfile(tc.Profile), RuleTier: tc.Decision.RuleTier.String(),
 		HandoffTurns: turns, HandoffTokens: estimateTokens(handoff)}
 	if resp.HandoffTokens > toolSwitchConfirmTokens && !confirmed {
@@ -469,4 +494,29 @@ func lastUserText(history []*services.StreamEvent) string {
 		}
 	}
 	return ""
+}
+
+func freshConfig(fresh FreshFunc) *routing.FreshStartConfig {
+	if fresh == nil {
+		return nil
+	}
+	return fresh()
+}
+
+// freshTargetFor picks where a fresh start lands: routing's choice across tools,
+// else within the current tool, else the current profile.
+func freshTargetFor(ctx context.Context, choose TurnFunc, goal, adapter string, agent *services.Agent, noLocal bool, previous string) (freshTarget, *routing.Profile, bool) {
+	var cur *routing.Profile
+	if wide, err := choose(ctx, goal, "", agent.AutoProfile, noLocal, previous); err == nil {
+		cur = wide.Current
+		if b, ok := autoBindTargets[wide.Profile.Adapter]; ok && b.Preset != "antigravity" {
+			return freshTarget{profile: wide.Profile, bind: b}, cur, true
+		}
+	}
+	if same, err := choose(ctx, goal, adapter, agent.AutoProfile, noLocal, previous); err == nil {
+		return freshTarget{profile: same.Profile, bind: autoBindTargets[adapter]}, same.Current, true
+	} else if same.Current != nil {
+		return freshTarget{profile: same.Current, bind: autoBindTargets[adapter]}, same.Current, true
+	}
+	return freshTarget{}, cur, false
 }

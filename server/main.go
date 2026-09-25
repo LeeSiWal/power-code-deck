@@ -230,6 +230,7 @@ func main() {
 	// Routing for "자동" sessions; stays nil (→ Claude Code fallback) without v2.
 	var chooseProfile handlers.ChooseFunc
 	var chooseTurn handlers.TurnFunc
+	var freshStart handlers.FreshFunc
 	var delegator *services.Delegator
 	if os.Getenv("PCD_V2_ENABLED") == "1" {
 		runs, err := orchestration.New(database)
@@ -282,6 +283,7 @@ func main() {
 			handlers.RegisterRoutingRoutes(api, coordinator)
 			chooseProfile = coordinator.Choose
 			chooseTurn = coordinator.ChooseTurn
+			freshStart = coordinator.FreshStart
 			delegator = services.NewDelegator(runProviders, nativeSvc, autoUsage)
 			(&handlers.LocalModels{ConfigPath: routingConfigPath(), Coord: coordinator, Endpoints: localEndpoints, Client: routing.NewLocalClient()}).Register(api)
 		}
@@ -293,8 +295,9 @@ func main() {
 	api.HandleFunc("/agents", handlers.CreateAgent(agentSvc, hub)).Methods("POST")
 	api.HandleFunc("/agents/{id}", handlers.GetAgent(agentSvc)).Methods("GET")
 	api.HandleFunc("/agents/{id}/route", handlers.RouteAgent(agentSvc, hub, chooseProfile, autoUsage)).Methods("POST")
-	api.HandleFunc("/agents/{id}/route-turn", handlers.RouteTurn(agentSvc, nativeSvc, chooseTurn, autoUsage, delegator)).Methods("POST")
+	api.HandleFunc("/agents/{id}/route-turn", handlers.RouteTurn(agentSvc, nativeSvc, chooseTurn, autoUsage, delegator, freshStart)).Methods("POST")
 	api.HandleFunc("/agents/{id}/delegate/{job}", handlers.DelegateStatus(delegator)).Methods("GET", "DELETE")
+	api.HandleFunc("/agents/{id}/fresh/{job}", handlers.FreshStatus()).Methods("GET", "DELETE")
 	api.HandleFunc("/agents/{id}/auto-usage", handlers.AutoUsageOf(autoUsage)).Methods("GET")
 	api.HandleFunc("/agents/{id}/escalate", handlers.Escalate(agentSvc, nativeSvc, chooseTurn, autoUsage)).Methods("POST")
 	api.HandleFunc("/auto-usage", handlers.AutoUsageRecent(autoUsage)).Methods("GET")

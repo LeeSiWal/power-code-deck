@@ -246,7 +246,10 @@ type Config struct {
 	// TierJudge (optional): a local model rates request difficulty; the
 	// keyword rules remain the fallback. See judge.go.
 	TierJudge *TierJudgeConfig `json:"tierJudge,omitempty"`
-	RouteLLM  RouteLLMConfig   `json:"routellm"`
+	// FreshStart (optional): after a pause, a long auto session continues in
+	// a new conversation that starts from a handoff memo. See fresh.go.
+	FreshStart *FreshStartConfig `json:"freshStart,omitempty"`
+	RouteLLM   RouteLLMConfig    `json:"routellm"`
 	// Strategy settles ambiguous choices. Empty keeps the old meaning:
 	// routellm when routellm.enabled, otherwise rules.
 	Strategy Strategy `json:"strategy,omitempty"`
@@ -355,6 +358,11 @@ func (c Config) Validate() error {
 	if j := c.TierJudge; j != nil {
 		if !eps[j.EndpointRef] {
 			return fmt.Errorf("routing config: tierJudge references unknown endpoint %q", j.EndpointRef)
+		}
+	}
+	if f := c.FreshStart; f != nil {
+		if err := f.Validate(); err != nil {
+			return err
 		}
 	}
 	if c.Strategy != "" && !ValidStrategy(c.Strategy) {

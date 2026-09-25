@@ -100,6 +100,16 @@ export interface RouteTurnResult {
   handoffTokens?: number;
   // reason "delegating": the hard request went to a stronger model for advice.
   delegate?: DelegateJob;
+  // reason "fresh_start": a long conversation continues from a handoff memo.
+  fresh?: FreshJob;
+}
+export interface FreshJob {
+  id: string; agentId: string; status: 'running' | 'done' | 'failed' | 'canceled'; writer: string;
+  beforeTokens: number; prefixTokens?: number;
+  from?: { id: string; adapter: string; model?: string; effort?: string };
+  to?: { id: string; adapter: string; model?: string; effort?: string };
+  agent?: any; // set when the fresh start also moved to another tool
+  error?: string;
 }
 export interface DelegateJob {
   id: string; agentId: string; status: 'running' | 'done' | 'failed' | 'canceled';
@@ -109,7 +119,7 @@ export interface DelegateJob {
 // Token sums cover only the turns whose CLI reported usage (reported ≤ turns).
 export interface AutoModelUsage { tool: string; model: string; effort: string; turns: number; reported: number; input: number; output: number; cacheCreation: number; cacheRead: number }
 export interface AutoIdleBucket { label: string; minSeconds: number; turns: number; reported: number; cacheRead: number; inputTotal: number }
-export interface AutoUsage { turns: number; models: AutoModelUsage[]; modelSwitches: number; toolSwitches: number; delegations: number; handoffTokens: number; idle: AutoIdleBucket[]; idleThresholdSeconds: number }
+export interface AutoUsage { turns: number; models: AutoModelUsage[]; modelSwitches: number; toolSwitches: number; delegations: number; freshStarts: number; handoffTokens: number; idle: AutoIdleBucket[]; idleThresholdSeconds: number }
 // Settings → 로컬 모델 (GET/PUT/DELETE /v2/routing/local).
 export interface LocalModelEntry {
   id: string; url: string; kind: 'openai' | 'ollama' | string; model: string;
@@ -349,6 +359,8 @@ export const api = {
   autoUsage: (id: string) => apiFetch<AutoUsage>(`/agents/${encodeURIComponent(id)}/auto-usage`),
   autoUsageRecent: (days = 7) => apiFetch<AutoUsage>(`/auto-usage?days=${days}`),
   delegateStatus: (id: string, job: string) => apiFetch<DelegateJob>(`/agents/${encodeURIComponent(id)}/delegate/${encodeURIComponent(job)}`),
+  freshStatus: (id: string, job: string) => apiFetch<FreshJob>(`/agents/${encodeURIComponent(id)}/fresh/${encodeURIComponent(job)}`),
+  cancelFresh: (id: string, job: string) => apiFetch<void>(`/agents/${encodeURIComponent(id)}/fresh/${encodeURIComponent(job)}`, { method: 'DELETE' }),
   cancelDelegate: (id: string, job: string) => apiFetch<void>(`/agents/${encodeURIComponent(id)}/delegate/${encodeURIComponent(job)}`, { method: 'DELETE' }),
   escalate: (id: string, goal: string) =>
     apiFetch<RouteTurnResult>(`/agents/${encodeURIComponent(id)}/escalate`, { method: 'POST', body: JSON.stringify({ goal }) }),

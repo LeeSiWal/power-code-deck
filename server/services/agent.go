@@ -408,6 +408,19 @@ func (s *AgentService) SwitchTool(id string, req BindRequest, leavingTurns int) 
 	return agent, nil
 }
 
+// MarkFreshStart records that the session continues in a new conversation from
+// a handoff memo at user turn `turns`: no tool resumes a conversation from
+// before it (those are the long ones the memo replaces).
+func (s *AgentService) MarkFreshStart(id string, turns int, memo string) {
+	_, _ = s.db.Exec("UPDATE agents SET claude_session_id = '', tool_sessions = '', fresh_turn = ?, fresh_memo = ? WHERE id = ?", turns, memo, id)
+}
+
+// FreshPoint is the session's last fresh start (turn 0 = none).
+func (s *AgentService) FreshPoint(id string) (turns int, memo string) {
+	_ = s.db.QueryRow("SELECT COALESCE(fresh_turn, 0), COALESCE(fresh_memo, '') FROM agents WHERE id = ?", id).Scan(&turns, &memo)
+	return turns, memo
+}
+
 // AutoNoLocal reports whether this session opted out of local models.
 func (s *AgentService) AutoNoLocal(id string) bool {
 	var v int
