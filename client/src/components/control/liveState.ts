@@ -22,6 +22,7 @@ export function attnLabel(r: { kind: string; count?: number }): string {
 
 export function kindGlyph(preset: string): string {
   const p = (preset || '').toLowerCase();
+  if (p === 'auto') return 'auto';
   if (p.includes('codex')) return 'codex';
   if (p.includes('claude')) return 'claude';
   return 'shell';
