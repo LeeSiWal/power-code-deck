@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ApiError, api, DeciderRecord, Run, RoutingDecision, RoutingMode, RoutingSnapshot, RoutingStrategy, RoutingTimeline } from '../../lib/api';
+import { ApiError, api, isFeatureOff, DeciderRecord, Run, RoutingDecision, RoutingMode, RoutingSnapshot, RoutingStrategy, RoutingTimeline } from '../../lib/api';
 import { CLASS_LABELS, MODE_LABELS, STRATEGY_LABELS, phaseLabel, reasonLabel, skipLabel, tokens } from '../../lib/routingLabels';
 
 /**
@@ -78,7 +78,7 @@ export function RoutingPanel({ run, onChanged }: { run: Run; onChanged: () => vo
       setSnapshot(snap);
       setTimeline(tl);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) setUnavailable(true);
+      if (isFeatureOff(err)) setUnavailable(true);
       else setError(err instanceof Error ? err.message : '라우팅 정보를 불러오지 못했습니다');
     }
   }, [run.id]);
