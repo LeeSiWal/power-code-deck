@@ -161,3 +161,16 @@ func clip(s string, max int) string {
 	}
 	return s[:cut] + "…[truncated]"
 }
+
+// followUpRe finds anything that names a target (a file, number, identifier or
+// quoted text); a request without one cannot be rated on its own.
+var followUpRe = regexp.MustCompile("[A-Za-z0-9._/'\"`]")
+
+// IsFollowUp reports a short request that only refers to the previous one
+// ("한번더 붙여줘", "다시 해줘", "계속 진행해줘"). Measured on 12 follow-up and
+// scope cases: judging such a fragment alone rated "한번더 붙여줘" HARD; taking
+// the previous request's rating got all 8 follow-ups right.
+func IsFollowUp(goal string) bool {
+	g := strings.TrimSpace(goal)
+	return g != "" && utf8.RuneCountInString(g) <= 20 && !followUpRe.MatchString(g)
+}

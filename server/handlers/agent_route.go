@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -121,7 +122,7 @@ func callChoose(ctx context.Context, choose ChooseFunc, goal string) (runroute.C
 
 // TurnFunc re-routes a later message of an auto session within its tool
 // (runroute.Coordinator.ChooseTurn). Nil when the v2 routing runtime is off.
-type TurnFunc func(ctx context.Context, goal, adapter, current string, noLocal bool) (runroute.TurnChoice, error)
+type TurnFunc func(ctx context.Context, goal, adapter, current string, noLocal bool, previous string) (runroute.TurnChoice, error)
 
 type routeTurnResponse struct {
 	Applied  bool            `json:"applied"`
@@ -204,6 +205,8 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 			return
 		}
 		noLocal := agentSvc.AutoNoLocal(id)
+		history := native.History(id)
+		previous := lastUserText(history)
 		var idle time.Duration
 		idleSeconds := -1
 		if !lastEnd.IsZero() {
@@ -217,7 +220,7 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 		}
 		// Idle past the cache lifetime: other tools may compete too.
 		if idle >= runroute.TurnIdleDowngrade {
-			if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile, noLocal); err == nil && wide.Profile.Adapter != adapter {
+			if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile, noLocal, previous); err == nil && wide.Profile.Adapter != adapter {
 				if target, ok := autoBindTargets[wide.Profile.Adapter]; ok && target.Preset != "antigravity" {
 					if ok, handoff := switchTool(w, agentSvc, native, id, agent, wide, target, body.ConfirmTool); ok {
 						note("tool", handoff)
@@ -226,21 +229,20 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 				}
 			}
 		}
-		tc, err := choose(r.Context(), body.Goal, adapter, agent.AutoProfile, noLocal)
+		tc, err := choose(r.Context(), body.Goal, adapter, agent.AutoProfile, noLocal, previous)
 		if err != nil {
 			note("", 0)
 			skip("no_profile")
 			return
 		}
-		apply, reason := runroute.TurnSwitch(tc.Current, *tc.Profile, idle)
+		apply, reason := runroute.TurnSwitch(tc.Current, *tc.Profile, idle, contextTokens(history))
 		resp := routeTurnResponse{Reason: reason, From: toRoutingProfile(tc.Current), To: toRoutingProfile(tc.Profile), RuleTier: tc.Decision.RuleTier.String()}
 		// Hard request in a long conversation: ask the stronger model for advice on
 		// a short brief, and let the current model (which has the context) do it.
 		if apply && reason == "harder" && delegator != nil {
-			history := native.History(id)
 			if contextTokens(history) >= delegateMinTokens {
 				advisor := tc.Profile
-				if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile, true); err == nil && autoBindTargets[wide.Profile.Adapter].Preset != "antigravity" {
+				if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile, true, previous); err == nil && autoBindTargets[wide.Profile.Adapter].Preset != "antigravity" {
 					advisor = wide.Profile
 				}
 				target := services.DelegateTarget{ProfileID: advisor.ID, Adapter: advisor.Adapter, Model: advisor.LaunchModel(), Effort: advisor.Effort}
@@ -416,7 +418,7 @@ func Escalate(agentSvc *services.AgentService, native *services.NativeService, c
 			jsonError(w, "wait for the current answer to finish", http.StatusConflict)
 			return
 		}
-		tc, err := choose(r.Context(), body.Goal, "", agent.AutoProfile, true)
+		tc, err := choose(r.Context(), body.Goal, "", agent.AutoProfile, true, "")
 		if err != nil {
 			jsonError(w, "no paid model is available for this request", http.StatusConflict)
 			return
@@ -446,4 +448,21 @@ func Escalate(agentSvc *services.AgentService, native *services.NativeService, c
 		resp.Applied = true
 		jsonResponse(w, resp)
 	}
+}
+
+// lastUserText is the most recent request in the chat (the one before the
+// message being routed now).
+func lastUserText(history []*services.StreamEvent) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		ev := history[i]
+		if ev.Type != "user" || ev.Message == nil || ev.ParentToolUseID != nil && *ev.ParentToolUseID != "" {
+			continue
+		}
+		for _, b := range ev.Message.Content {
+			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+				return b.Text
+			}
+		}
+	}
+	return ""
 }

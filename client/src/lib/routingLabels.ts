@@ -129,6 +129,12 @@ export function adapterName(id: string): string {
   return ADAPTER_NAMES[id] ?? (id ? id[0].toUpperCase() + id.slice(1) : id);
 }
 
+// "추론 매우 높음", not a bare "매우 높음": next to a difficulty ("예상 난이도:
+// 어려움") a bare level read as the task being "very hard".
+export function effortLabel(effort: string): string {
+  return `추론 ${EFFORT_LABELS[effort] ?? effort}`;
+}
+
 export const EFFORT_LABELS: Record<string, string> = {
   minimal: '최소',
   low: '낮음',
@@ -179,7 +185,7 @@ export function profileName(p: NamedProfile | undefined, id = '', displayNames?:
     const m = /^([a-z]+)-default$/.exec(id);
     return m ? `${adapterName(m[1])} · 기본 모델` : id;
   }
-  const effort = p.effort ? ` · ${EFFORT_LABELS[p.effort] ?? p.effort}` : '';
+  const effort = p.effort ? ` · ${effortLabel(p.effort)}` : '';
   return `${adapterName(p.adapter)} · ${modelName(p.model || '', displayNames)}${effort}`;
 }
 
@@ -252,7 +258,7 @@ export function autoFallbackNote(code: string): string {
 
 // One line for the chat when a later "자동" turn moved to another model.
 export function autoSwitchNote(from: { model?: string; effort?: string } | undefined, to: { model?: string; effort?: string }, ruleTier: string): string {
-  const name = (p: { model?: string; effort?: string }) => modelName(p.model || '') + (p.effort ? ` · ${EFFORT_LABELS[p.effort] ?? p.effort}` : '');
+  const name = (p: { model?: string; effort?: string }) => modelName(p.model || '') + (p.effort ? ` · ${effortLabel(p.effort)}` : '');
   const tier = TIER_LABELS[ruleTier] ?? ruleTier;
   return `모델 변경: ${from ? name(from) + ' → ' : ''}${name(to)}${tier ? ` (예상 난이도: ${tier})` : ''}`;
 }
@@ -260,7 +266,7 @@ export function autoSwitchNote(from: { model?: string; effort?: string } | undef
 // One line for the chat when an idle "자동" session moved to another tool.
 export function toolSwitchNote(from: { adapter?: string } | undefined, to: { adapter: string; model?: string; effort?: string }, ruleTier: string, turns: number): string {
   const tier = TIER_LABELS[ruleTier] ?? ruleTier;
-  const target = `${adapterName(to.adapter)} · ${modelName(to.model || '')}${to.effort ? ` · ${EFFORT_LABELS[to.effort] ?? to.effort}` : ''}`;
+  const target = `${adapterName(to.adapter)} · ${modelName(to.model || '')}${to.effort ? ` · ${effortLabel(to.effort)}` : ''}`;
   return `도구 전환: ${from?.adapter ? adapterName(from.adapter) + ' → ' : ''}${target}${tier ? ` (예상 난이도: ${tier})` : ''}${turns ? ` · 이전 대화 ${turns}턴 인계` : ''}`;
 }
 
@@ -278,7 +284,7 @@ export function cacheShare(cacheRead: number, inputTotal: number): string {
 
 // "Sonnet 5 · 낮음 — 3턴 · 입력 12.3k · 출력 2.1k · 캐시 80%" (+ "N턴 미보고").
 export function modelUsageLine(m: { tool: string; model: string; effort: string; turns: number; reported: number; input: number; output: number; cacheCreation: number; cacheRead: number }): string {
-  const name = `${adapterName(m.tool)} · ${modelName(m.model)}${m.effort ? ` · ${EFFORT_LABELS[m.effort] ?? m.effort}` : ''}`;
+  const name = `${adapterName(m.tool)} · ${modelName(m.model)}${m.effort ? ` · ${effortLabel(m.effort)}` : ''}`;
   const unreported = m.turns - m.reported;
   if (!m.reported) return `${name} — ${m.turns}턴 · 사용량 미보고`;
   const total = m.input + m.cacheCreation + m.cacheRead;

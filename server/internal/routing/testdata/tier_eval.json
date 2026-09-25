@@ -1,5 +1,5 @@
 {
- "_note": "Labeled coding requests for the tier judge. dev = written with the prompt in view; heldout = written afterwards, labels fixed before scoring. Labels: easy (small, mechanical, fully specified), medium, hard.",
+ "_note": "Labeled coding requests for the tier judge. dev = written with the prompt in view; heldout = written afterwards, labels fixed before scoring. Labels: easy (small, mechanical, fully specified), medium, hard. followup = later requests with the previous request as context (prev \"\" = standalone scope cases), added after a user saw \"한번더 붙여줘\" rated HARD.",
  "dev": [
   {
    "label": "easy",
@@ -282,6 +282,68 @@
   {
    "label": "hard",
    "goal": "production에서만 나는 간헐적 500 에러 원인을 찾아줘"
+  }
+ ],
+ "followup": [
+  {
+   "label": "easy",
+   "prev": "test.txt에 '123'을 붙여줘",
+   "goal": "한번더 붙여줘"
+  },
+  {
+   "label": "easy",
+   "prev": "test.txt에 '123'을 붙여줘",
+   "goal": "다시 해줘"
+  },
+  {
+   "label": "easy",
+   "prev": "README 오타 고쳐줘",
+   "goal": "그거 되돌려줘"
+  },
+  {
+   "label": "easy",
+   "prev": "config.yaml의 timeout을 60으로 바꿔줘",
+   "goal": "port도 9090으로 바꿔줘"
+  },
+  {
+   "label": "medium",
+   "prev": "로그인 폼에 비밀번호 보기 토글을 추가해줘",
+   "goal": "회원가입 폼에도 똑같이 만들어줘"
+  },
+  {
+   "label": "medium",
+   "prev": "CSV 내보내기 기능을 추가해줘",
+   "goal": "좋아 이어서 해줘"
+  },
+  {
+   "label": "hard",
+   "prev": "인증 시스템을 OAuth2로 재설계해줘",
+   "goal": "계속 진행해줘"
+  },
+  {
+   "label": "hard",
+   "prev": "결제 모듈을 별도 서비스로 분리해줘",
+   "goal": "다시 해줘"
+  },
+  {
+   "label": "easy",
+   "prev": "",
+   "goal": "테스트 파일에 모든 123을 때줘"
+  },
+  {
+   "label": "easy",
+   "prev": "",
+   "goal": "파일 안의 모든 TODO 주석을 지워줘"
+  },
+  {
+   "label": "easy",
+   "prev": "",
+   "goal": "utils.py에서 모든 print 문을 지워줘"
+  },
+  {
+   "label": "medium",
+   "prev": "",
+   "goal": "앱 전체의 버튼 색을 브랜드 색으로 바꿔줘"
   }
  ]
 }
