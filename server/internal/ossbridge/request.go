@@ -60,6 +60,7 @@ type chatRequest struct {
 	MaxTokens         *int          `json:"max_tokens,omitempty"`
 	Temperature       *float64      `json:"temperature,omitempty"`
 	TopP              *float64      `json:"top_p,omitempty"`
+	TopK              *int          `json:"top_k,omitempty"`
 }
 
 // inputItem is one entry of a Responses `input` array.
@@ -73,6 +74,9 @@ type inputItem struct {
 	Input     string          `json:"input"` // custom_tool_call
 	Output    json.RawMessage `json:"output"`
 }
+
+// Room for any edit call; a runaway repetition then ends in ~1.5 min, not ~3.
+const defaultMaxTokens = 4096
 
 // localTools is what a local model gets: running commands and editing files.
 // MCP/plugin/goal/image tools and hosted tools (web_search) are dropped — a
@@ -106,8 +110,29 @@ func fnTool(name, desc, params string) chatTool {
 // freeform (custom) so their calls can be converted back.
 func toChat(in responsesRequest, model string) (chatRequest, map[string]bool) {
 	custom := map[string]bool{}
+	// Codex sends no sampling settings, so mlx_lm.server decodes greedily — and
+	// Qwen3 then repeats itself until the token limit (measured: a create-file
+	// request burned 2048/8192 tokens with no answer; with Qwen's recommended
+	// sampling it answered in ~50 tokens, 3/3). Defaults apply only when the
+	// request has none.
+	if in.Temperature == nil {
+		t := 0.7
+		in.Temperature = &t
+	}
+	if in.TopP == nil {
+		p := 0.8
+		in.TopP = &p
+	}
+	if in.MaxOutputTokens == nil {
+		// mlx_lm.server stops at 512 tokens by default, and Codex sends no
+		// limit: a tool call cut at 512 was dropped and the turn came back empty
+		// (measured: 3 of 4 runs of a create-file task).
+		n := defaultMaxTokens
+		in.MaxOutputTokens = &n
+	}
+	topK := 20
 	out := chatRequest{Model: model, Stream: true, StreamOptions: map[string]bool{"include_usage": true},
-		ParallelToolCalls: in.ParallelToolCalls, MaxTokens: in.MaxOutputTokens, Temperature: in.Temperature, TopP: in.TopP}
+		ParallelToolCalls: in.ParallelToolCalls, MaxTokens: in.MaxOutputTokens, Temperature: in.Temperature, TopP: in.TopP, TopK: &topK}
 	if strings.TrimSpace(in.Instructions) != "" {
 		out.Messages = append(out.Messages, chatMessage{Role: "system", Content: in.Instructions})
 	}

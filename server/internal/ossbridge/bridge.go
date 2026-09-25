@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"powercodedeck/internal/routing"
@@ -70,6 +71,9 @@ func (b *Bridge) responses(w http.ResponseWriter, r *http.Request, ep routing.Lo
 	}
 	chat, custom := toChat(in, model)
 	body, _ := json.Marshal(chat)
+	if dump := os.Getenv("PCD_OSS_BRIDGE_DUMP"); dump != "" { // debugging aid: last chat request
+		_ = os.WriteFile(dump, body, 0600)
+	}
 	resp, err := b.Client.Stream(r.Context(), ep, http.MethodPost, "/v1/chat/completions", body)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "local model server unreachable: "+err.Error())

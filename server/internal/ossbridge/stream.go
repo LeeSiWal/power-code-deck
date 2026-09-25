@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"sort"
 	"strings"
 )
@@ -96,8 +97,13 @@ func relay(upstream io.Reader, e *emitter, model string, custom map[string]bool)
 
 	sc := bufio.NewScanner(upstream)
 	sc.Buffer(make([]byte, 64<<10), 16<<20)
+	var raw strings.Builder // kept (bounded) to explain an empty answer
+	finish := ""
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
+		if raw.Len() < 4000 && line != "" {
+			raw.WriteString(line + "\n")
+		}
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
@@ -117,6 +123,9 @@ func relay(upstream io.Reader, e *emitter, model string, custom map[string]bool)
 			}
 		}
 		for _, ch := range c.Choices {
+			if ch.FinishReason != nil && *ch.FinishReason != "" {
+				finish = *ch.FinishReason
+			}
 			if d := ch.Delta.Content; d != "" {
 				if msgID == "" {
 					msgID, msgIndex = "msg_"+rand.Text()[:16], nextIndex
@@ -161,6 +170,21 @@ func relay(upstream io.Reader, e *emitter, model string, custom map[string]bool)
 	}
 	if err := sc.Err(); err != nil {
 		return err
+	}
+	if msgID == "" && len(tools) == 0 && len(output) == 0 {
+		log.Printf("ossbridge: local model returned no text and no tool call (finish=%s); upstream sent: %.2000s", finish, raw.String())
+		// Say so instead of ending the turn silently, which reads as "done".
+		note := "(로컬 모델이 빈 답을 보냈습니다. 다시 시도하거나 유료 모델로 보내 주세요.)"
+		if finish == "length" {
+			note = "(로컬 모델 답변이 길이 제한에 걸려 비었습니다. 다시 시도하거나 유료 모델로 보내 주세요.)"
+		}
+		msgID, msgIndex = "msg_"+rand.Text()[:16], nextIndex
+		nextIndex++
+		text.Reset()
+		text.WriteString(note)
+		e.event("response.output_item.added", map[string]any{"output_index": msgIndex,
+			"item": map[string]any{"id": msgID, "type": "message", "role": "assistant", "status": "in_progress", "content": []any{}}})
+		e.event("response.output_text.delta", map[string]any{"item_id": msgID, "output_index": msgIndex, "content_index": 0, "delta": note})
 	}
 	closeMessage()
 	idx := make([]int, 0, len(tools))

@@ -200,3 +200,30 @@ func TestPatchFor(t *testing.T) {
 		t.Fatal("missing path accepted")
 	}
 }
+
+// mlx_lm.server's 512-token default cut tool calls; the bridge always sets a
+// limit, and an empty cut answer turns into a visible note.
+func TestMaxTokensAndEmptyLengthAnswer(t *testing.T) {
+	out, _ := toChat(responsesRequest{Input: json.RawMessage(`"hi"`)}, "m")
+	if out.MaxTokens == nil || *out.MaxTokens != defaultMaxTokens {
+		t.Fatalf("max_tokens %v", out.MaxTokens)
+	}
+	if out.Temperature == nil || *out.Temperature != 0.7 || out.TopP == nil || out.TopK == nil {
+		t.Fatalf("sampling defaults missing: %+v", out)
+	}
+	cold := 0.0
+	if kept, _ := toChat(responsesRequest{Input: json.RawMessage(`"hi"`), Temperature: &cold}, "m"); *kept.Temperature != 0 {
+		t.Fatal("an explicit temperature was overridden")
+	}
+	var b strings.Builder
+	stream := `data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":"length"}]}` + "\n\ndata: [DONE]\n\n"
+	if err := relay(strings.NewReader(stream), &emitter{w: &b}, "m", nil); err != nil {
+		t.Fatal(err)
+	}
+	evs := readSSE(t, strings.NewReader(b.String()))
+	item := evs[len(evs)-1].data["response"].(map[string]any)["output"].([]any)[0].(map[string]any)
+	text := item["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "길이 제한") {
+		t.Fatalf("empty cut answer not reported: %q", text)
+	}
+}
