@@ -218,8 +218,12 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 				usage.Note(id, services.TurnMeta{Switch: kind, HandoffTokens: handoff, IdleSeconds: idleSeconds})
 			}
 		}
-		// Idle past the cache lifetime: other tools may compete too.
-		if idle >= runroute.TurnIdleDowngrade {
+		// Other tools compete when moving there loses nothing: idle past the
+		// cache lifetime, a short conversation, or a session on the free local
+		// model (which runs through Codex and would otherwise keep every later
+		// request on Codex models).
+		curModel, _, _ := agentSvc.NativeConfig(id)
+		if cross, _ := runroute.CrossToolAllowed(idle, contextTokens(history), strings.HasPrefix(curModel, "oss:")); cross {
 			if wide, err := choose(r.Context(), body.Goal, "", agent.AutoProfile, noLocal, previous); err == nil && wide.Profile.Adapter != adapter {
 				if target, ok := autoBindTargets[wide.Profile.Adapter]; ok && target.Preset != "antigravity" {
 					if ok, handoff := switchTool(w, agentSvc, native, id, agent, wide, target, body.ConfirmTool); ok {
