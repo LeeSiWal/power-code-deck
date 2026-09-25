@@ -36,7 +36,9 @@ var ErrRoutingOff = errors.New("routing is off for this run")
 var ErrNoProfile = errors.New("no allowed profile")
 
 type Coordinator struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// cfgMu guards cfg/cfgErr: Settings can replace them while routing runs.
+	cfgMu    sync.RWMutex
 	cfg      routing.Config
 	cfgErr   error
 	store    *routing.Store
@@ -92,7 +94,8 @@ func (c *Coordinator) config(ctx context.Context) (routing.Config, map[string]ro
 	for _, s := range statuses {
 		m[s.AdapterID] = s
 	}
-	return c.cfg.WithDiscoveredDefaults(statuses), m
+	cfg, _ := c.currentConfig()
+	return cfg.WithDiscoveredDefaults(statuses), m
 }
 
 // Refresh re-probes CLIs and drops cached router answers (after login/logout,
@@ -132,8 +135,8 @@ type Snapshot struct {
 func (c *Coordinator) Snapshot(ctx context.Context) Snapshot {
 	cfg, st := c.config(ctx)
 	s := Snapshot{Mode: cfg.Mode, Fingerprint: cfg.Fingerprint(), Spend: cfg.Spend, Switching: cfg.Switching, Policy: c.policy, Tiers: map[string][]string{}, RouteLLM: map[string]any{"enabled": cfg.RouteLLM.Enabled}, TierJudge: cfg.TierJudge}
-	if c.cfgErr != nil {
-		s.ConfigError = c.cfgErr.Error()
+	if _, cfgErr := c.currentConfig(); cfgErr != nil {
+		s.ConfigError = cfgErr.Error()
 	}
 	for _, a := range c.prober.Probe(ctx, c.probeAge) {
 		if a.Version != "" {
@@ -175,7 +178,8 @@ func (c *Coordinator) mode(st routing.RunState) routing.Mode {
 	if st.Mode != "" {
 		return st.Mode
 	}
-	return c.cfg.Mode
+	cfg, _ := c.currentConfig()
+	return cfg.Mode
 }
 
 // Settings sets a Run's routing mode and pins.
@@ -194,7 +198,7 @@ func (c *Coordinator) Preview(ctx context.Context, runID, manual string) (routin
 	if err != nil {
 		return routing.Decision{}, err
 	}
-	st, err := c.store.Ensure(runID, c.cfg.Mode)
+	st, err := c.store.Ensure(runID, c.modeDefault())
 	if err != nil {
 		return routing.Decision{}, err
 	}
@@ -281,7 +285,7 @@ func (c *Coordinator) precheck(runID string, auto bool) (orchestration.Run, rout
 	if run.State == "canceled" || run.State == "succeeded" {
 		return run, routing.RunState{}, "", fmt.Errorf("%w: run is %s", orchestration.ErrConflict, run.State)
 	}
-	st, err := c.store.Ensure(runID, c.cfg.Mode)
+	st, err := c.store.Ensure(runID, c.modeDefault())
 	if err != nil {
 		return run, st, "", err
 	}
@@ -682,3 +686,32 @@ func (c *Coordinator) Forget(runID string) error { return c.store.DeleteRun(runI
 
 // IsNotFound helps handlers map errors.
 func IsNotFound(err error) bool { return errors.Is(err, sql.ErrNoRows) }
+
+func (c *Coordinator) currentConfig() (routing.Config, error) {
+	c.cfgMu.RLock()
+	defer c.cfgMu.RUnlock()
+	return c.cfg, c.cfgErr
+}
+
+func (c *Coordinator) modeDefault() routing.Mode {
+	cfg, _ := c.currentConfig()
+	return cfg.Mode
+}
+
+// Reload applies a new routing.json (written by the Settings API) without a
+// restart: probes, cached router answers and judge verdicts start over.
+func (c *Coordinator) Reload(cfg routing.Config) {
+	c.cfgMu.Lock()
+	c.cfg, c.cfgErr = cfg, nil
+	c.cfgMu.Unlock()
+	if c.prober != nil {
+		c.prober.SetEndpoints(cfg.LocalEndpoints)
+	}
+	if c.router != nil {
+		c.router.Invalidate()
+	}
+	c.verdicts.clear()
+	c.judgedMu.Lock()
+	c.judged = nil
+	c.judgedMu.Unlock()
+}

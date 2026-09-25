@@ -65,7 +65,8 @@ func (c *Coordinator) strategyFor(runID string) (routing.Strategy, routing.RunOp
 	if opts.Strategy != "" {
 		return opts.Strategy, opts
 	}
-	return c.cfg.EffectiveStrategy(), opts
+	cfg, _ := c.currentConfig()
+	return cfg.EffectiveStrategy(), opts
 }
 
 // applyStrategy runs the commercial_llm strategy when it is in effect: skip
@@ -276,7 +277,7 @@ func (c *Coordinator) SetOptions(runID string, o routing.RunOptions) (RunView, e
 		return RunView{}, err
 	}
 	c.mu.Lock()
-	if _, err := c.store.Ensure(runID, c.cfg.Mode); err != nil {
+	if _, err := c.store.Ensure(runID, c.modeDefault()); err != nil {
 		c.mu.Unlock()
 		return RunView{}, err
 	}

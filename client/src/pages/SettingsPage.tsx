@@ -4,6 +4,7 @@ import { NotificationSettings } from '../components/settings/NotificationSetting
 import { UiScaleSettings } from '../components/settings/UiScaleSettings';
 import { RoutingMatrix } from '../components/settings/RoutingMatrix';
 import { AutoUsagePanel } from '../components/settings/AutoUsagePanel';
+import { LocalModelsPanel } from '../components/settings/LocalModelsPanel';
 import { ApprovalRules } from '../components/settings/ApprovalRules';
 import { BottomNav } from '../components/layout/BottomNav';
 import { IconBack } from '../components/icons';
@@ -38,6 +39,7 @@ export function SettingsPage() {
         <SoundSettings />
         <ApprovalRules />
         <RoutingMatrix />
+        <LocalModelsPanel />
         <AutoUsagePanel />
 
         <div className="card p-3">

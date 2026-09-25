@@ -25,6 +25,7 @@ import (
 	"powercodedeck/internal/orchestration"
 	"powercodedeck/internal/providers"
 	"powercodedeck/internal/providers/antigravity"
+	"powercodedeck/internal/routing"
 	"powercodedeck/middleware"
 	"powercodedeck/services"
 	"powercodedeck/version"
@@ -223,6 +224,9 @@ func main() {
 	api := r.PathPrefix("/api").Subrouter()
 	api.Use(auth.Middleware(authSvc))
 	var runWorker *orchestration.Worker
+	// Local model servers (routing.json localEndpoints), shared live by the OSS
+	// bridge and the Settings API.
+	localEndpoints := loadLocalEndpoints()
 	// Routing for "자동" sessions; stays nil (→ Claude Code fallback) without v2.
 	var chooseProfile handlers.ChooseFunc
 	var chooseTurn handlers.TurnFunc
@@ -279,6 +283,7 @@ func main() {
 			chooseProfile = coordinator.Choose
 			chooseTurn = coordinator.ChooseTurn
 			delegator = services.NewDelegator(runProviders, nativeSvc, autoUsage)
+			(&handlers.LocalModels{ConfigPath: routingConfigPath(), Coord: coordinator, Endpoints: localEndpoints, Client: routing.NewLocalClient()}).Register(api)
 		}
 	}
 
@@ -442,7 +447,7 @@ func main() {
 
 	// Start server in goroutine. BindHost defaults to 127.0.0.1 (localhost only);
 	// set POWERCODEDECK_BIND_HOST=0.0.0.0 to expose it on the LAN for handoff.
-	startOSSBridge()
+	startOSSBridge(localEndpoints)
 
 	srv := &http.Server{
 		Addr:    cfg.BindHost + ":" + cfg.Port,

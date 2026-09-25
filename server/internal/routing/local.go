@@ -33,6 +33,10 @@ type LocalEndpoint struct {
 	AllowInsecureHTTP bool   `json:"allowInsecureHttp,omitempty"`
 	TokenEnv          string `json:"tokenEnv,omitempty"`
 	TimeoutSeconds    int    `json:"timeoutSeconds,omitempty"`
+	// LocalNetOnly (set on endpoints added from Settings) refuses anything but
+	// this machine, private networks and Tailscale — checked at dial time, after
+	// DNS — so a URL typed in the browser can never send code to the internet.
+	LocalNetOnly bool `json:"localNetOnly,omitempty"`
 }
 
 func (e LocalEndpoint) Validate() error {
@@ -48,6 +52,11 @@ func (e LocalEndpoint) Validate() error {
 	}
 	if u.Scheme != "https" && u.Scheme != "http" {
 		return fmt.Errorf("local endpoint %s: scheme must be http or https", e.ID)
+	}
+	if e.LocalNetOnly {
+		if ip := net.ParseIP(u.Hostname()); ip != nil && !IsLocalNetIP(ip) {
+			return fmt.Errorf("local endpoint %s: only this machine, private networks and Tailscale are allowed", e.ID)
+		}
 	}
 	if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) && !e.AllowInsecureHTTP {
 		return fmt.Errorf("local endpoint %s: plain http to a remote host needs allowInsecureHttp", e.ID)
@@ -69,6 +78,15 @@ func (e LocalEndpoint) hostLabel() string {
 }
 
 var metadataIPs = []net.IP{net.ParseIP("169.254.169.254"), net.ParseIP("fd00:ec2::254"), net.ParseIP("100.100.100.200")}
+
+// tailscaleNet is Tailscale's address range (RFC 6598 shared space).
+var tailscaleNet = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+// IsLocalNetIP reports loopback, private (RFC 1918 / ULA, which includes
+// Tailscale's IPv6 fd7a:115c:a1e0::/48) and Tailscale IPv4 addresses.
+func IsLocalNetIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || tailscaleNet.Contains(ip)
+}
 
 func checkIP(ip net.IP, allowPrivate bool) error {
 	for _, m := range metadataIPs {
@@ -104,10 +122,13 @@ func NewLocalClient() *LocalClient {
 func (c *LocalClient) client(e LocalEndpoint) *http.Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if h, ok := c.clients[e.ID]; ok {
+	// The key includes everything the dialer enforces, so an endpoint edited in
+	// Settings never keeps a client built for its old address policy.
+	key := fmt.Sprintf("%s|%v|%v|%d", e.ID, e.AllowPrivate, e.LocalNetOnly, e.TimeoutSeconds)
+	if h, ok := c.clients[key]; ok {
 		return h
 	}
-	allow := e.AllowPrivate
+	allow, localOnly := e.AllowPrivate, e.LocalNetOnly
 	dialer := &net.Dialer{Timeout: 5 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
 		if err != nil {
@@ -117,7 +138,13 @@ func (c *LocalClient) client(e LocalEndpoint) *http.Client {
 		if ip == nil {
 			return errors.New("unresolved address refused")
 		}
-		return checkIP(ip, allow)
+		if err := checkIP(ip, allow); err != nil {
+			return err
+		}
+		if localOnly && !IsLocalNetIP(ip) {
+			return errors.New("only this machine, private networks and Tailscale are allowed")
+		}
+		return nil
 	}}
 	timeout := time.Duration(e.TimeoutSeconds) * time.Second
 	if timeout <= 0 || timeout > 10*time.Minute {
@@ -128,7 +155,7 @@ func (c *LocalClient) client(e LocalEndpoint) *http.Client {
 		Transport:     &http.Transport{DialContext: dialer.DialContext, Proxy: nil, MaxIdleConns: 4, IdleConnTimeout: 90 * time.Second},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	c.clients[e.ID] = h
+	c.clients[key] = h
 	return h
 }
 
