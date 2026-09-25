@@ -9,7 +9,7 @@ import { dot } from '../components/control/LiveDot';
 import { AttentionRail } from '../components/control/AttentionRail';
 import { ProjectGroup } from '../components/control/ProjectGroup';
 import { ApprovalFeed } from '../components/control/ApprovalFeed';
-import { IconPlus, IconLog, IconSettings, IconBell } from '../components/icons';
+import { IconPlus, IconLog, IconSettings, IconBell, IconRocket } from '../components/icons';
 import { NotificationBadge } from '../components/notification/NotificationBadge';
 
 // Control Room (v0.3.0): the multi-session overview. It renders purely from
@@ -161,6 +161,13 @@ export function ControlRoomPage() {
             대시보드 헤더에 있던 이 두 진입점이 같이 사라져, md+ 화면에서는 로그·설정으로
             갈 수 있는 보이는 경로가 없어졌다(커맨드 팔레트는 숨은 경로다). md+에서만
             보여 모바일 BottomNav와 중복되지 않는다. */}
+        <Link
+          to="/runs"
+          className="hidden md:inline-flex items-center p-2 rounded-lg text-deck-text-dim hover:bg-deck-border/30"
+          title="Runs"
+        >
+          <IconRocket size={16} />
+        </Link>
         <Link
           to="/notifications"
           className="hidden md:inline-flex relative items-center p-2 rounded-lg text-deck-text-dim hover:bg-deck-border/30"

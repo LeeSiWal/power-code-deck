@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "mode": "shadow",
+  "strategy": "commercial_llm",
+  "spend": {
+    "budgetKind": "best_effort"
+  },
+  "switching": {
+    "maxSwitchesPerRun": 2,
+    "maxAttemptsPerRun": 3,
+    "maxRunMinutes": 60,
+    "autoEscalate": false,
+    "stickiness": 0.5
+  },
+  "profiles": [
+    {
+      "id": "claude-sonnet-low",
+      "adapter": "claude",
+      "model": "sonnet",
+      "effort": "low",
+      "accountRef": "personal",
+      "authMethod": "subscription",
+      "billing": "subscription_included",
+      "quotaBucket": "anthropic:personal",
+      "tiers": [
+        "EASY",
+        "MEDIUM"
+      ],
+      "allow": true,
+      "roles": [
+        "executor",
+        "reviewer",
+        "decider"
+      ]
+    },
+    {
+      "id": "claude-opus-high",
+      "adapter": "claude",
+      "model": "opus",
+      "effort": "high",
+      "accountRef": "personal",
+      "authMethod": "subscription",
+      "billing": "subscription_included",
+      "quotaBucket": "anthropic:personal",
+      "tiers": [
+        "HIGH",
+        "ULTRA"
+      ],
+      "allow": true,
+      "roles": [
+        "executor",
+        "reviewer",
+        "planner"
+      ]
+    },
+    {
+      "id": "codex-luna-medium",
+      "adapter": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "medium",
+      "accountRef": "personal",
+      "authMethod": "subscription",
+      "billing": "subscription_included",
+      "quotaBucket": "openai:personal",
+      "tiers": [
+        "EASY",
+        "MEDIUM"
+      ],
+      "allow": true,
+      "roles": [
+        "executor",
+        "reviewer",
+        "decider"
+      ]
+    },
+    {
+      "id": "codex-sol-xhigh",
+      "adapter": "codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "accountRef": "personal",
+      "authMethod": "subscription",
+      "billing": "subscription_included",
+      "quotaBucket": "openai:personal",
+      "tiers": [
+        "HIGH"
+      ],
+      "allow": true,
+      "roles": [
+        "executor",
+        "reviewer",
+        "planner"
+      ]
+    },
+    {
+      "id": "lan-qwen-text",
+      "adapter": "local",
+      "endpointRef": "lan-gpu",
+      "model": "qwen2.5-coder:32b",
+      "billing": "local",
+      "tiers": [
+        "VERY_EASY",
+        "EASY"
+      ],
+      "allow": true,
+      "roles": [
+        "summarizer"
+      ],
+      "quality": {
+        "text": {
+          "status": "unverified",
+          "evidence": "no evaluation yet"
+        }
+      }
+    }
+  ],
+  "decider": {
+    "timeoutSeconds": 60,
+    "maxOutputBytes": 2048,
+    "maxFormatRetries": 1,
+    "maxContextRounds": 1,
+    "shadowMaxCallsPerDay": 20,
+    "cacheMinutes": 30
+  },
+  "routellm": {
+    "enabled": false
+  },
+  "localEndpoints": [
+    {
+      "id": "lan-gpu",
+      "url": "http://192.168.1.50:11434",
+      "kind": "ollama",
+      "model": "qwen2.5-coder:32b",
+      "allowPrivate": true,
+      "allowInsecureHttp": true
+    }
+  ]
+}

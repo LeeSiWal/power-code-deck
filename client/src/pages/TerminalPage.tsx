@@ -50,16 +50,18 @@ const CLASSIC_TERMINAL = typeof window !== 'undefined' && window.location.search
 
 function nativeCapable(agent: { preset?: string; command?: string }): boolean {
   return agent.preset === 'claude-code' || agent.command === 'claude'
-    || agent.preset === 'codex-cli' || agent.command === 'codex';
+    || agent.preset === 'codex-cli' || agent.command === 'codex'
+    || agent.preset === 'antigravity' && agent.command === 'agy';
 }
 
-function nativeDriver(agent: { preset?: string; command?: string }): 'claude' | 'codex' {
+function nativeDriver(agent: { preset?: string; command?: string }): 'claude' | 'codex' | 'antigravity' {
+  if (agent.preset === 'antigravity' && agent.command === 'agy') return 'antigravity';
   return agent.preset === 'codex-cli' || agent.command === 'codex' ? 'codex' : 'claude';
 }
 
 /** Whether this agent is rendered as a chat rather than a terminal. */
 function usesNative(agent: { preset?: string; command?: string } | null | undefined): boolean {
-  return !CLASSIC_TERMINAL && !!agent && nativeCapable(agent);
+  return !!agent && nativeCapable(agent) && (!CLASSIC_TERMINAL || agent.preset === 'antigravity');
 }
 
 // Side-panel width bounds. The upper bound is generous because these panels are
@@ -390,13 +392,13 @@ export function TerminalPage() {
           >
             <IconRefresh size={16} />
           </button>
-          <button
+          {agent.preset !== 'antigravity' && <button
             onClick={() => setMobileSessionsOpen(true)}
             className="p-1.5 rounded active:bg-deck-border/30 text-sm"
             title="지난 세션 기록"
           >
             <IconHistory size={16} />
-          </button>
+          </button>}
           <button
             onClick={() => setMobileShellOpen(true)}
             className="p-1.5 rounded active:bg-deck-border/30 text-deck-text-dim"
@@ -629,7 +631,7 @@ export function TerminalPage() {
         <StatusBadge status={agent.status} />
         <span className="text-xs ml-auto truncate text-deck-text-dim">{agent.workingDir}</span>
 
-        <button
+        {agent.preset !== 'antigravity' && <button
           onClick={() => { if (rightPanelOpen && rightTab === 'sessions') { setRightPanelOpen(false); } else { setRightPanelOpen(true); setRightTab('sessions'); } }}
           className={`text-xs px-2 py-0.5 rounded transition-colors ${
             rightPanelOpen && rightTab === 'sessions' ? 'bg-deck-accent/20 text-deck-accent' : 'bg-deck-bg text-deck-text-dim'
@@ -637,7 +639,7 @@ export function TerminalPage() {
           title="지난 세션 기록 보기 · 이어하기 · 삭제"
         >
           <span className="inline-flex items-center gap-1"><IconHistory size={13} /> 세션 기록</span>
-        </button>
+        </button>}
 
         {handoffEnabled && (
           <button

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "mode": "manual",
+  "spend": {"budgetKind": "best_effort"},
+  "switching": {"maxSwitchesPerRun": 2, "maxAttemptsPerRun": 3, "maxRunMinutes": 60, "autoEscalate": false, "stickiness": 0.5},
+  "profiles": [
+    {"id": "local-llama", "adapter": "local", "endpointRef": "this-host", "model": "llama3.1:8b", "billing": "local", "tiers": ["VERY_EASY"], "allow": true}
+  ],
+  "localEndpoints": [{"id": "this-host", "url": "http://127.0.0.1:11434", "kind": "ollama"}],
+  "routellm": {"enabled": false}
+}

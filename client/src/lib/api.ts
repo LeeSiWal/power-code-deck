@@ -36,6 +36,136 @@ export class ApiError extends Error {
   }
 }
 
+// ---- Model routing (v2). Mirrors server/internal/routing JSON. ----
+export type RoutingMode = 'off' | 'manual' | 'shadow' | 'auto';
+export interface RoutingObservation { value: string; source?: string; detail?: string; scope?: string; checkedAt?: string }
+export interface RoutingModelInfo { id: string; displayName?: string; efforts?: string[]; vendor?: string; isDefault?: boolean }
+export interface RoutingAdapterStatus {
+  adapterId: string; executable?: string; version?: string; authMethod?: string;
+  installation: RoutingObservation; auth: RoutingObservation; entitlement: RoutingObservation; billing: RoutingObservation;
+  technical: RoutingObservation; policy: RoutingObservation; health: RoutingObservation;
+  models?: RoutingModelInfo[]; inheritedEnv?: string[]; validatedVersion?: string; needsRevalidation?: boolean;
+}
+export interface RoutingExclusion { reason: string; detail?: string }
+export interface RoutingProfile {
+  id: string; adapter: string; model?: string; modelVendor?: string; effort?: string; accountRef?: string; authMethod?: string;
+  billing?: string; extraUsageRisk?: boolean; quotaBucket?: string; tiers?: string[]; allow: boolean; generated?: boolean;
+  quality?: Record<string, { status: string; evidence?: string }>;
+}
+export interface RoutingCapabilities { tools: boolean; editFiles: boolean; readOnlyEnforced: boolean; multiTurn: boolean; nativeResume: boolean; approvalBroker: boolean; interrupt: boolean; forceModel: boolean; forceEffort: boolean; observedModel: string; subcallsVisible: boolean; contextTokens?: number }
+export interface RoutingProfileView { profile: RoutingProfile; manualExcluded: RoutingExclusion[] | null; manualWarnings: RoutingExclusion[] | null; automaticExcluded: RoutingExclusion[] | null; capabilities: RoutingCapabilities; policy: Record<string, RoutingObservation> }
+export interface RoutingSnapshot {
+  mode: RoutingMode; configError?: string; fingerprint: string;
+  spend: Record<string, boolean | string>; switching: { maxSwitchesPerRun: number; maxAttemptsPerRun: number; maxRunMinutes: number; autoEscalate: boolean; stickiness: number };
+  adapters: RoutingAdapterStatus[]; profiles: RoutingProfileView[] | null; tiers: Record<string, string[]>; routellm: Record<string, unknown>;
+  policy: { reviewedAt: string; sources: Record<string, string> };
+  decider: DeciderView;
+}
+export type RoutingStrategy = 'rules' | 'routellm' | 'commercial_llm';
+export interface DeciderCall { profileId: string; purpose: string; latencyMs: number; usage?: RoutingUsage; observedModel?: string; errorClass?: string; error?: string; valid: boolean }
+export interface DeciderRecord { consulted: boolean; skip?: string; requestId?: string; calls?: DeciderCall[]; verdict?: { action: string; profile_id?: string; reason_code: string; evidence_refs?: string[]; needs?: string[] }; applied: boolean; note?: string }
+export interface RoleUsage { role: string; calls: number; reported: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; complete: boolean }
+export interface DeciderStats { calls: number; valid: number; p50Ms: number; p95Ms: number; meanTokens: number }
+export interface DeciderView {
+  strategy: RoutingStrategy; limits: { timeoutSeconds: number; maxOutputBytes: number; maxFormatRetries: number; maxContextRounds: number; shadowMaxCallsPerDay: number; allowReadOnlyShell?: boolean; profile?: string; fallback?: string };
+  ordered: string[] | null; candidates: { profile: RoutingProfile; excluded?: RoutingExclusion[] }[] | null; stats: Record<string, DeciderStats>;
+  shadowCallsLast24h: number; callable: boolean; roles: Record<string, Record<string, string>>;
+}
+export interface RouterVerdict { score: number; choice: string; threshold: number; checkpoint: string; package: string; device: string; latencyMs: number; cached: boolean }
+export interface RoutingDecision {
+  id: string; mode: RoutingMode; stage: string; kind: string; ruleTier: string; ruleWhy?: string[];
+  router?: RouterVerdict; routerPair?: { weak: string; strong: string; threshold: number; calibration?: string }; routerError?: string;
+  selected?: string; source: string; reason: string; candidates: { profile: RoutingProfile; excluded?: RoutingExclusion[] }[];
+  createdAt: string; durationMs: number; ruleTie?: string[]; decider?: DeciderRecord; strategy?: RoutingStrategy;
+}
+export interface RoutingRunState { runId: string; mode: RoutingMode; phase: string; epoch: number; currentProfile: string; currentExecution: string; pendingProfile: string; pendingWhen: string; pinProfile: string; pinAdapter: string; switches: number; attempts: number }
+export interface RoutingUsage { scope: string; source: string; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheCreationTokens: number | null; thinkingTokens: number | null; totalTokens: number | null; local: boolean }
+export interface RoutingAttempt {
+  executionId: string; profileId: string; adapter: string; model: string; effort: string; decisionId: string; inheritedFrom: string;
+  continuation?: { kind: string; reason: string }; class: string; action?: { kind: string; reason: string }; startedAt: string; finishedAt: string;
+  report?: { providerStatus: string; observedModel?: string; failedChecks?: string[]; quiesceVerified: boolean; quiesceDetail?: string; usage?: RoutingUsage;
+    timings: { routingMs: number; queueMs: number; handoffMs: number; execMs: number; verifyMs: number };
+    reviewer?: string; reviewerModel?: string; reviewUsage?: RoutingUsage };
+}
+export interface RoutingTransition { seq: number; from: string; to: string; cause: string; detail: string; executionId: string; createdAt: string }
+export interface RoutingTimeline {
+  state: RoutingRunState; attempts: RoutingAttempt[]; decisions: RoutingDecision[]; transitions: RoutingTransition[];
+  strategy: RoutingStrategy; options: { strategy: RoutingStrategy | ''; commercialShadow: boolean }; usage: RoleUsage[]; commercialUsage: RoleUsage;
+}
+
+export interface RunSummary {
+  id: string;
+  path: string;
+  prompt: string;
+  provider: string;
+  state: string;
+}
+
+export interface RunApproval {
+  id: string;
+  sessionId: string;
+  toolName: string;
+  input: unknown;
+}
+
+export interface PlanSnapshot {
+  applications: RunApplication[];
+  integrations: RunExecution[];
+  concurrency: number;
+  tasks: { id: string; prompt: string; provider: string; dependsOn: string[]; state: string; attemptId: string; detail: string; artifacts: RunArtifact[]; checks: RunCheck[] }[];
+  selection: { ready: { id: string }[]; blocked: string[]; complete: boolean };
+}
+
+export interface PlanTask { id: string; prompt: string; provider: string; dependsOn: string[] }
+export interface TaskPlan { concurrency: number; tasks: PlanTask[] }
+export interface PlanDraft { id: string; state: string; detail: string; plan: TaskPlan | null }
+export interface DraftHistory { drafts: PlanDraft[]; nextCursor: string }
+export interface CleanupPreview { candidates: { id: string; kind: string; state: string; eligible: boolean; reason: string; fingerprint?: string }[]; nextCursor: string }
+export interface TaskHistory { attempts: RunExecution[]; nextCursor: string }
+export interface ConflictVersion { artifact?: string; unavailable?: string; mode?: string }
+export interface ConflictReport {
+  fingerprint?: string;
+  baseCommit: string; incomingCommit: string; truncated: boolean;
+  files: { path: string; base: ConflictVersion; current: ConflictVersion; incoming: ConflictVersion }[];
+}
+export interface ResolvedFile { path: string; content: string; delete: boolean }
+
+export interface ApplyTarget {
+  integrationId: string;
+  branch: string;
+  baseCommit: string;
+  resultCommit: string;
+}
+export interface ApplyPreview extends ApplyTarget { summary: string }
+export interface RunApplication extends ApplyTarget { id: string; state: string; detail: string }
+
+export interface RunArtifact {
+  kind: string;
+  baseCommit: string;
+}
+
+export interface RunCheck {
+  name: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface RunExecution {
+  id: string;
+  state: string;
+  detail: string;
+  checks: RunCheck[];
+  artifacts: RunArtifact[];
+}
+
+export interface Run extends RunSummary {
+  workspaceId: string;
+  baseCommit: string;
+  taskId: string;
+  requiredChecks: string[];
+  executions: RunExecution[];
+}
+
 async function refreshToken(): Promise<boolean> {
   const rt = getRefreshToken();
   if (!rt) return false;
@@ -172,6 +302,60 @@ export const api = {
   // Stop a session but KEEP the agent (reversible "정지"), unlike deleteAgent which
   // removes the record. Stops both the native session and the PTY.
   stopAgent: (id: string) => apiFetch(`/agents/${id}/stop`, { method: 'POST' }),
+
+  // Durable 2.0 Runs. These routes remain opt-in on the server until the runtime
+  // is ready to replace the legacy session-first flow.
+  listRuns: () => apiFetch<{ runs: RunSummary[] }>('/v2/runs'),
+  getRunPlan: (id: string) => apiFetch<PlanSnapshot>(`/v2/runs/${encodeURIComponent(id)}/plan`),
+  startRunPlan: (id: string) => apiFetch(`/v2/runs/${encodeURIComponent(id)}/plan/start`, { method: 'POST' }),
+  generateRunPlan: (id: string) => apiFetch<{ draftId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/draft/generate`, { method: 'POST' }),
+  getRunPlanDraft: (id: string) => apiFetch<PlanDraft>(`/v2/runs/${encodeURIComponent(id)}/plan/draft`),
+  getDraftHistory: (id: string, before = '') => apiFetch<DraftHistory>(`/v2/runs/${encodeURIComponent(id)}/plan/drafts?before=${encodeURIComponent(before)}`),
+  previewCleanup: (id: string, before = '') => apiFetch<CleanupPreview>(`/v2/runs/${encodeURIComponent(id)}/cleanup?before=${encodeURIComponent(before)}`),
+  cleanupWorkspace: (id: string, attempt: string, fingerprint: string) => apiFetch<void>(`/v2/runs/${encodeURIComponent(id)}/cleanup/${encodeURIComponent(attempt)}`, { method: 'POST', body: JSON.stringify({ fingerprint }) }),
+  getTaskHistory: (id: string, task: string, before = '') => apiFetch<TaskHistory>(`/v2/runs/${encodeURIComponent(id)}/plan/tasks/${encodeURIComponent(task)}/attempts?${new URLSearchParams({ before })}`),
+  resolveIntegration: (id: string, attempt: string, fingerprint: string, files: ResolvedFile[]) => apiFetch<{ executionId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/integrations/${encodeURIComponent(attempt)}/resolve`, { method: 'POST', body: JSON.stringify({ fingerprint, files }) }),
+  resolveTask: (id: string, task: string, attempt: string, fingerprint: string, files: ResolvedFile[]) => apiFetch<void>(`/v2/runs/${encodeURIComponent(id)}/plan/tasks/${encodeURIComponent(task)}/attempts/${encodeURIComponent(attempt)}/resolve`, { method: 'POST', body: JSON.stringify({ fingerprint, files }) }),
+  saveRunPlan: (id: string, plan: TaskPlan) => apiFetch(`/v2/runs/${encodeURIComponent(id)}/plan`, { method: 'PUT', body: JSON.stringify(plan) }),
+  integrateRunPlan: (id: string) => apiFetch<{ executionId: string }>(`/v2/runs/${encodeURIComponent(id)}/plan/integrate`, { method: 'POST' }),
+  previewRunApplication: (id: string) => apiFetch<ApplyPreview>(`/v2/runs/${encodeURIComponent(id)}/plan/apply`),
+  applyRunResult: (id: string, target: ApplyTarget) => apiFetch<RunApplication>(`/v2/runs/${encodeURIComponent(id)}/plan/apply`, { method: 'POST', body: JSON.stringify(target) }),
+  reconcileRunApplication: (id: string) => apiFetch<RunApplication>(`/v2/runs/${encodeURIComponent(id)}/plan/apply/reconcile`, { method: 'POST' }),
+  retryRunTask: (id: string, task: string) => apiFetch(`/v2/runs/${encodeURIComponent(id)}/plan/tasks/${encodeURIComponent(task)}/retry`, { method: 'POST' }),
+  runApprovals: (id: string) => apiFetch<RunApproval[]>(`/v2/runs/${encodeURIComponent(id)}/approvals`),
+  decideRunApproval: (run: string, id: string, behavior: 'allow' | 'deny') =>
+    apiFetch(`/v2/runs/${encodeURIComponent(run)}/approvals`, { method: 'POST', body: JSON.stringify({ id, behavior }) }),
+  getRun: (id: string) => apiFetch<Run>(`/v2/runs/${encodeURIComponent(id)}`),
+  routingSnapshot: () => apiFetch<RoutingSnapshot>('/v2/routing'),
+  routingRefresh: () => apiFetch<RoutingSnapshot>('/v2/routing/refresh', { method: 'POST' }),
+  routingMarkValidated: (adapter: string) => apiFetch<void>(`/v2/routing/adapters/${encodeURIComponent(adapter)}/validated`, { method: 'POST' }),
+  runRouting: (id: string) => apiFetch<RoutingTimeline>(`/v2/runs/${encodeURIComponent(id)}/routing`),
+  setRunRouting: (id: string, body: { mode: RoutingMode; pinProfile: string; pinAdapter: string; strategy?: RoutingStrategy | ''; commercialShadow?: boolean }) =>
+    apiFetch<RoutingRunState>(`/v2/runs/${encodeURIComponent(id)}/routing`, { method: 'PUT', body: JSON.stringify(body) }),
+  forgetRunRouting: (id: string) => apiFetch<void>(`/v2/runs/${encodeURIComponent(id)}/routing`, { method: 'DELETE' }),
+  previewRunRouting: (id: string, profile = '') => apiFetch<RoutingDecision>(`/v2/runs/${encodeURIComponent(id)}/routing/preview?${new URLSearchParams({ profile })}`),
+  startRoutedRun: (id: string, profile = '', reevaluate = false) =>
+    apiFetch<{ executionId: string; decision: RoutingDecision; launchedProfile: string }>(`/v2/runs/${encodeURIComponent(id)}/routing/start`, { method: 'POST', body: JSON.stringify({ profile, reevaluate }) }),
+  switchRunProfile: (id: string, profile: string, when: 'boundary' | 'now') =>
+    apiFetch<RoutingRunState>(`/v2/runs/${encodeURIComponent(id)}/routing/switch`, { method: 'POST', body: JSON.stringify({ profile, when }) }),
+  createRun: (data: { path: string; prompt: string; provider: string }, key: string) =>
+    apiFetch<Run>('/v2/runs', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': key },
+      body: JSON.stringify(data),
+    }),
+  startRun: (id: string) =>
+    apiFetch<{ executionId: string }>(`/v2/runs/${encodeURIComponent(id)}/start`, { method: 'POST' }),
+  cancelRun: (id: string) =>
+    apiFetch(`/v2/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  readRunArtifact: async (runId: string, executionId: string, kind: string): Promise<string> => {
+    const query = new URLSearchParams({ kind });
+    const res = await apiRequest(
+      `/v2/runs/${encodeURIComponent(runId)}/executions/${encodeURIComponent(executionId)}/artifact?${query}`,
+    );
+    if (!res.ok) throw new ApiError('결과 파일을 불러오지 못했습니다', res.status);
+    return res.text();
+  },
 
   // Past-session history (Claude Code transcripts for the agent's project).
   listSessions: (id: string) =>

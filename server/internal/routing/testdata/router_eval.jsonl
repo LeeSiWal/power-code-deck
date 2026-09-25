@@ -1,0 +1,18 @@
+{"id":"e01","tier":"VERY_EASY","goal":"Fix the typo 'recieve' in README.md"}
+{"id":"e02","tier":"VERY_EASY","goal":"README.md의 오타 'recieve'를 고쳐줘"}
+{"id":"e03","tier":"VERY_EASY","goal":"Rename the variable tmp to buffer in util.go"}
+{"id":"e04","tier":"VERY_EASY","goal":"CHANGELOG.md에 0.7.1 항목 한 줄 추가해줘"}
+{"id":"e05","tier":"EASY","goal":"Add a --verbose flag to cmd/main.go that sets log level to debug"}
+{"id":"e06","tier":"EASY","goal":"server/handlers/meta.go에 버전 문자열을 반환하는 GET /api/version 핸들러를 추가해줘"}
+{"id":"e07","tier":"EASY","goal":"Format all Go files and fix the two golint warnings in services/push.go"}
+{"id":"e08","tier":"EASY","goal":"클라이언트 설정 페이지의 버튼 라벨을 '저장'에서 '적용'으로 바꿔줘"}
+{"id":"e09","tier":"MEDIUM","goal":"Add pagination (limit/offset) to GET /api/logs, update the SQL query and add a test"}
+{"id":"e10","tier":"MEDIUM","goal":"알림 목록 API에 읽음 처리 엔드포인트를 추가하고 DB 컬럼과 테스트를 같이 만들어줘"}
+{"id":"e11","tier":"MEDIUM","goal":"Parse the new 'duration_seconds' field from the Antigravity result event and show it in the run detail view"}
+{"id":"e12","tier":"MEDIUM","goal":"세션 기록 삭제 시 관련 첨부 파일도 지우도록 services/session_history.go와 테스트를 수정해줘"}
+{"id":"e13","tier":"HIGH","goal":"Refactor the WebSocket hub so terminal fan-out, approvals and file watching are separate handlers without changing the wire protocol"}
+{"id":"e14","tier":"HIGH","goal":"PTY 재연결 시 DEC 모드 복원과 ACK 백프레셔가 경합하는 동시성 버그를 찾아 고치고 재현 테스트를 추가해줘"}
+{"id":"e15","tier":"HIGH","goal":"Design and implement an approval allowlist with persistent rules, revocation and an audit log, across server/services, handlers and the React settings page"}
+{"id":"e16","tier":"HIGH","goal":"보안 검토: Origin/Host 검증 미들웨어에서 우회 가능한 경로가 있는지 분석하고 수정해줘"}
+{"id":"e17","tier":"ULTRA","goal":"Migrate the orchestration store to support multiple server processes with leases, fencing tokens and crash recovery, keeping existing databases readable, and prove correctness with concurrency tests across server/internal/orchestration/store.go worker.go plan_worker.go integration_worker.go and handlers/runs.go"}
+{"id":"e18","tier":"ULTRA","goal":"분산 작업 스케줄러를 재설계해서 여러 워커가 같은 저장소의 서로 다른 worktree에서 동시에 작업하고, 충돌 해결과 재시도, 서버 재시작 복구까지 보장하도록 아키텍처와 구현, 마이그레이션, 테스트를 모두 만들어줘. 대상 파일: store.go worker.go conflicts.go resolution.go integration_worker.go plan_worker.go runs.go RunsPage.tsx"}

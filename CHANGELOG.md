@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+### Added (2.0, opt-in: `PCD_V2_ENABLED=1` + `routing.json`)
+- **경량 LLM 작업 배분(`strategy: commercial_llm`)** — 규칙이 허용한 실행 후보가 둘 이상이고 규칙으로 가려지지 않을 때만, 허용된 판단용 프로필(공식 CLI, 도구·설정·MCP 비활성, 빈 임시 디렉터리)에 짧은 JSON 판단을 요청합니다. 후보가 하나·고정·수동·캐시·로컬 전용이면 호출하지 않습니다. 출력은 닫힌 스키마로 검증하고, 판단 품질이 검증된 프로필만 Auto에서 선택을 바꿉니다(그 외 기록용). 상용 Shadow는 Run별 승인과 일일 예산이 필요합니다. 역할(`decider/executor/reviewer/planner/summarizer`)을 프로필에 붙여 한 구독으로 모든 역할을 구성할 수 있습니다.
+- **리뷰어·계획 생성도 같은 정책** — 모든 Run에서 Antigravity를 자동 실행하던 고정 리뷰어를 없앴습니다. 허용된 프로필이 없으면 리뷰를 건너뛰지 않고 `review_blocked`로 멈춥니다.
+- **모델 라우팅·승격·인계** — 단일 Task Run의 시도마다 실행 프로필(CLI·모델·추론 강도·과금 경로)을 수동/Shadow/자동으로 선택합니다. 설치·인증·과금·기술·이용 검토·건강 상태를 따로 표시하고, 구독 외 과금·과금 미확인·Antigravity 자동 실행은 기본 차단입니다. 검증 실패 시에만 제한된 승격을 하며, 모델이 바뀌어도 이전 시도의 변경분(체크포인트)과 원문 목표·실패한 검사가 다음 실행기로 넘어갑니다. RouteLLM(BERT) 사이드카는 선택 기능이며, 실측(AUC 0.458)상 코드 작업에서는 기록용(advisory)으로만 씁니다. 문서: `docs/architecture/multimodel-routing.md`.
+
 ### Removed
 - **Local Intelligence (로컬 LLM 전처리) 제거** — 클라우드로 보내기 전에 로컬 LLM이 저장소 컨텍스트를 압축하던 실험 기능입니다. 실측 결과 **클라우드 비용 절감이 없었고**(모드별 5회 중앙값 $1.1604 vs $1.2661 — 차이가 CLOUD_ONLY 자체 편차 ±20% 안), 대신 턴마다 10~46초가 더 걸렸습니다. 채팅의 실행 모드 선택기(Cloud/Local/Hybrid), 설정의 Local Intelligence 카드와 활동 패널이 사라집니다. 측정 근거와 원인 분석은 `docs/local-intelligence-poc-report.md` §7a~§7d에 남아 있습니다.
 - 이미 등록한 로컬 프로바이더와 실행 기록은 **DB에서 지우지 않습니다**(`local_ai_providers`·`intelligence_traces`). 그 기록이 위 결론의 근거이고, 코드만 걷어냈습니다.

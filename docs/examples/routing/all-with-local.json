@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "mode": "shadow",
+  "spend": {"budgetKind": "best_effort"},
+  "switching": {"maxSwitchesPerRun": 2, "maxAttemptsPerRun": 3, "maxRunMinutes": 60, "autoEscalate": false, "stickiness": 0.5},
+  "profiles": [
+    {"id": "codex-luna-medium", "adapter": "codex", "model": "gpt-5.6-luna", "effort": "medium", "accountRef": "personal", "authMethod": "subscription", "billing": "subscription_included", "quotaBucket": "openai:personal", "tiers": ["EASY", "MEDIUM"], "allow": true},
+    {"id": "claude-opus-high", "adapter": "claude", "model": "opus", "effort": "high", "accountRef": "personal", "authMethod": "subscription", "billing": "subscription_included", "quotaBucket": "anthropic:personal", "tiers": ["HIGH", "ULTRA"], "allow": true},
+    {"id": "agy-flash-medium", "adapter": "antigravity", "model": "gemini-3.8-flash-medium", "effort": "medium", "accountRef": "personal", "billing": "unknown", "quotaBucket": "google:personal", "tiers": ["EASY", "MEDIUM"], "allow": false},
+    {"id": "lan-qwen-text", "adapter": "local", "endpointRef": "lan-gpu", "model": "qwen2.5-coder:32b", "billing": "local", "tiers": ["VERY_EASY", "EASY"], "allow": true,
+      "quality": {"text": {"status": "unverified", "evidence": "no evaluation yet"}}}
+  ],
+  "localEndpoints": [
+    {"id": "lan-gpu", "url": "http://192.168.1.50:11434", "kind": "ollama", "model": "qwen2.5-coder:32b", "allowPrivate": true, "allowInsecureHttp": true, "timeoutSeconds": 120}
+  ],
+  "routellm": {"enabled": false}
+}

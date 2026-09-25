@@ -1,0 +1,53 @@
+{
+  "reviewedAt": "2026-09-25",
+  "note": "Maintainer-reviewed evidence, not an automated legal verdict. Update only with a source and date; see docs/architecture/multimodel-routing-evidence.md.",
+  "adapters": {
+    "claude": {
+      "personal_interactive": {"status": "allowed_for_scope", "refs": ["A1"], "note": "End user signs in to the unmodified Claude Code binary with their own subscription."},
+      "personal_automatic": {"status": "allowed_for_scope", "refs": ["A1", "A3"], "note": "Same user, same machine, user-started Run. Plan limits assume ordinary individual usage; Fable in -p mode can bill usage credits without a prompt (see extraUsageRisk)."},
+      "unattended": {"status": "policy_review_required", "refs": ["A1", "A4"], "note": "Scheduler/CI use is not covered by the reviewed text; API-key (bare) mode is the documented scripted path."},
+      "hosted_multi_user": {"status": "blocked", "refs": ["A1"], "note": "Routing requests through Free/Pro/Max credentials on behalf of other users is not permitted."},
+      "oauth_reuse_client": {"status": "blocked", "refs": ["A1"], "note": "PowerCodeDeck never extracts or relays Claude.ai OAuth."}
+    },
+    "codex": {
+      "personal_interactive": {"status": "allowed_for_scope", "refs": ["O1", "O2"], "note": "ChatGPT sign-in is documented for subscription access; app-server is the documented client protocol."},
+      "personal_automatic": {"status": "allowed_for_scope", "refs": ["O1"], "note": "User-started Run on the user's own machine. Not an unattended service."},
+      "unattended": {"status": "policy_review_required", "refs": ["O1"], "note": "Docs: API keys are the recommended default for automation/CI."},
+      "hosted_multi_user": {"status": "blocked", "refs": ["O1"], "note": "Do not expose Codex execution in untrusted or public environments."},
+      "oauth_reuse_client": {"status": "blocked", "refs": ["O1"], "note": "auth.json is treated like a password and never read by PowerCodeDeck."}
+    },
+    "antigravity": {
+      "personal_interactive": {"status": "policy_review_required", "refs": ["G6", "G4"], "note": "Existing explicit user selection is preserved but shown as unresolved: the Additional Terms say using third-party software/tools to access the Service is a breach, and do not say whether launching the official agy binary from a personal tool counts."},
+      "personal_automatic": {"status": "policy_review_required", "refs": ["G6"], "note": "New automatic routing to Antigravity stays disabled until the integration scope is confirmed by Google."},
+      "unattended": {"status": "policy_review_required", "refs": ["G6"], "note": "Not reviewed."},
+      "hosted_multi_user": {"status": "blocked", "refs": ["G6"], "note": "Third-party product use is the highest-risk reading."},
+      "oauth_reuse_client": {"status": "blocked", "refs": ["G6"], "note": "Example given in the terms: using a third-party tool with Antigravity OAuth."}
+    },
+    "gemini": {
+      "personal_interactive": {"status": "policy_review_required", "refs": ["G1", "G2"], "note": "Consumer (free/AI Pro/Ultra) sign-in ended 2026-06-18. Standard/Enterprise and API paths are not reviewed here."},
+      "personal_automatic": {"status": "policy_review_required", "refs": ["G1", "G2"], "note": "Optional enterprise/API compatibility path only."},
+      "unattended": {"status": "policy_review_required", "refs": [], "note": "Not reviewed."},
+      "hosted_multi_user": {"status": "blocked", "refs": [], "note": "Not reviewed; blocked by default."},
+      "oauth_reuse_client": {"status": "blocked", "refs": ["G1"], "note": "Never."}
+    },
+    "local": {
+      "personal_interactive": {"status": "allowed_for_scope", "refs": [], "note": "Administrator-allowlisted endpoint; model licence is the operator's responsibility."},
+      "personal_automatic": {"status": "allowed_for_scope", "refs": [], "note": "Same."},
+      "unattended": {"status": "allowed_for_scope", "refs": [], "note": "Same."},
+      "hosted_multi_user": {"status": "policy_review_required", "refs": [], "note": "Not reviewed."},
+      "oauth_reuse_client": {"status": "blocked", "refs": [], "note": "Not applicable."}
+    }
+  },
+  "sources": {
+    "G1": "https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals (effective 2026-06-18; page updated 2026-09-02)",
+    "G2": "https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/ (published 2026-05-19)",
+    "G4": "https://antigravity.google/docs/cli/headless/ (undated)",
+    "G5": "https://antigravity.google/docs/plans/ (undated)",
+    "G6": "https://antigravity.google/terms (undated)",
+    "A1": "https://code.claude.com/docs/en/legal-and-compliance (undated)",
+    "A3": "https://code.claude.com/docs/en/model-config (undated)",
+    "A4": "https://code.claude.com/docs/en/headless (undated)",
+    "O1": "https://developers.openai.com/codex/auth/ -> learn.chatgpt.com/docs/auth (undated)",
+    "O2": "https://developers.openai.com/codex/app-server/ -> learn.chatgpt.com/docs/app-server (undated)"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "mode": "shadow",
+  "spend": {"budgetKind": "best_effort"},
+  "switching": {"maxSwitchesPerRun": 2, "maxAttemptsPerRun": 3, "maxRunMinutes": 60, "autoEscalate": false, "stickiness": 0.5},
+  "profiles": [
+    {"id": "codex-luna-medium", "adapter": "codex", "model": "gpt-5.6-luna", "effort": "medium", "accountRef": "personal", "authMethod": "subscription", "billing": "subscription_included", "quotaBucket": "openai:personal", "tiers": ["VERY_EASY", "EASY", "MEDIUM"], "allow": true},
+    {"id": "codex-sol-xhigh", "adapter": "codex", "model": "gpt-5.6-sol", "effort": "xhigh", "accountRef": "personal", "authMethod": "subscription", "billing": "subscription_included", "quotaBucket": "openai:personal", "tiers": ["HIGH", "ULTRA"], "allow": true}
+  ],
+  "routellm": {"enabled": false}
+}

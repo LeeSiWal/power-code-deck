@@ -870,6 +870,11 @@ func (h *Hub) nativeLaunchIdentity(agentID string) (driver, cwd string, err erro
 		return "", "", err
 	}
 	switch {
+	case agent.Preset == "antigravity":
+		if agent.Command != "agy" {
+			return "", "", fmt.Errorf("invalid Antigravity agent command")
+		}
+		driver = "antigravity"
 	case agent.Preset == "codex-cli" || agent.Command == "codex":
 		driver = "codex"
 	case agent.Preset == "claude", agent.Preset == "claude-code", agent.Command == "claude":

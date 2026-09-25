@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -20,6 +21,10 @@ import (
 	"powercodedeck/config"
 	"powercodedeck/db"
 	"powercodedeck/handlers"
+	"powercodedeck/internal/history"
+	"powercodedeck/internal/orchestration"
+	"powercodedeck/internal/providers"
+	"powercodedeck/internal/providers/antigravity"
 	"powercodedeck/middleware"
 	"powercodedeck/services"
 	"powercodedeck/version"
@@ -111,6 +116,7 @@ func main() {
 	// Remember Claude's own conversation id per agent so reopening (or a server
 	// restart) continues the conversation instead of starting a blank one.
 	nativeSvc.SetPersistence(agentSvc.SetClaudeSessionID, agentSvc.ClaudeSessionID)
+	nativeSvc.SetHistoryStore(history.New(database))
 	nativeSvc.SetConfigPersistence(agentSvc.SetNativeConfig, agentSvc.NativeConfig)
 	nativeSvc.SetOptionsPersistence(agentSvc.SetNativeOptions, agentSvc.NativeOptions)
 	nativeSvc.SetApprovalRules(approvalRules)
@@ -213,6 +219,58 @@ func main() {
 	// Protected API endpoints
 	api := r.PathPrefix("/api").Subrouter()
 	api.Use(auth.Middleware(authSvc))
+	var runWorker *orchestration.Worker
+	if os.Getenv("PCD_V2_ENABLED") == "1" {
+		runs, err := orchestration.New(database)
+		if err != nil {
+			log.Fatalf("Initialize v2 work storage: %v", err)
+		}
+		if err := runs.Recover(); err != nil {
+			log.Fatalf("Recover v2 work: %v", err)
+		}
+		root := os.Getenv("PCD_V2_WORK_ROOT")
+		if root == "" {
+			cache, err := os.UserCacheDir()
+			if err != nil {
+				log.Fatal(err)
+			}
+			root = filepath.Join(cache, "powercodedeck", "runs")
+		}
+		selfPath, err := os.Executable()
+		if err != nil {
+			log.Fatal(err)
+		}
+		runProviders := &services.RunProviders{Broker: services.NewPermissionBroker(), Tokens: services.NewApproveTokenStore(), SelfPath: selfPath, ApproveURL: "http://127.0.0.1:" + cfg.Port + "/internal/runs/approve"}
+		r.HandleFunc("/internal/runs/approve", handlers.NativeApprove(runProviders.Broker, runProviders.Tokens)).Methods("POST")
+		runWorker, err = orchestration.NewWorker(runs, root, map[string]orchestration.Factory{
+			"claude": func(id, cwd string) (providers.Execution, error) { return runProviders.New(providers.Claude, id, cwd) },
+			"codex":  func(id, cwd string) (providers.Execution, error) { return runProviders.New(providers.Codex, id, cwd) },
+			"antigravity": func(id, cwd string) (providers.Execution, error) {
+				return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "accept-edits"})
+			},
+		})
+		if err != nil {
+			log.Fatalf("Initialize v2 worker: %v", err)
+		}
+		runWorker.SetReviewer(func(id, cwd string) (providers.Execution, error) {
+			return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "plan", Sandbox: true})
+		})
+		runWorker.SetPlanner(func(id, cwd string) (providers.Execution, error) {
+			return antigravity.New(id, antigravity.Config{Cwd: cwd, Mode: "plan", Sandbox: true})
+		})
+		handlers.RegisterRunRoutes(api, runs, runWorker)
+		handlers.RegisterRunApprovalRoutes(api, runs, runProviders.Broker)
+		if coordinator, err := setupRouting(database, runs, runWorker, runProviders); err != nil {
+			log.Printf("Model routing disabled: %v", err)
+			// Without the policy there is no allowed reviewer/planner: fail
+			// those roles visibly instead of silently calling a fixed provider.
+			runWorker.SetRoleResolver(func(string, orchestration.Run, string) (orchestration.Factory, string, error) {
+				return nil, "", fmt.Errorf("routing policy unavailable: %v", err)
+			})
+		} else {
+			handlers.RegisterRoutingRoutes(api, coordinator)
+		}
+	}
 
 	// Agents
 	api.HandleFunc("/agents/slash-commands", handlers.SlashCommands(agentSvc)).Methods("GET")
@@ -317,20 +375,12 @@ func main() {
 	if err != nil {
 		log.Printf("No embedded static files found, serving API only")
 	} else {
+		appShell := handlers.AppShell(staticFS)
 		// SPA frontend routes — serve index.html for client-side routing
 		spaRoutes := []string{"/agents", "/dashboard", "/control", "/login", "/settings", "/logs", "/launch"}
 		for _, route := range spaRoutes {
-			route := route
-			r.PathPrefix(route).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				if f, err := staticFS.(fs.ReadFileFS).ReadFile("index.html"); err == nil {
-					w.Header().Set("Content-Type", "text/html")
-					w.Header().Set("Cache-Control", "no-cache")
-					w.Write(f)
-				}
-			})
+			r.PathPrefix(route).HandlerFunc(appShell)
 		}
-
-		fileServer := http.FileServer(http.FS(staticFS))
 
 		r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path
@@ -367,9 +417,7 @@ func main() {
 			}
 
 			// SPA fallback
-			w.Header().Set("Cache-Control", "no-cache")
-			r.URL.Path = "/index.html"
-			fileServer.ServeHTTP(w, r)
+			appShell(w, r)
 		})
 	}
 
@@ -404,6 +452,13 @@ func main() {
 	fmt.Println()
 	log.Printf("Shutting down %s...", version.AppName)
 
+	if runWorker != nil {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := runWorker.Close(stopCtx); err != nil {
+			log.Printf("Run worker shutdown: %v", err)
+		}
+		stopCancel()
+	}
 	// Stop accepting new connections and let in-flight requests finish (up to 5s).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

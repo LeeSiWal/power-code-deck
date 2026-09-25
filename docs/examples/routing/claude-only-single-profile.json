@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "auto",
+  "spend": {"budgetKind": "best_effort"},
+  "switching": {"maxSwitchesPerRun": 2, "maxAttemptsPerRun": 3, "maxRunMinutes": 60, "autoEscalate": false, "stickiness": 0.5},
+  "profiles": [
+    {"id": "claude-opus-high", "adapter": "claude", "model": "opus", "effort": "high", "accountRef": "personal", "authMethod": "subscription", "billing": "subscription_included", "quotaBucket": "anthropic:personal", "tiers": ["VERY_EASY", "EASY", "MEDIUM", "HIGH", "ULTRA"], "allow": true}
+  ],
+  "routellm": {"enabled": false}
+}

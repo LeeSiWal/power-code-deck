@@ -1,10 +1,17 @@
 package services
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"sync"
+
+	"powercodedeck/internal/providers"
+	"powercodedeck/internal/providers/antigravity"
+	"powercodedeck/internal/providers/native"
 )
 
 // nativeTextEvent builds a synthetic user/assistant StreamEvent with its Raw JSON
@@ -70,10 +77,12 @@ type sessionPolicy struct {
 // has no PTY, no viewers-with-a-screen, and no replay. What it has is a
 // conversation and a queue of questions waiting on a human.
 type NativeService struct {
-	broker  *PermissionBroker
-	tokens  *approveTokens
-	baseURL string // e.g. http://127.0.0.1:33033 — where the bridge calls back
-	selfBin string // the pcd binary, spawned by claude as its MCP server
+	historyStore NativeHistoryStore
+	agyStartMu   sync.Mutex // Antigravity preparation/replay; no model runs under this lock.
+	broker       *PermissionBroker
+	tokens       *approveTokens
+	baseURL      string // e.g. http://127.0.0.1:33033 — where the bridge calls back
+	selfBin      string // the pcd binary, spawned by claude as its MCP server
 
 	mu       sync.RWMutex
 	sessions map[string]*nativeSession
@@ -93,9 +102,10 @@ type NativeService struct {
 	rules *ApprovalRuleStore
 
 	// onEvent/onApproval are set by the hub at wiring time.
-	onEvent    func(sessionID string, ev *StreamEvent)
-	onApproval func(PermissionRequest)
-	observers  []func(sessionID string, ev *StreamEvent)
+	onEvent            func(sessionID string, ev *StreamEvent)
+	onApproval         func(PermissionRequest)
+	observers          []func(sessionID string, ev *StreamEvent)
+	executionObservers []func(providers.Event)
 
 	// onSessionID records Claude's own conversation id when a session announces it,
 	// so a later open can --resume instead of starting from nothing. Injected
@@ -120,14 +130,16 @@ type NativeService struct {
 }
 
 type nativeSession struct {
-	id     string
-	driver NativeDriver
-	kind   string // claude | codex
-	cwd    string
-	model  string        // remembered so a mode switch keeps the model, and vice-versa
-	mode   string        // permission mode: "" | acceptEdits | plan | bypassPermissions
-	effort string        // low | medium | high | xhigh | max — fixed for the process's lifetime
-	opts   NativeOptions // set-once session options, also fixed for the process's lifetime
+	id            string
+	driver        nativeExecution
+	kind          string // claude | codex | antigravity
+	sendMu        sync.Mutex
+	storageFailed bool
+	cwd           string
+	model         string        // remembered so a mode switch keeps the model, and vice-versa
+	mode          string        // permission mode: "" | acceptEdits | plan | bypassPermissions
+	effort        string        // low | medium | high | xhigh | max — fixed for the process's lifetime
+	opts          NativeOptions // set-once session options, also fixed for the process's lifetime
 	// history keeps the events already emitted, so a device that connects late (or
 	// reconnects from another device) can render the conversation so far. This is
 	// the native track's answer to terminal replay — and it needs no serializer,
@@ -229,6 +241,9 @@ func (s *NativeService) SetOptions(sessionID string, opts NativeOptions) ([]stri
 	save := s.saveOptions
 	sess := s.sessions[sessionID]
 	s.mu.RUnlock()
+	if sess != nil && sess.kind == "antigravity" {
+		return nil, fmt.Errorf("Antigravity has no session options")
+	}
 	if save != nil {
 		save(sessionID, clean)
 	}
@@ -351,6 +366,10 @@ func (s *NativeService) autoDecision(req PermissionRequest) (PermissionDecision,
 // starting one that already runs is a no-op, so a second device opening the page
 // doesn't spawn a second agent.
 func (s *NativeService) Start(sessionID, kind, cwd, model, resumeID, mode, effort string) error {
+	if kind == "antigravity" {
+		s.agyStartMu.Lock()
+		defer s.agyStartMu.Unlock()
+	}
 	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, effort, true)
 }
 
@@ -403,10 +422,16 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	if kind == "" {
 		kind = "claude"
 	}
+	if kind != "claude" && kind != "codex" && kind != "antigravity" {
+		return fmt.Errorf("unsupported native provider %q", kind)
+	}
 	cliMode := cliPermissionMode(mode)
 	// Codex has no effort equivalent, so its sessions report "" and the client hides the
 	// control rather than offering a setting that would do nothing.
-	if kind == "codex" {
+	if kind == "antigravity" {
+		mode, effort = "", ""
+	}
+	if kind == "codex" || kind == "antigravity" {
 		effort = ""
 	} else {
 		effort = normalizeEffort(effort)
@@ -417,7 +442,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	// world moves — an --add-dir path valid when it was saved may be gone now, and a
 	// stale path must not be what stops the session from starting.
 	var opts NativeOptions
-	if kind != "codex" {
+	if kind == "claude" {
 		s.mu.RLock()
 		loadOpts := s.loadOptions
 		s.mu.RUnlock()
@@ -426,7 +451,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		}
 	}
 	var token string
-	if kind != "codex" {
+	if kind == "claude" {
 		var err error
 		if token, err = s.tokens.Issue(sessionID); err != nil {
 			return err
@@ -435,7 +460,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	// One constructor for both attempts below, so the retry can never drift from the
 	// first try — and so the retry is not silently Claude-only, which is what used to
 	// leave a Codex agent permanently unopenable once a bad resume id was stored.
-	newDriver := func(resume string) NativeDriver {
+	newWireDriver := func(resume string) NativeDriver {
 		if kind == "codex" {
 			// Codex maps "auto" to its default (on-request) approval policy, so gated calls
 			// still reach the broker and the same policy applies.
@@ -451,17 +476,38 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			ApproveToken: token, SelfPath: s.selfBin,
 		})
 	}
-	d := newDriver(resumeID)
+	newDriver := func(resume string) (nativeExecution, error) {
+		if kind == "antigravity" {
+			return newAntigravityChat(antigravity.Config{Cwd: cwd, Model: model, ResumeID: resume}), nil
+		}
+		// Each process attempt has its own ID, including a fresh-start retry.
+		provider := providers.Claude
+		if kind == "codex" {
+			provider = providers.Codex
+		}
+		return native.New(providers.Identity{ExecutionID: rand.Text(), Provider: provider}, newWireDriver(resume))
+	}
+	d, err := newDriver(resumeID)
+	if err != nil {
+		s.tokens.Revoke(sessionID)
+		return err
+	}
 	if err := d.Start(); err != nil {
 		// A stale resume id (its transcript was deleted, or the CLI rejects it)
 		// must not lock the agent out of ever starting. Drop it and try fresh
 		// once, rather than failing every open from here on.
-		if resumeID == "" {
+		if resumeID == "" || kind == "antigravity" {
+			d.Stop()
 			s.tokens.Revoke(sessionID)
 			return err
 		}
 		d.Stop() // the first attempt may have left a live CLI process behind
-		d = newDriver("")
+		replacement, buildErr := newDriver("")
+		if buildErr != nil {
+			s.tokens.Revoke(sessionID)
+			return buildErr
+		}
+		d = replacement
 		if err2 := d.Start(); err2 != nil {
 			s.tokens.Revoke(sessionID)
 			return err
@@ -469,6 +515,11 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	}
 
 	sess := &nativeSession{id: sessionID, driver: d, kind: kind, cwd: cwd, model: model, mode: mode, effort: effort, opts: opts}
+	if err := s.restoreNativeHistory(sess); err != nil {
+		d.Stop()
+		s.tokens.Revoke(sessionID)
+		return err
+	}
 	// A resumed session's PRIOR conversation is not re-emitted as events by
 	// `claude --resume` — it just continues. So seed history from the transcript on
 	// disk, or the chat opens blank until the next reply. (Only when we actually
@@ -517,18 +568,70 @@ func seedNativeHistory(sess *nativeSession, cwd, sid string) {
 	}
 }
 
+// ExecutionIdentity maps a legacy agent/session ID to its current process attempt.
+func (s *NativeService) ExecutionIdentity(sessionID string) (providers.Identity, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess := s.sessions[sessionID]
+	if sess == nil || sess.driver == nil {
+		return providers.Identity{}, false
+	}
+	identity := sess.driver.Identity()
+	return identity, identity.ExecutionID != ""
+}
+
+// AddExecutionObserver receives provider-neutral live events. It does not replay
+// history or synthesize user turns. Callbacks run synchronously, outside locks,
+// and must return promptly. Events include a unique process-attempt identity so
+// consumers can reject stale work. EOF is not synthesized into task success.
+func (s *NativeService) AddExecutionObserver(fn func(providers.Event)) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	s.executionObservers = append(s.executionObservers, fn)
+	s.mu.Unlock()
+}
+
+func (s *NativeService) emitExecution(sess *nativeSession, event providers.Event) {
+	s.mu.RLock()
+	current := s.sessions[sess.id] == sess
+	observers := append([]func(providers.Event){}, s.executionObservers...)
+	s.mu.RUnlock()
+	if !current {
+		return
+	}
+	for _, observe := range observers {
+		observe(event)
+	}
+}
+
 // pump forwards the driver's events and cleans up when the process exits.
 func (s *NativeService) pump(sess *nativeSession) {
-	for ev := range sess.driver.Events() {
-		if ev.Type == StreamTypeSystem && ev.Subtype == "init" && ev.SessionID != "" {
+	for {
+		envelope, err := sess.driver.NextEnvelope(context.Background())
+		if err != nil {
+			break
+		} // Background cannot cancel; channel EOF ends the pump.
+		if sess.kind == "antigravity" {
+			sess.sendMu.Lock()
+		}
+		if envelope.Event.Identity.ExecutionID != "" {
+			s.emitExecution(sess, envelope.Event)
+		}
+		ev := envelope.Wire
+		if (ev.Type == StreamTypeResult || ev.Type == StreamTypeSystem && ev.Subtype == "init") && ev.SessionID != "" {
 			s.mu.RLock()
 			save := s.onSessionID
 			s.mu.RUnlock()
-			if save != nil {
+			if save != nil && !(sess.kind == "antigravity" && s.historyStore != nil) {
 				save(sess.id, ev.SessionID)
 			}
 		}
 		s.emit(sess, ev)
+		if sess.kind == "antigravity" {
+			sess.sendMu.Unlock()
+		}
 	}
 
 	// The process is gone: release anything waiting on a human for it, or the
@@ -587,6 +690,9 @@ func (s *NativeService) SetModel(sessionID, model string) error {
 	s.mu.RLock()
 	sess := s.sessions[sessionID]
 	s.mu.RUnlock()
+	if sess != nil && sess.kind == "antigravity" {
+		return fmt.Errorf("Antigravity model selection uses CLI configuration in this integration")
+	}
 	mode, effort := "", ""
 	if sess != nil {
 		mode, effort = sess.mode, sess.effort
@@ -607,8 +713,8 @@ func (s *NativeService) SetEffort(sessionID, effort string) error {
 	if sess == nil {
 		return fmt.Errorf("native session %s is not running", sessionID)
 	}
-	if sess.kind == "codex" {
-		return fmt.Errorf("codex sessions have no effort setting")
+	if sess.kind != "claude" {
+		return fmt.Errorf("this provider has no effort setting")
 	}
 	s.mu.RLock()
 	model, mode, current := sess.model, sess.mode, sess.effort
@@ -651,6 +757,9 @@ func (s *NativeService) SetMode(sessionID, mode string) error {
 	s.mu.RUnlock()
 	if sess == nil {
 		return fmt.Errorf("native session %s is not running", sessionID)
+	}
+	if sess.kind == "antigravity" {
+		return fmt.Errorf("Antigravity uses configured CLI permissions")
 	}
 	s.mu.RLock()
 	current, model := sess.mode, sess.model
@@ -695,21 +804,33 @@ func (s *NativeService) applyMode(sess *nativeSession, mode string) {
 // turns go through, so history order and what's on screen never disagree.
 func (s *NativeService) emit(sess *nativeSession, ev *StreamEvent) {
 	sess.mu.Lock()
-	sess.history = append(sess.history, ev)
+	events := []*StreamEvent{ev}
+	if sess.kind == "antigravity" && s.historyStore != nil {
+		if err := s.historyStore.Append(sess.id, sess.kind, ev.Raw, ev.SessionID); err != nil {
+			log.Printf("native history save failed for %s: %v", sess.id, err)
+			if !sess.storageFailed {
+				sess.storageFailed = true
+				warning, _ := ParseStreamEvent([]byte(`{"type":"storage_warning","result":"대화 기록을 저장하지 못했습니다. 현재 화면은 유지되지만 재접속 후 일부 기록이 사라질 수 있습니다."}`))
+				events = append(events, warning)
+			}
+		}
+	}
+	sess.history = append(sess.history, events...)
 	if len(sess.history) > maxNativeHistory {
 		sess.history = sess.history[len(sess.history)-maxNativeHistory:]
 	}
 	sess.mu.Unlock()
-
 	s.mu.RLock()
 	fn := s.onEvent
 	observers := append([]func(string, *StreamEvent){}, s.observers...)
 	s.mu.RUnlock()
-	if fn != nil {
-		fn(sess.id, ev)
-	}
-	for _, observe := range observers {
-		observe(sess.id, ev)
+	for _, event := range events {
+		if fn != nil {
+			fn(sess.id, event)
+		}
+		for _, observe := range observers {
+			observe(sess.id, event)
+		}
 	}
 }
 
@@ -728,6 +849,10 @@ func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText s
 	s.mu.RUnlock()
 	if sess == nil {
 		return fmt.Errorf("native session %s is not running", sessionID)
+	}
+	if sess.kind == "antigravity" {
+		sess.sendMu.Lock()
+		defer sess.sendMu.Unlock()
 	}
 	if err := sess.driver.Send(driverText); err != nil {
 		return err

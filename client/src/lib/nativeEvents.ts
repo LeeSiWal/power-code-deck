@@ -36,9 +36,11 @@ export interface StreamEvent {
   capabilities?: string[];
   claude_code_version?: string;
   permissionMode?: string;
+  approval_handling?: string;
   // result
   result?: string;
   is_error?: boolean;
+  provider_notice?: boolean;
   num_turns?: number;
   total_cost_usd?: number;
   permission_denials?: { tool_name: string; tool_use_id: string }[];
@@ -64,7 +66,7 @@ export interface AskQuestion {
 }
 
 export type ChatItem =
-  | { kind: 'session'; id: string; model?: string; cwd?: string; version?: string; bridgeOk: boolean }
+  | { kind: 'session'; id: string; model?: string; cwd?: string; version?: string; bridgeOk: boolean; approvalHandling?: string }
   | { kind: 'user'; id: string; text: string }
   // `subagent` marks text a sub-agent (Task) produced rather than the main thread —
   // forwarded by --forward-subagent-text and rendered as an aside, not as the answer.
@@ -80,7 +82,7 @@ export type ChatItem =
       subagent: boolean;
     }
   | { kind: 'ask'; id: string; questions: AskQuestion[]; answered: boolean }
-  | { kind: 'result'; id: string; text: string; denied: string[]; costUsd?: number; turns?: number };
+  | { kind: 'result'; id: string; text: string; denied: string[]; notice?: boolean; costUsd?: number; turns?: number };
 
 /** Flatten a tool_result's `content` — a string, or an array of blocks. */
 function resultText(content: unknown): string {
@@ -121,6 +123,10 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
   let lastSessionKey = '';
 
   for (const ev of events) {
+    if (ev.type === 'storage_warning') {
+      items.push({ kind: 'result', id: `warning-${items.length}`, text: ev.result ?? '', denied: [], notice: true });
+      continue;
+    }
     if (ev.type === 'stream_event') {
       const inner = ev.event;
       if (inner?.type === 'content_block_delta' && inner.delta?.type === 'text_delta') {
@@ -154,6 +160,7 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
         cwd: ev.cwd,
         version: ev.claude_code_version,
         bridgeOk,
+        approvalHandling: ev.approval_handling,
       });
       continue;
     }
@@ -232,10 +239,16 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
     }
 
     if (ev.type === 'result') {
+      if (streamAt >= 0 && items[streamAt]?.kind === 'assistant') {
+        const cur = items[streamAt] as Extract<ChatItem, { kind: 'assistant' }>;
+        items[streamAt] = { ...cur, streaming: false };
+      }
+      streamAt = -1;
       items.push({
         kind: 'result',
         id: `${items.length}`,
         text: ev.result ?? '',
+        notice: ev.provider_notice,
         // A turn ends subtype:"success" even when every tool was blocked — the
         // word describes the turn, not the work. Surface the denials so the UI
         // can't imply something happened when nothing did.

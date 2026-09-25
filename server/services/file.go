@@ -120,6 +120,11 @@ func (s *FileService) IsSensitivePath(p string) bool {
 	if err != nil {
 		return false
 	}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	} else {
+		home = resolveNearestParent(home)
+	}
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return false
