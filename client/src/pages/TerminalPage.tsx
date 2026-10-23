@@ -101,8 +101,12 @@ export function TerminalPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { isMobile, isTablet, isTouchDevice, width, height } = useDevice();
   // iPad without a physical keyboard: the on-screen deck keyboard replaces the
-  // iOS keyboard in terminal sessions (it types into the unified input).
-  const keyboard = useKeyboardMode(isTouchDevice && UNIFIED_INPUT && deckKeyboardFits(width, height));
+  // iOS keyboard — in the chat composer, and in terminal sessions (where it types
+  // into the unified input, so not with ?classicInput).
+  const deckFits = isTouchDevice && deckKeyboardFits(width, height);
+  const keyboard = useKeyboardMode(deckFits);
+  const chatKeyboard = deckFits ? { ...keyboard, width, height } : undefined;
+  const terminalDeck = keyboard.deck && UNIFIED_INPUT;
   const handoffEnabled = useAppStore((s) => s.authConfig?.handoffEnabled ?? true);
   const [agent, setAgent] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<CenterTab>('terminal');
@@ -392,7 +396,7 @@ export function TerminalPage() {
       onCopy={handleCopy}
     />
   );
-  const deckOffer = isTouchDevice && UNIFIED_INPUT && deckKeyboardFits(width, height) ? keyboard.switchToDeck : undefined;
+  const deckOffer = deckFits && UNIFIED_INPUT ? keyboard.switchToDeck : undefined;
   const keyboardNotice = keyboard.notice ? (
     <div className="fixed left-1/2 -translate-x-1/2 bottom-32 z-50 px-4 py-2 rounded-lg text-xs text-center shadow-xl bg-deck-surface border border-deck-accent/40 text-deck-text max-w-[90%]">
       {keyboard.notice}
@@ -506,8 +510,8 @@ export function TerminalPage() {
           <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
             {usesNative(agent) ? (
               agent.preset === 'auto'
-                ? <AutoChat key={agentId} agentId={agentId} onBound={setAgent} />
-                : <NativeChat key={`${agentId}:${nativeDriver(agent)}`} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} autoRouted={!!agent.autoProfile} onAgentChange={setAgent} />
+                ? <AutoChat key={agentId} agentId={agentId} onBound={setAgent} keyboard={chatKeyboard} />
+                : <NativeChat key={`${agentId}:${nativeDriver(agent)}`} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} autoRouted={!!agent.autoProfile} onAgentChange={setAgent} keyboard={chatKeyboard} />
             ) : (
               <TerminalView
                 key={agentId}
@@ -515,7 +519,7 @@ export function TerminalPage() {
                 agentId={agentId}
                 onFocusTerminal={focusTerminal}
                 onHangulDirect={handleHangulDirectInput}
-                deckKeyboard={keyboard.deck}
+                deckKeyboard={terminalDeck}
               />
             )}
           </div>
@@ -552,7 +556,7 @@ export function TerminalPage() {
                 onFocusChange={handlePromptFocusChange}
               />
             )}
-            {keyboard.deck && !keyboard.hidden ? deckKeyboard : (
+            {terminalDeck && !keyboard.hidden ? deckKeyboard : (
               <MobileToolbar agentId={agentId} sendKey={sendTerminalKey} onCopy={handleCopy} onPaste={handlePaste}
                 onDeckKeyboard={deckOffer} />
             )}
@@ -822,8 +826,8 @@ export function TerminalPage() {
             <div className="flex-1 min-h-0">
               {usesNative(agent) ? (
                 agent.preset === 'auto'
-                ? <AutoChat key={agentId} agentId={agentId} onBound={setAgent} />
-                : <NativeChat key={`${agentId}:${nativeDriver(agent)}`} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} autoRouted={!!agent.autoProfile} onAgentChange={setAgent} />
+                ? <AutoChat key={agentId} agentId={agentId} onBound={setAgent} keyboard={chatKeyboard} />
+                : <NativeChat key={`${agentId}:${nativeDriver(agent)}`} agentId={agentId} cwd={agent.workingDir} driver={nativeDriver(agent)} autoRouted={!!agent.autoProfile} onAgentChange={setAgent} keyboard={chatKeyboard} />
               ) : (
                 <TerminalView
                   key={agentId}
@@ -831,7 +835,7 @@ export function TerminalPage() {
                   agentId={agentId}
                   onFocusTerminal={focusTerminal}
                   onHangulDirect={handleHangulDirectInput}
-                  deckKeyboard={keyboard.deck}
+                  deckKeyboard={terminalDeck}
                 />
               )}
             </div>
@@ -875,7 +879,7 @@ export function TerminalPage() {
                   autoFocus={!forcePromptBar}
                 />
               )}
-              {keyboard.deck && !keyboard.hidden ? deckKeyboard : (
+              {terminalDeck && !keyboard.hidden ? deckKeyboard : (
                 <TerminalKeyBar
                   agentId={agentId}
                   onKeySent={() => terminalApiRef.current?.focus()}
