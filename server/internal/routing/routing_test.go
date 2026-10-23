@@ -407,6 +407,33 @@ func TestRuleTierEscalationFloor(t *testing.T) {
 	}
 }
 
+// A hard word is not a hard task when it only names what an easy edit is
+// about, and in a chat a lone hard word in a short message does not move the
+// session up. Two signals, or a longer request, still do.
+func TestLoneHardWordDoesNotRaiseTier(t *testing.T) {
+	long := strings.Repeat("이 부분을 자세히 봐 주세요. ", 30) // > 300 runes
+	cases := []struct {
+		goal string
+		turn bool
+		want Tier
+	}{
+		{"보안 관련 주석 추가", false, VeryEasy},
+		{"docs/a.md, docs/b.md에 성능 측정 문서 추가", false, Easy},
+		{"리팩터링해줘", false, High}, // a first request keeps the old rule
+		{"리팩터링해줘", true, Medium},
+		{"성능은 어때?", true, Medium},
+		{"동시성 버그가 있는 상태 머신을 리팩터링해줘", true, High},
+		{"성능 " + long, true, High},
+	}
+	for _, c := range cases {
+		task := DescribeTask(c.goal, KindCode, nil)
+		task.Turn = c.turn
+		if got, why := RuleTier(task); got != c.want {
+			t.Errorf("%q turn=%v: got %v %v, want %v", c.goal, c.turn, got, why, c.want)
+		}
+	}
+}
+
 // Downgrade after success, stickiness, and pins.
 func TestSelectionDowngradeStickinessPins(t *testing.T) {
 	pol := mustPolicy(t)

@@ -475,10 +475,14 @@ func (d *CodexDriver) handleNotification(method string, raw json.RawMessage) {
 // Usage therefore stays nil here (see nativeResultEventWithUsage). If a future
 // Codex version adds usage, that will need rediscovering the same way.
 
+// codexInitVersion marks a Codex conversation's init event (Codex has no
+// claude_code_version of its own).
+const codexInitVersion = "Codex app-server"
+
 func (d *CodexDriver) emitSystem(model string) {
 	raw, _ := json.Marshal(map[string]any{
 		"type": "system", "subtype": "init", "session_id": d.ConversationID(),
-		"model": model, "cwd": d.cfg.Cwd, "claude_code_version": "Codex app-server",
+		"model": model, "cwd": d.cfg.Cwd, "claude_code_version": codexInitVersion,
 		"mcp_servers": []map[string]string{{"name": "pcd", "status": "connected"}},
 	})
 	ev, _ := ParseStreamEvent(raw)

@@ -57,9 +57,11 @@ func TestTurnSwitchPolicy(t *testing.T) {
 		{&low, low2, time.Hour, big, false, "same_tier"},
 		{&high, low, time.Minute, big, false, "downgrade_deferred"},
 		{&high, low, TurnIdleDowngrade, big, true, "idle_downgrade"},
-		// A short conversation moves down at once: one misjudged request must
-		// not keep the session on a pricier model.
+		// Up to ModelSwitchTokens a session moves down at once: one hard request
+		// must not keep it on a pricier model for the easy ones after it.
 		{&high, low, time.Minute, SmallContextTokens - 1, true, "small_context_downgrade"},
+		{&high, low, time.Minute, ModelSwitchTokens - 1, true, "small_context_downgrade"},
+		{&high, low, time.Minute, ModelSwitchTokens, false, "downgrade_deferred"},
 	}
 	for _, c := range cases {
 		apply, reason := TurnSwitch(c.cur, c.next, c.idle, c.ctx)
