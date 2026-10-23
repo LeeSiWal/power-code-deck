@@ -105,3 +105,52 @@ func TestClaudeConversationSizeUsesReportedUsage(t *testing.T) {
 		t.Fatalf("subagent text counted: %d", got)
 	}
 }
+
+// Escalating from a rejected local answer hands over the conversation before
+// that request, never the local model's own work on it: not its answer, not
+// the files it read. The working tree shows what it changed.
+func TestEscalationHandoffLeavesOutRejectedLocalTurn(t *testing.T) {
+	h := []*StreamEvent{
+		initEvent("thread-1", codexInitVersion),
+		textEvent("user", "첫 요청: 로그인 화면 만들기"),
+		textEvent("assistant", "로그인 화면을 만들었습니다"),
+		nativeResultEvent(),
+		textEvent("user", "비밀번호 재설정도 추가해줘"),
+		toolUseEvent("c1", "cat auth.go"),
+		toolResultEvent("c1", strings.Repeat("LOCALREAD", 5000)),
+		textEvent("assistant", "LOCAL-ANSWER 재설정을 추가했습니다"),
+		nativeResultEvent(),
+	}
+	got, turns := BuildEscalationHandoff(h, 0, "", "브랜치: main\n커밋 안 된 변경:\n M auth.go", 120000)
+	for _, want := range []string{"첫 요청: 로그인 화면 만들기", "로그인 화면을 만들었습니다", "M auth.go", "[현재 요청]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("handoff lacks %q:\n%s", want, got)
+		}
+	}
+	for _, leak := range []string{"LOCAL-ANSWER", "LOCALREAD", "cat auth.go", "비밀번호 재설정도 추가해줘"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("handoff carries the rejected turn (%q)", leak)
+		}
+	}
+	if turns != 1 {
+		t.Errorf("turns = %d, want 1", turns)
+	}
+	if full := ConversationTokens(h); len(got)/3 >= full {
+		t.Errorf("handoff (%d tokens) is not smaller than resuming (%d)", len(got)/3, full)
+	}
+}
+
+// A first request answered by the local model leaves nothing earlier to hand
+// over; a fresh-start memo stands for turns before the fresh point.
+func TestEscalationHandoffFirstTurnAndMemo(t *testing.T) {
+	h := []*StreamEvent{textEvent("user", "only request"), textEvent("assistant", "local reply"), nativeResultEvent()}
+	got, turns := BuildEscalationHandoff(h, 0, "", "", 120000)
+	if strings.Contains(got, "only request") || strings.Contains(got, "local reply") || turns != 0 || !strings.HasSuffix(got, "[현재 요청]\n") {
+		t.Fatalf("first-turn handoff: %d %q", turns, got)
+	}
+	h = append([]*StreamEvent{textEvent("user", "old turn"), textEvent("assistant", "old reply")}, h...)
+	got, _ = BuildEscalationHandoff(h, 1, "MEMO-TEXT", "", 120000)
+	if !strings.Contains(got, "MEMO-TEXT") || strings.Contains(got, "old turn") {
+		t.Fatalf("memo handoff: %q", got)
+	}
+}
