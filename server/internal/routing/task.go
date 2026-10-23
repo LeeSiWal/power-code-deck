@@ -44,6 +44,9 @@ type Task struct {
 	Files       []string       `json:"files,omitempty"`
 	Constraints []string       `json:"constraints,omitempty"`
 	Prior       []PriorAttempt `json:"prior,omitempty"`
+	// Turn marks a later message of a chat session. Moving a chat up costs a
+	// model switch or an advice call, so one hard word alone does not do it.
+	Turn bool `json:"turn,omitempty"`
 }
 
 var (
@@ -87,14 +90,26 @@ func RuleTier(t Task) (Tier, []string) {
 	tier, why := Medium, []string{"default MEDIUM"}
 	n := utf8.RuneCountInString(t.Goal)
 	hard := len(hardWords.FindAllString(t.Goal, -1))
+	easy := easyWords.MatchString(t.Goal)
+	// One hard word inside a short easy edit names what the edit is about
+	// ("보안 관련 주석 추가"), not a hard task.
+	if hard == 1 && easy && n < 300 && len(t.Files) <= 2 {
+		hard = 0
+	}
+	// A lone hard word in a short chat message ("성능은 어때?") is usually its
+	// subject too; it takes a second signal or a longer request.
+	hardSignal := hard >= 1
+	if t.Turn && hard == 1 && n < 300 {
+		hardSignal = false
+	}
 	switch {
 	case hard >= 2 && (n > 4000 || len(t.Files) >= 8):
 		tier, why = Ultra, []string{fmt.Sprintf("%d hard signals with large scope", hard)}
-	case hard >= 1 || n > 1500 || len(t.Files) >= 4:
+	case hardSignal || n > 1500 || len(t.Files) >= 4:
 		tier, why = High, []string{fmt.Sprintf("hard signals=%d chars=%d files=%d", hard, n, len(t.Files))}
-	case easyWords.MatchString(t.Goal) && n < 80 && len(t.Files) <= 1:
+	case easy && n < 80 && len(t.Files) <= 1:
 		tier, why = VeryEasy, []string{"trivial edit keywords, very short request"}
-	case easyWords.MatchString(t.Goal) && n < 300 && len(t.Files) <= 2:
+	case easy && n < 300 && len(t.Files) <= 2:
 		tier, why = Easy, []string{"easy edit keywords, short request"}
 	}
 	if t.Kind == KindText && tier > Medium {

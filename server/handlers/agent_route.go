@@ -149,8 +149,9 @@ const (
 	maxHandoffChars         = 120000
 	// A conversation at least this long is not moved up to a stronger model for
 	// one hard request (the stronger model would re-read all of it); the request
-	// goes to that model as a short brief for read-only advice instead.
-	delegateMinTokens = 20000
+	// goes to that model as a short brief for read-only advice instead. It is the
+	// same size below which a session moves back down at once.
+	delegateMinTokens = runroute.ModelSwitchTokens
 )
 
 // estimateTokens is a rough count for the confirm prompt: ~1 token per 3 bytes
@@ -406,17 +407,10 @@ func DelegateStatus(delegator *services.Delegator) http.HandlerFunc {
 	}
 }
 
-// contextTokens is how much a model re-reads to continue this conversation: the
-// context the last turn reported (input + cache writes + cache reads). When the
-// CLI reports no usage (Codex), the handoff text size stands in for it.
+// contextTokens is how much a model re-reads to continue this conversation (see
+// services.ConversationTokens; Codex reports no usage, so it is estimated).
 func contextTokens(history []*services.StreamEvent) int {
-	for i := len(history) - 1; i >= 0; i-- {
-		if ev := history[i]; ev.Type == "result" && ev.Usage != nil {
-			return ev.Usage.InputTokens + ev.Usage.CacheCreationInputTokens + ev.Usage.CacheReadInputTokens
-		}
-	}
-	full, _ := services.BuildToolHandoff(history, 0, false, maxHandoffChars)
-	return estimateTokens(full)
+	return services.ConversationTokens(history)
 }
 
 // Escalate re-routes the session's last request to a paid (non-local) model

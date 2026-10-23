@@ -55,9 +55,21 @@ func idleFromEnv(d time.Duration) time.Duration {
 }
 
 // SmallContextTokens is the conversation size below which a session may move
-// down right away: the new model re-reads so little that the idle wait saves
-// nothing.
+// to another tool right away: the new tool reads so little that the idle wait
+// saves nothing.
 const SmallContextTokens = 8000
+
+// ModelSwitchTokens is the conversation size up to which a session moves
+// between models of its tool on the request's tier alone, up or down. Staying
+// on a stronger model is not free: every request of every later turn re-reads
+// the cached conversation and writes its output at that model's price, and a
+// switch down re-reads it once at the cheaper model's. Below this size that one
+// re-read is small, so an easy request after a hard one moves down at once;
+// above it a hard request goes to the stronger model for advice instead of
+// moving the conversation up (handlers.RouteTurn), so a session rarely sits on
+// a stronger model with a long conversation. Not measured: a judgement from
+// the cache pricing rules, to be checked against recorded auto usage.
+const ModelSwitchTokens = 20000
 
 // TurnChoice is the profile a session's next turn should use, with the one it
 // is on now (nil if that profile no longer exists in the config).
@@ -81,8 +93,10 @@ func (c *Coordinator) ChooseTurn(ctx context.Context, goal, adapter, current str
 	if noLocal {
 		cfg = withoutLocal(full)
 	}
+	task := routing.DescribeTask(goal, routing.KindCode, nil)
+	task.Turn = true
 	d := routing.Decide(ctx, routing.DecideInput{Config: cfg, Statuses: statuses, Policy: c.policy, Health: c.health, Router: c.router,
-		Task: routing.DescribeTask(goal, routing.KindCode, nil), Mode: routing.ModeAuto, Current: current, PinAdapter: adapter,
+		Task: task, Mode: routing.ModeAuto, Current: current, PinAdapter: adapter,
 		JudgeTier: c.judgeTurnTier(ctx, full, statuses, goal, previous)})
 	tc := TurnChoice{Choice: Choice{Decision: d}}
 	// The current profile may be a local one that noLocal just left out.
@@ -115,9 +129,9 @@ func TurnSwitch(cur *routing.Profile, next routing.Profile, idle time.Duration, 
 		return false, "same_tier"
 	case idle >= TurnIdleDowngrade:
 		return true, "idle_downgrade"
-	case contextTokens < SmallContextTokens:
-		// Little to re-read: waiting out the cache would only keep a session on
-		// a pricier model after one misjudged request.
+	case contextTokens < ModelSwitchTokens:
+		// Little to re-read: waiting out the cache would keep the session on a
+		// pricier model for requests that do not need it.
 		return true, "small_context_downgrade"
 	}
 	return false, "downgrade_deferred"
