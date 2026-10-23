@@ -114,10 +114,21 @@ func (c *Coordinator) ChooseTurn(ctx context.Context, goal, adapter, current str
 	return tc, nil
 }
 
+// TurnLoad is what one turn of the session reads and writes, from the turns the
+// CLI reported: CacheRead sums the cached context every request of a turn
+// re-read, Output what the turn wrote. Zero = not reported (Codex).
+type TurnLoad struct {
+	CacheRead int
+	Output    int
+}
+
 // TurnSwitch decides whether to move to next before this turn: up whenever the
-// request needs a higher tier, down only once the session has been idle past
-// TurnIdleDowngrade, never sideways between profiles of the same tier.
-func TurnSwitch(cur *routing.Profile, next routing.Profile, idle time.Duration, contextTokens int) (bool, string) {
+// request needs a higher tier, never sideways between profiles of the same
+// tier, and down once the session has been idle past TurnIdleDowngrade or when
+// moving costs less than staying over a few turns (see downgradePays). Without
+// prices or reported usage, a conversation under ModelSwitchTokens moves down
+// at once.
+func TurnSwitch(cur *routing.Profile, next routing.Profile, idle time.Duration, contextTokens int, load TurnLoad) (bool, string) {
 	switch {
 	case cur == nil:
 		return true, "current_unknown"
@@ -129,12 +140,48 @@ func TurnSwitch(cur *routing.Profile, next routing.Profile, idle time.Duration, 
 		return false, "same_tier"
 	case idle >= TurnIdleDowngrade:
 		return true, "idle_downgrade"
+	}
+	if pays, known := downgradePays(*cur, next, contextTokens, load); known {
+		if pays {
+			return true, "cost_downgrade"
+		}
+		return false, "downgrade_deferred"
+	}
+	switch {
 	case contextTokens < ModelSwitchTokens:
 		// Little to re-read: waiting out the cache would keep the session on a
 		// pricier model for requests that do not need it.
 		return true, "small_context_downgrade"
 	}
 	return false, "downgrade_deferred"
+}
+
+// DowngradeHorizonTurns is how many turns a move down must pay for itself in.
+// A move costs once; its saving repeats every turn until the session pauses
+// (the cache then goes cold and moving is free) or a hard request moves it up
+// again. Not measured: a judgement, to be checked against recorded auto usage.
+const DowngradeHorizonTurns = 3
+
+// downgradePays compares the next DowngradeHorizonTurns turns on the current
+// model with the same turns on the cheaper one. Staying, every request
+// re-reads the cached conversation at the current model's cache price and the
+// answer is written at its output price. Moving, the cheaper model first
+// writes the whole conversation into its own cache once, then re-reads it at
+// its own cache price. known is false without both prices or a reported turn.
+func downgradePays(cur, next routing.Profile, contextTokens int, load TurnLoad) (pays, known bool) {
+	if cur.Price == nil || next.Price == nil || load.CacheRead <= 0 || contextTokens <= 0 {
+		return false, false
+	}
+	hi, lo := *cur.Price, *next.Price
+	read, out, ctx, n := float64(load.CacheRead), float64(load.Output), float64(contextTokens), float64(DowngradeHorizonTurns)
+	turnHi := read*hi.CacheRead + out*hi.Output
+	turnLo := read*lo.CacheRead + out*lo.Output
+	// The first request after the move writes the conversation instead of
+	// reading it from cache.
+	firstLo := turnLo + ctx*(lo.Write()-lo.CacheRead)
+	stay := n * turnHi
+	move := firstLo + (n-1)*turnLo
+	return move <= stay, true
 }
 
 // withoutLocal drops local-model profiles (local adapter or local Codex).

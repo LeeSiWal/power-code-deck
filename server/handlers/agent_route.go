@@ -256,7 +256,9 @@ func RouteTurn(agentSvc *services.AgentService, native *services.NativeService, 
 			skip("no_profile")
 			return
 		}
-		apply, reason := runroute.TurnSwitch(tc.Current, *tc.Profile, idle, contextTokens(history))
+		var load runroute.TurnLoad
+		load.CacheRead, load.Output, _ = services.RecentTurnLoad(history)
+		apply, reason := runroute.TurnSwitch(tc.Current, *tc.Profile, idle, contextTokens(history), load)
 		resp := routeTurnResponse{Reason: reason, From: toRoutingProfile(tc.Current), To: toRoutingProfile(tc.Profile), RuleTier: tc.Decision.RuleTier.String()}
 		// Hard request in a long conversation: ask the stronger model for advice on
 		// a short brief, and let the current model (which has the context) do it.

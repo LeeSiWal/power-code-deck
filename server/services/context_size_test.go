@@ -154,3 +154,30 @@ func TestEscalationHandoffFirstTurnAndMemo(t *testing.T) {
 		t.Fatalf("memo handoff: %q", got)
 	}
 }
+
+// Claude's result usage sums every request of a turn; the conversation size is
+// the last request's, from its assistant message. The turn load is the
+// result's sums, averaged over the last few turns.
+func TestClaudeContextIsLastRequestNotTurnSum(t *testing.T) {
+	req := func(n int) *StreamEvent {
+		ev := textEvent("assistant", "step")
+		ev.Message.Usage = &StreamUsage{InputTokens: 10, CacheReadInputTokens: n}
+		return ev
+	}
+	h := []*StreamEvent{
+		initEvent("s1", "2.1.212"),
+		textEvent("user", "go"),
+		req(20000), req(21000), req(22000),
+		{Type: "result", Usage: &StreamUsage{InputTokens: 30, CacheReadInputTokens: 63000, OutputTokens: 900}},
+	}
+	if got := ConversationTokens(h); got != 22010 {
+		t.Fatalf("context = %d, want the last request's 22010", got)
+	}
+	h = append(h, textEvent("user", "again"), &StreamEvent{Type: "result", Usage: &StreamUsage{CacheReadInputTokens: 37000, OutputTokens: 100}})
+	if cr, out, ok := RecentTurnLoad(h); !ok || cr != 50000 || out != 500 {
+		t.Fatalf("load = %d %d %v", cr, out, ok)
+	}
+	if _, _, ok := RecentTurnLoad([]*StreamEvent{initEvent("t", codexInitVersion), nativeResultEvent()}); ok {
+		t.Fatal("codex reported no usage; load must be unknown")
+	}
+}
