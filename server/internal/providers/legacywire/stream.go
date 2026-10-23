@@ -105,6 +105,9 @@ type StreamMessage struct {
 	Role    string         `json:"role"`
 	Model   string         `json:"model"`
 	Content []ContentBlock `json:"content"`
+	// Usage on an assistant message is that one API request's. The result
+	// event's usage instead sums every request of the turn.
+	Usage *StreamUsage `json:"usage,omitempty"`
 }
 
 // ContentBlock is a piece of a message: text, a tool call, or a tool's result.

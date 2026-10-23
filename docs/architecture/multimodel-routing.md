@@ -280,6 +280,21 @@ dial time (after DNS); redirects are not followed; no proxy; optional bearer
 token from `tokenEnv`. A local endpoint is labelled with its host, never
 "offline".
 
+Profile `price` (optional) — `{"input", "output", "cacheRead", "cacheWrite"}`
+per million tokens, copied from the vendor's official pricing page (one
+currency for every profile; `cacheWrite` 0 = no cache-write surcharge, the
+input price applies). It is used only by "자동" chat sessions, to decide when
+to move back down to a cheaper model of the same tool before the session has
+been idle for 5 minutes (`runroute.TurnSwitch`): the next 3 turns on the
+current model are compared with the same turns on the cheaper one, which must
+first write the whole conversation into its own cache. The turn's size comes
+from the usage the CLI reported on its last turns (Claude: cache reads and
+output summed over the turn's requests); the conversation size from the last
+request's usage. Without a price on both profiles, or for Codex (it reports no
+usage), a conversation under 20k tokens moves down at once and a longer one
+waits for the idle gap. On a subscription the prices do not change the bill;
+they stand in for how fast each model uses up the plan's limits.
+
 ## Using it
 
 1. Start the server with `PCD_V2_ENABLED=1` (and optionally `PCD_ROUTING_CONFIG`).

@@ -64,10 +64,50 @@ func TestTurnSwitchPolicy(t *testing.T) {
 		{&high, low, time.Minute, ModelSwitchTokens, false, "downgrade_deferred"},
 	}
 	for _, c := range cases {
-		apply, reason := TurnSwitch(c.cur, c.next, c.idle, c.ctx)
+		apply, reason := TurnSwitch(c.cur, c.next, c.idle, c.ctx, TurnLoad{})
 		if apply != c.apply || reason != c.reason {
 			t.Errorf("%v→%s idle %v: got %v %s", c.cur, c.next.ID, c.idle, apply, reason)
 		}
+	}
+}
+
+// With prices and a measured turn, moving down is a cost comparison over
+// DowngradeHorizonTurns turns instead of a size rule: a long conversation moves
+// down when its agentic turns re-read far more than the move writes once, and
+// stays when a turn barely re-reads it. Prices here are made-up round numbers
+// in the shape of a cache-write surcharge and a cheap cache read.
+func TestTurnSwitchWeighsStayingAgainstMoving(t *testing.T) {
+	hi := routing.Profile{ID: "hi", Tiers: []routing.Tier{routing.High}, Price: &routing.Price{Input: 5, Output: 25, CacheRead: 0.5, CacheWrite: 6.25}}
+	lo := routing.Profile{ID: "lo", Tiers: []routing.Tier{routing.Medium}, Price: &routing.Price{Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: 3.75}}
+	ctx := ModelSwitchTokens * 5 // past the size rule, which would defer
+	cases := []struct {
+		name   string
+		load   TurnLoad
+		apply  bool
+		reason string
+	}{
+		// 20 requests per turn re-reading the conversation: staying costs more.
+		{"agentic turns", TurnLoad{CacheRead: 20 * ctx, Output: 4000}, true, "cost_downgrade"},
+		// One request per turn: the move's one cache write is never repaid.
+		{"single-request turns", TurnLoad{CacheRead: ctx, Output: 300}, false, "downgrade_deferred"},
+		// Nothing reported (Codex): the size rule decides.
+		{"unreported", TurnLoad{}, false, "downgrade_deferred"},
+	}
+	for _, c := range cases {
+		apply, reason := TurnSwitch(&hi, lo, time.Minute, ctx, c.load)
+		if apply != c.apply || reason != c.reason {
+			t.Errorf("%s: got %v %s, want %v %s", c.name, apply, reason, c.apply, c.reason)
+		}
+	}
+	// Without a price on either side the size rule decides, even with usage.
+	noPrice := lo
+	noPrice.Price = nil
+	if apply, reason := TurnSwitch(&hi, noPrice, time.Minute, ModelSwitchTokens-1, TurnLoad{CacheRead: ctx}); !apply || reason != "small_context_downgrade" {
+		t.Errorf("no price: got %v %s", apply, reason)
+	}
+	// Moving up and idle moves never depend on prices.
+	if apply, reason := TurnSwitch(&lo, hi, 0, ctx, TurnLoad{CacheRead: ctx}); !apply || reason != "harder" {
+		t.Errorf("up: got %v %s", apply, reason)
 	}
 }
 

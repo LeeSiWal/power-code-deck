@@ -93,6 +93,32 @@ type Profile struct {
 	// Roles this profile may serve. Empty means executor+reviewer (the meaning
 	// profiles had before roles existed). "decider" is never implied.
 	Roles []Role `json:"roles,omitempty"`
+	// Price (optional) lets a chat session weigh staying on this model against
+	// moving to another (runroute.TurnSwitch). Without it on both profiles the
+	// move falls back to a fixed conversation-size rule.
+	Price *Price `json:"price,omitempty"`
+}
+
+// Price is a model's published price per million tokens. Copy it from the
+// vendor's official pricing page; any currency works as long as every profile
+// uses the same one, because prices are only compared with each other. On a
+// subscription the bill does not change, but a stronger model uses up the
+// plan's limits faster, which these prices stand in for.
+type Price struct {
+	Input     float64 `json:"input"`
+	Output    float64 `json:"output"`
+	CacheRead float64 `json:"cacheRead"`
+	// CacheWrite is what writing the conversation into the prompt cache costs;
+	// 0 = the input price (a vendor without a cache-write surcharge).
+	CacheWrite float64 `json:"cacheWrite,omitempty"`
+}
+
+// Write is the price of putting tokens into the cache.
+func (p Price) Write() float64 {
+	if p.CacheWrite > 0 {
+		return p.CacheWrite
+	}
+	return p.Input
 }
 
 // Role separates what a profile is used for. One profile may hold several
@@ -417,6 +443,9 @@ func (p Profile) validate() error {
 		if !validRole(r) {
 			return fmt.Errorf("routing config: profile %q has unknown role %q", p.ID, r)
 		}
+	}
+	if pr := p.Price; pr != nil && (pr.Input <= 0 || pr.Output <= 0 || pr.CacheRead <= 0 || pr.CacheWrite < 0) {
+		return fmt.Errorf("routing config: profile %q: price needs positive input, output and cacheRead", p.ID)
 	}
 	return nil
 }
