@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef, type CSSProperties } from 'react';
 import type { CustomTerm, CursorRect } from '../../lib/customTerm/CustomTerm';
 import { agentDeckWS } from '../../lib/ws';
+import type { DeckKeyMods } from './DeckKeyboard';
 
 /** Imperative handle so the terminal key bar's Enter can submit this draft
  *  instead of sending a raw CR that ignores the buffered text, and so the mobile
@@ -20,7 +21,7 @@ export interface UnifiedInputHandle {
   focusSystemKeyboard: () => void;
 }
 
-export interface KeyMods { ctrl?: boolean; alt?: boolean; shift?: boolean }
+export type KeyMods = DeckKeyMods;
 
 /**
  * UnifiedInput — the experiment behind `?unifiedInput`. It grafts the Prompt Bar's

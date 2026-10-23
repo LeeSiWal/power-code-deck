@@ -1,20 +1,24 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { api, type RouteAgentResult } from '../../lib/api';
 import { autoPickNote, autoFallbackNote } from '../../lib/routingLabels';
 import { SESSION_TOOLS, setPendingStart } from '../../lib/sessionTools';
 import { IconCheck, IconSpinner } from '../icons';
+import { ChatDeckKeyboard, ChatDeckToggle, type ChatKeyboard } from './ChatDeckKeyboard';
 
 interface AutoChatProps {
   agentId: string;
   onBound: (agent: RouteAgentResult['agent']) => void;
+  /** iPad: the deck keyboard replaces the iOS keyboard for the composer. */
+  keyboard?: ChatKeyboard;
 }
 
 // The chat of a "자동" session before its first message. No CLI runs yet: the
 // first message routes the session to a tool/model (or a tool picked in the
 // menu binds it directly), then the page swaps in the normal chat, which sends
 // the message and shows what was picked.
-export function AutoChat({ agentId, onBound }: AutoChatProps) {
+export function AutoChat({ agentId, onBound, keyboard }: AutoChatProps) {
   const [draft, setDraft] = useState('');
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -83,7 +87,9 @@ export function AutoChat({ agentId, onBound }: AutoChatProps) {
 
         <div className="p-2 space-y-2">
           <textarea
+            ref={taRef}
             autoFocus
+            inputMode={keyboard?.deck ? 'none' : undefined}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -97,6 +103,7 @@ export function AutoChat({ agentId, onBound }: AutoChatProps) {
             className="w-full resize-none bg-deck-surface border border-deck-border rounded-lg px-3 py-2 text-sm text-deck-text outline-none focus:border-deck-accent"
           />
           <div className="flex items-center gap-2">
+            <ChatDeckToggle keyboard={keyboard} />
             <button
               onClick={() => setMenuOpen(!menuOpen)}
               className="shrink-0 h-8 px-2.5 rounded-full bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1.5"
@@ -115,6 +122,7 @@ export function AutoChat({ agentId, onBound }: AutoChatProps) {
             </button>
           </div>
         </div>
+        <ChatDeckKeyboard taRef={taRef} keyboard={keyboard} />
       </div>
     </div>
   );

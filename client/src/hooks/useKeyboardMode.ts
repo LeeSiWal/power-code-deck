@@ -49,3 +49,5 @@ export function useKeyboardMode(available: boolean) {
 
   return { deck, hidden, setHidden, switchToDeck, switchToSystem, notice };
 }
+
+export type KeyboardModeState = ReturnType<typeof useKeyboardMode>;

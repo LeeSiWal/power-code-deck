@@ -17,6 +17,7 @@ import { PluginsPanel } from './PluginsPanel';
 import { TIER_LABELS, autoSwitchNote, compactTokens, modelName, modelUsageLine, profileName, toolSwitchNote } from '../../lib/routingLabels';
 import { AUTO_TOOL, SESSION_TOOLS, launchUrl, rememberTool, sessionName, setPendingStart, takePendingStart, toolForDriver, type PendingStart, type SessionTool } from '../../lib/sessionTools';
 import { clientCommand, type NativeDriverName } from '../../lib/nativeCommands';
+import { ChatDeckKeyboard, ChatDeckToggle, type ChatKeyboard } from './ChatDeckKeyboard';
 
 /**
  * NativeChat — a Claude session rendered from its event stream instead of a
@@ -48,6 +49,8 @@ interface NativeChatProps {
   // a long idle to another tool (the page then swaps in the new agent).
   autoRouted?: boolean;
   onAgentChange?: (agent: any) => void;
+  /** iPad: the deck keyboard replaces the iOS keyboard for the composer. */
+  keyboard?: ChatKeyboard;
 }
 
 const cloudTargetName = (d: NativeDriverName) => (d === 'antigravity' ? 'Antigravity' : d === 'codex' ? 'Codex' : 'Claude Code');
@@ -110,7 +113,7 @@ const MODES: { id: string; label: string; desc: string; icon: React.ComponentTyp
   { id: 'bypassPermissions', label: '전체 허용', desc: '모든 도구를 묻지 않고 승인합니다 — 주의해서 사용', icon: IconBolt, pill: 'border-amber-400/45 bg-amber-400/10 text-amber-300' },
 ];
 
-export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted = false, onAgentChange }: NativeChatProps) {
+export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted = false, onAgentChange, keyboard }: NativeChatProps) {
   const navigate = useNavigate(); // /clear swaps to a freshly created session
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pending, setPending] = useState<PendingApproval[]>([]);
@@ -1144,12 +1147,14 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
               }
             }}
             rows={1}
+            inputMode={keyboard?.deck ? 'none' : undefined}
             placeholder={`${cloudTargetName(driver)}에게 메시지…`}
             style={{ maxHeight: 160 }}
             className="w-full resize-none overflow-y-hidden bg-deck-surface border border-deck-border rounded-lg px-3 py-2 text-sm text-deck-text outline-none focus:border-deck-accent"
           />
 
           <div className="flex items-center gap-2">
+            <ChatDeckToggle keyboard={keyboard} />
             <button
               onClick={() => setMenu(menu === 'add' ? null : 'add')}
               disabled={uploading}
@@ -1240,6 +1245,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
             </button>
           </div>
         </div>
+        <ChatDeckKeyboard taRef={taRef} keyboard={keyboard} />
       </div>
 
       {plugins && (

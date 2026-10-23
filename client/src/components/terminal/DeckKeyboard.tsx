@@ -1,9 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DECK_ROWS, deckMetrics, type DeckKey, type Modifier } from '../../lib/deckKeyboard';
 import { HangulComposer, jamoFor } from '../../lib/hangul';
-import type { UnifiedInputHandle } from './UnifiedInput';
 import { IconCopy, IconPaste } from '../icons';
 import { useUiZoom } from '../../lib/uiScale';
+
+export interface DeckKeyMods { ctrl?: boolean; alt?: boolean; shift?: boolean }
+
+/** What the deck keyboard types into: the terminal's UnifiedInput, or a chat
+ *  composer through lib/textareaDeckTarget. */
+export interface DeckTarget {
+  /** Replace the syllable being composed (if any) with `commit` followed by the
+   *  new in-progress `preedit`, at the caret. */
+  compose: (commit: string, preedit: string) => void;
+  /** Whether the last `preedit` is still in place (the caret has not moved). */
+  composing: () => boolean;
+  /** A non-text key, as if pressed on a physical keyboard. */
+  pressKey: (key: string, mods: DeckKeyMods) => void;
+  /** Focus the input so the system soft keyboard comes up (call from a tap). */
+  focusSystemKeyboard: () => void;
+}
 
 /** 0 off, 1 the next key only, 2 locked. */
 type ModState = 0 | 1 | 2;
@@ -14,8 +29,8 @@ const REPEAT_DELAY_MS = 450;
 const REPEAT_EVERY_MS = 60;
 
 interface DeckKeyboardProps {
-  /** The input the keys type into (TerminalHandle.input). */
-  target: () => UnifiedInputHandle | null;
+  /** The input the keys type into (TerminalHandle.input, or a chat composer). */
+  target: () => DeckTarget | null;
   width: number;
   height: number;
   /** Switch to the system soft keyboard (the input is focused in the same tap). */
@@ -24,6 +39,8 @@ interface DeckKeyboardProps {
   onHide: () => void;
   onPaste: () => Promise<boolean>;
   onCopy: () => Promise<boolean>;
+  /** Pad for the home indicator (false when the container already does). */
+  insetBottom?: boolean;
 }
 
 function readLang(): Lang {
@@ -37,7 +54,7 @@ function readLang(): Lang {
  * cursor-anchored draft (Hangul composed here, see lib/hangul.ts); control and
  * navigation keys go through UnifiedInput.pressKey exactly as a physical key.
  */
-export function DeckKeyboard({ target, width, height, onSystemKeyboard, onHide, onPaste, onCopy }: DeckKeyboardProps) {
+export function DeckKeyboard({ target, width, height, onSystemKeyboard, onHide, onPaste, onCopy, insetBottom = true }: DeckKeyboardProps) {
   const [mods, setMods] = useState<Record<Modifier, ModState>>({ shift: 0, ctrl: 0, alt: 0, fn: 0 });
   const modsRef = useRef(mods);
   modsRef.current = mods;
@@ -58,7 +75,7 @@ export function DeckKeyboard({ target, width, height, onSystemKeyboard, onHide, 
   };
 
   // Commit the syllable in progress (it is already in the draft; this only ends it).
-  const flush = useCallback((t: UnifiedInputHandle) => {
+  const flush = useCallback((t: DeckTarget) => {
     if (composer.active && t.composing()) t.compose(composer.flush(), '');
     composer.reset();
   }, [composer]);
@@ -174,7 +191,7 @@ export function DeckKeyboard({ target, width, height, onSystemKeyboard, onHide, 
   return (
     <div
       className="shrink-0 bg-deck-surface border-t border-deck-border select-none"
-      style={{ paddingLeft: m.padX, paddingRight: m.padX, paddingBottom: `calc(${m.gap}px + env(safe-area-inset-bottom))`, touchAction: 'manipulation' }}
+      style={{ paddingLeft: m.padX, paddingRight: m.padX, paddingBottom: insetBottom ? `calc(${m.gap}px + env(safe-area-inset-bottom))` : m.gap, touchAction: 'manipulation' }}
       onContextMenu={(e) => e.preventDefault()}
     >
       <div className="flex items-center gap-2 py-1" style={{ height: m.stripHeight + m.gap }}>
