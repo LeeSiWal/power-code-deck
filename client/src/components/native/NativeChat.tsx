@@ -604,9 +604,9 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
   }, [toolAsk, agentId, applyToolSwitch, sendText]);
 
   // "유료 모델로 다시": the session runs a local model and the user rejects its
-  // answer. The server moves the session to a paid model (same tool: model
-  // switch; other tool: tool switch with handoff) and keeps local models out of
-  // this session; the last request is then sent again.
+  // answer. The server moves the session to a paid model in a new conversation
+  // (a short handoff without the rejected turn, never the local transcript) and
+  // keeps local models out of this session; the last request is then sent again.
   const onLocal = modelId.startsWith('oss:');
   const [escalating, setEscalating] = useState(false);
   const escalate = useCallback(async () => {

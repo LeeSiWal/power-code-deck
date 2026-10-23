@@ -414,8 +414,11 @@ func contextTokens(history []*services.StreamEvent) int {
 }
 
 // Escalate re-routes the session's last request to a paid (non-local) model
-// after the user rejected a local answer ("유료 모델로 다시"): same tool → one
-// model switch; another tool → a tool switch with the usual handoff (the user
+// after the user rejected a local answer ("유료 모델로 다시"). The paid model
+// starts a new conversation from a short handoff instead of resuming the local
+// one, whose transcript it would otherwise re-read in full (see
+// services.BuildEscalationHandoff); the local conversation is not resumed
+// later either. Same tool → model change; another tool → tool switch (the user
 // asked, so no confirm step). Local models stay out of this session after.
 func Escalate(agentSvc *services.AgentService, native *services.NativeService, choose TurnFunc, usage *services.AutoUsage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -446,27 +449,50 @@ func Escalate(agentSvc *services.AgentService, native *services.NativeService, c
 			jsonError(w, "no paid model is available for this request", http.StatusConflict)
 			return
 		}
-		agentSvc.SetAutoNoLocal(id)
 		adapter := map[string]string{"claude-code": "claude", "codex-cli": "codex"}[agent.Preset]
-		if tc.Profile.Adapter != adapter {
-			target, ok := autoBindTargets[tc.Profile.Adapter]
-			if !ok || target.Preset == "antigravity" {
-				jsonError(w, "no switchable paid model", http.StatusConflict)
+		target, ok := autoBindTargets[tc.Profile.Adapter]
+		if !ok || target.Preset == "antigravity" {
+			jsonError(w, "no switchable paid model", http.StatusConflict)
+			return
+		}
+		agentSvc.SetAutoNoLocal(id)
+		history := native.History(id)
+		since, memo := agentSvc.FreshPoint(id)
+		handoff, turns := services.BuildEscalationHandoff(history, since, memo, services.RepoState(agent.WorkingDir), maxHandoffChars)
+		p := tc.Profile
+		resp := routeTurnResponse{From: toRoutingProfile(tc.Current), To: toRoutingProfile(p), RuleTier: tc.Decision.RuleTier.String(),
+			HandoffTurns: turns, HandoffTokens: estimateTokens(handoff)}
+		switchKind := "model"
+		if p.Adapter != adapter {
+			target.NativeModel, target.NativeEffort, target.AutoProfile = p.LaunchModel(), p.Effort, p.ID
+			moved, err := agentSvc.SwitchTool(id, target, services.CountUserTurns(history))
+			if err != nil {
+				jsonError(w, "tool switch failed: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
-			if ok, handoff := switchTool(w, agentSvc, native, id, agent, tc, target, true); ok && usage != nil {
-				usage.Note(id, services.TurnMeta{Switch: "tool", HandoffTokens: handoff, IdleSeconds: -1})
+			resp.Reason, resp.Agent, switchKind = "tool_switch", moved, "tool"
+		} else {
+			_, mode, _ := agentSvc.NativeConfig(id)
+			effort := p.Effort
+			if adapter != "claude" {
+				effort = ""
 			}
+			agentSvc.SetNativeConfig(id, p.LaunchModel(), mode, effort)
+			agentSvc.SetAutoProfile(id, p.ID)
+			resp.Reason = "model"
+		}
+		// The local model ran in this tool's conversation; never resume it.
+		agentSvc.ForgetToolSession(id, adapter)
+		kind := map[string]string{"claude-code": "claude", "codex-cli": "codex"}[target.Preset]
+		if err := native.SwitchKind(id, kind, p.LaunchModel(), p.Effort, handoff); err != nil {
+			// The row already says the new model; the next open starts it (on the
+			// last recorded conversation, as a failed tool switch does).
+			resp.Reason = "switch_failed"
+			jsonResponse(w, resp)
 			return
 		}
-		resp := routeTurnResponse{Reason: "model", From: toRoutingProfile(tc.Current), To: toRoutingProfile(tc.Profile), RuleTier: tc.Decision.RuleTier.String()}
-		if err := native.SetModelEffort(id, tc.Profile.LaunchModel(), tc.Profile.Effort); err != nil {
-			jsonError(w, "model switch failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		agentSvc.SetAutoProfile(id, tc.Profile.ID)
 		if usage != nil {
-			usage.Note(id, services.TurnMeta{Switch: "model", IdleSeconds: -1})
+			usage.Note(id, services.TurnMeta{Switch: switchKind, HandoffTokens: resp.HandoffTokens, IdleSeconds: -1})
 		}
 		resp.Applied = true
 		jsonResponse(w, resp)

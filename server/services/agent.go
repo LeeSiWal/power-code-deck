@@ -363,6 +363,18 @@ func (s *AgentService) ToolSessionOf(id, tool string) (ToolSession, bool) {
 	return t, ok
 }
 
+// ForgetToolSession drops a tool's remembered conversation so a later return to
+// that tool starts a new one instead of resuming it.
+func (s *AgentService) ForgetToolSession(id, tool string) {
+	m := s.toolSessions(id)
+	if _, ok := m[tool]; !ok {
+		return
+	}
+	delete(m, tool)
+	raw, _ := json.Marshal(m)
+	_, _ = s.db.Exec("UPDATE agents SET tool_sessions = ? WHERE id = ?", string(raw), id)
+}
+
 // SwitchTool moves a bound auto session to another tool, keeping its id, name and
 // folder. The leaving tool's conversation id is kept (with the turn count at
 // which it left) so a later return resumes it; the arriving tool's own earlier

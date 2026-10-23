@@ -36,6 +36,45 @@ func BuildToolHandoff(events []*StreamEvent, sinceTurn int, returning bool, maxC
 	return "<이전 대화 인계>\n" + head + "\n\n" + body + "\n</이전 대화 인계>" + tail, turns
 }
 
+// BuildEscalationHandoff is what a stronger model reads when the user rejected
+// a local model's answer and asked for a paid one. It starts a new conversation
+// rather than resuming the local one: the local model's transcript (every file
+// it read, every command it ran, the rejected answer) would otherwise be re-read
+// at the paid model's price. It holds the conversation before the rejected
+// request as plain text (tool output left out, as a tool handoff), the last
+// fresh-start memo if there is one, and the working tree, which shows what the
+// local model changed. The rejected request follows as the user's next message.
+// It also returns the number of earlier turns handed over.
+func BuildEscalationHandoff(history []*StreamEvent, sinceTurn int, memo, repoState string, maxChars int) (string, int) {
+	body, turns := handoffBody(history[:lastUserTurnStart(history)], sinceTurn, maxChars-len(memo)-len(repoState))
+	var b strings.Builder
+	b.WriteString("<이전 대화 인계>\n")
+	b.WriteString("이 대화를 더 강한 모델인 당신이 새로 이어받습니다. 맨 끝 [현재 요청]은 로컬 모델이 처리했지만 사용자가 그 답을 받아들이지 않은 요청입니다. 로컬 모델이 바꾼 파일이 작업 폴더에 남아 있을 수 있으니, 아래 작업 폴더 상태와 실제 파일을 먼저 확인하세요. 아래 내용은 맥락으로만 참고하세요.\n\n")
+	if strings.TrimSpace(memo) != "" {
+		b.WriteString("[인계 메모(다른 모델이 앞선 대화를 요약)]\n" + strings.TrimSpace(memo) + "\n\n")
+	}
+	if body != "" {
+		b.WriteString("[이전 대화]\n" + body + "\n\n")
+	}
+	if repoState != "" {
+		b.WriteString("[작업 폴더 상태]\n" + repoState + "\n\n")
+	}
+	b.WriteString("</이전 대화 인계>\n\n[현재 요청]\n")
+	return b.String(), turns
+}
+
+// lastUserTurnStart is the index of the last request the user typed in the main
+// conversation (len(events) when there is none).
+func lastUserTurnStart(events []*StreamEvent) int {
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		if ev.Type == "user" && ev.Message != nil && hasTextBlock(ev.Message.Content) && (ev.ParentToolUseID == nil || *ev.ParentToolUseID == "") {
+			return i
+		}
+	}
+	return len(events)
+}
+
 // handoffBody renders the turns after sinceTurn as plain text: user messages
 // verbatim, replies clipped, one line per tool call, tool results left out.
 // Over maxChars it keeps the first request (it states the goal) and as many
