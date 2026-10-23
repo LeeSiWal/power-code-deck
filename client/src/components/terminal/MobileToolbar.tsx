@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { agentDeckWS } from '../../lib/ws';
-import { TERMINAL_KEYS } from './TerminalKeyBar';
+import { DeckKeyboardButton, TERMINAL_KEYS } from './TerminalKeyBar';
 import { IconCopy, IconPaste } from '../icons';
 
 interface MobileToolbarProps {
@@ -12,6 +12,8 @@ interface MobileToolbarProps {
   onCopy: () => Promise<boolean>;
   /** Read the clipboard and paste into the input. Resolves false if empty/blocked. */
   onPaste: () => Promise<boolean>;
+  /** Shown on an iPad mini in portrait (which lays out as mobile): switch to the deck keyboard. */
+  onDeckKeyboard?: () => void;
 }
 
 // PTY control keys are shared with the desktop key bar (TERMINAL_KEYS) so both
@@ -20,7 +22,7 @@ const KEYS = TERMINAL_KEYS;
 
 type Flash = 'idle' | 'ok' | 'fail';
 
-export function MobileToolbar({ agentId, sendKey, onCopy, onPaste }: MobileToolbarProps) {
+export function MobileToolbar({ agentId, sendKey, onCopy, onPaste, onDeckKeyboard }: MobileToolbarProps) {
   const [copy, setCopy] = useState<Flash>('idle');
   const [paste, setPaste] = useState<Flash>('idle');
 
@@ -36,6 +38,7 @@ export function MobileToolbar({ agentId, sendKey, onCopy, onPaste }: MobileToolb
 
   return (
     <div className="flex gap-2 px-3 py-2 overflow-x-auto scrollbar-hide safe-bottom bg-deck-surface border-t border-deck-border">
+      {onDeckKeyboard && <DeckKeyboardButton onClick={onDeckKeyboard} />}
       {/* Paste MUST fire from a click, not pointerdown: mobile Safari only grants
           navigator.clipboard.readText() from a genuine click handler (and only over
           https). From pointerdown it silently denies → looked like an empty clipboard.

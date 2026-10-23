@@ -32,10 +32,12 @@ interface TerminalKeyBarProps {
   /** Touch device (iPad etc.): enlarge tap targets and lift the bar clear of the
    * home-indicator so the arrow / Enter keys aren't sitting under the home bar. */
   isTouch?: boolean;
+  /** Shown on iPads: switch to the on-screen deck keyboard. */
+  onDeckKeyboard?: () => void;
 }
 
 /** Horizontal, scrollable row of PTY control keys (desktop / tablet). */
-export function TerminalKeyBar({ agentId, onKeySent, sendKey, isTouch }: TerminalKeyBarProps) {
+export function TerminalKeyBar({ agentId, onKeySent, sendKey, isTouch, onDeckKeyboard }: TerminalKeyBarProps) {
   const send = (data: string) => {
     if (sendKey) sendKey(data);
     else agentDeckWS.send('terminal:input', { agentId, data });
@@ -51,6 +53,7 @@ export function TerminalKeyBar({ agentId, onKeySent, sendKey, isTouch }: Termina
       // clear the iPad/iPhone home bar; env() resolves to 0 on desktop.
       style={isTouch ? { paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))' } : undefined}
     >
+      {onDeckKeyboard && <DeckKeyboardButton onClick={onDeckKeyboard} />}
       {TERMINAL_KEYS.map((key) => (
         <button
           key={key.label}
@@ -70,5 +73,19 @@ export function TerminalKeyBar({ agentId, onKeySent, sendKey, isTouch }: Termina
         </button>
       ))}
     </div>
+  );
+}
+
+/** Opens the deck keyboard (and puts the system keyboard away). */
+export function DeckKeyboardButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onPointerDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className="shrink-0 px-3 py-2.5 rounded-lg text-sm select-none touch-manipulation active:opacity-70 bg-deck-accent/20 text-deck-accent"
+      title="덱 키보드 (Esc·Ctrl·Alt·방향키·한/영이 있는 화면 키보드)"
+    >
+      ⌨︎ 덱 키보드
+    </button>
   );
 }

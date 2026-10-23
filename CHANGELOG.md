@@ -4,6 +4,9 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+### Added
+- **아이패드 덱 키보드** — 물리 키보드 없는 아이패드에서 터미널 세션용 화면 키보드를 iOS 키보드 대신 띄웁니다. Esc·Tab·Ctrl·Alt·Fn(F1–F12, Home/End/PgUp/PgDn/Del)·방향키와 모든 기호가 한 화면에 있고, 한/영 키로 두벌식 한글을 직접 조합합니다(겹모음·겹받침·받침 넘김, 백스페이스는 자모 단위). Ctrl/Alt/Shift는 한 번 탭=다음 키 하나, 두 번=고정. 키 크기는 기기 이름이 아니라 실제 화면 크기·방향으로 정해져 미니·11인치·13인치 가로/세로와 분할 화면에 맞춥니다. 상단 줄에서 붙여넣기·복사·기본 키보드 전환·숨기기를 하고, 키 바의 "⌨︎ 덱 키보드"로 돌아옵니다. 덱 키보드를 쓰는 중 물리 키 입력이 들어오면 기본 키보드 모드로 자동 전환합니다. Claude/Codex 대화 화면은 그대로 iOS 키보드를 씁니다.
+
 ### Added (2.0, opt-in: `PCD_V2_ENABLED=1` + `routing.json`)
 - **경량 LLM 작업 배분(`strategy: commercial_llm`)** — 규칙이 허용한 실행 후보가 둘 이상이고 규칙으로 가려지지 않을 때만, 허용된 판단용 프로필(공식 CLI, 도구·설정·MCP 비활성, 빈 임시 디렉터리)에 짧은 JSON 판단을 요청합니다. 후보가 하나·고정·수동·캐시·로컬 전용이면 호출하지 않습니다. 출력은 닫힌 스키마로 검증하고, 판단 품질이 검증된 프로필만 Auto에서 선택을 바꿉니다(그 외 기록용). 상용 Shadow는 Run별 승인과 일일 예산이 필요합니다. 역할(`decider/executor/reviewer/planner/summarizer`)을 프로필에 붙여 한 구독으로 모든 역할을 구성할 수 있습니다.
 - **리뷰어·계획 생성도 같은 정책** — 모든 Run에서 Antigravity를 자동 실행하던 고정 리뷰어를 없앴습니다. 허용된 프로필이 없으면 리뷰를 건너뛰지 않고 `review_blocked`로 멈춥니다.

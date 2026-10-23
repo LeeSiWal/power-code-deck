@@ -30,6 +30,9 @@ export interface TerminalHandle {
    * bracketed paste. Used by the mobile toolbar's 붙여넣기 button.
    */
   paste: (text: string) => void;
+  /** The cursor-anchored input the deck keyboard types into (null in
+   *  `?classicInput` mode or before the terminal is ready). */
+  input: () => UnifiedInputHandle | null;
 }
 
 /** Normal cursor sequences (ESC [ x) → application-mode SS3 (ESC O x). */
@@ -62,6 +65,8 @@ interface TerminalViewProps {
   onFocusTerminal?: () => void;
   /** Touch: a Hangul char typed straight into the terminal — nudge to the Prompt Bar. */
   onHangulDirect?: () => void;
+  /** The deck keyboard replaces the system soft keyboard (see UnifiedInput). */
+  deckKeyboard?: boolean;
 }
 
 /**
@@ -73,7 +78,7 @@ interface TerminalViewProps {
  * (terminal:attach/input/output/resize).
  */
 export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(function TerminalView(
-  { agentId, channel = 'terminal', fontSize, onFocusTerminal, onHangulDirect },
+  { agentId, channel = 'terminal', fontSize, onFocusTerminal, onHangulDirect, deckKeyboard },
   ref,
 ) {
   const { isMobile, isTablet, isTouchDevice } = useDevice();
@@ -174,6 +179,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
         }
       }
     },
+    input: () => (UNIFIED_INPUT ? unifiedInputRef.current : null),
   }), [agentId, channel]);
 
   const flushPending = useCallback(() => {
@@ -989,7 +995,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
 
       {/* Experiment: one cursor-anchored input for text + IME + control keys. */}
       {UNIFIED_INPUT && ready && wtRef.current && (
-        <UnifiedInput ref={unifiedInputRef} term={wtRef.current} agentId={agentId} channel={channel} masked={secretPrompt} autoFocus={!isTouchDevice} touch={isTouchDevice} />
+        <UnifiedInput ref={unifiedInputRef} term={wtRef.current} agentId={agentId} channel={channel} masked={secretPrompt} autoFocus={!isTouchDevice} touch={isTouchDevice} deckKeyboard={deckKeyboard} />
       )}
 
       {debug && debugInfo && (
