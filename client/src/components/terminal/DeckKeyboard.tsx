@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { deckLayout, deckMetrics, type DeckKey, type Modifier } from '../../lib/deckKeyboard';
+import { HOME_KEYS, deckLayout, deckMetrics, type DeckKey, type Modifier } from '../../lib/deckKeyboard';
 import { HangulComposer, jamoFor } from '../../lib/hangul';
 import { IconCopy, IconPaste } from '../icons';
 import { useUiZoom } from '../../lib/uiScale';
@@ -253,6 +253,10 @@ export function DeckKeyboard({ target, width, height, onSystemKeyboard, onHide, 
                 >
                   {h && <span className="opacity-50" style={{ fontSize: Math.round(m.fontSize * 0.6), marginBottom: 2 }}>{h}</span>}
                   {label(k)}
+                  {/* Homing mark (F, J), like the bumps on a hardware keyboard. */}
+                  {HOME_KEYS.has(k.id) && (
+                    <span className="absolute left-1/2 -translate-x-1/2 rounded-full bg-current opacity-40" style={{ bottom: 5, width: 12, height: 2 }} />
+                  )}
                 </button>
               );
             })}

@@ -1,5 +1,5 @@
 // Framework-free assertions (type-checked by tsc like the other *.test.ts files).
-import { NARROW_LAYOUT, WIDE_LAYOUT, deckKeyboardFits, deckLayout, deckMetrics } from './deckKeyboard';
+import { HOME_KEYS, NARROW_LAYOUT, WIDE_LAYOUT, deckKeyboardFits, deckLayout, deckMetrics } from './deckKeyboard';
 import { jamoFor } from './hangul';
 
 function equal(actual: unknown, expected: unknown, label: string) {
@@ -25,6 +25,7 @@ for (const layout of [WIDE_LAYOUT, NARROW_LAYOUT]) {
     equal(named.has(n), true, at(`has ${n}`));
   for (const m of ['shift', 'ctrl', 'alt', 'fn']) equal(keys.some((k) => k.mod === m), true, at(`has ${m}`));
   equal(keys.some((k) => k.lang), true, at('has 한/영'));
+  for (const id of HOME_KEYS) equal(keys.some((k) => k.id === id), true, at(`homing key ${id} exists`));
 
   // ↑ sits exactly above ↓ (the inverted T of a hardware keyboard).
   const offset = (id: string) => {
@@ -35,6 +36,20 @@ for (const layout of [WIDE_LAYOUT, NARROW_LAYOUT]) {
     return -1;
   };
   equal(offset('up'), offset('down'), at('↑ is above ↓'));
+
+  // Ergonomics carried over from a hardware keyboard: the letter rows step
+  // right in order (q, then a, then z) by at most half a key each, the digits
+  // sit over the q row, esc is the top-left key and ctrl starts the a row.
+  const q = offset('cq'), a = offset('ca'), z = offset('cz');
+  equal(q < a && a < z, true, at(`rows step right (q ${q}, a ${a}, z ${z})`));
+  equal(a - q <= 0.5 && z - a <= 0.5, true, at('each step is at most half a key'));
+  equal(offset('c1') <= q, true, at('1 is above or left of q'));
+  equal(layout.rows[0][0].id, 'esc', at('esc is the top-left key'));
+  equal(layout.rows.find((r) => r.some((k) => k.id === 'ca'))![0].id, 'ctrl', at('ctrl starts the a row'));
+  // Space is the widest key, then return; ⌫ is at least a full key.
+  const width = (id: string) => keys.find((k) => k.id === id)!.w;
+  equal(keys.every((k) => k.id === 'space' || k.w < width('space')), true, at('space is the widest key'));
+  equal(width('enter') >= 1.5 && width('bksp') >= 1, true, at('return and ⌫ are wide'));
 
   // Every Hangul jamo of the two-set layout sits on a letter key.
   const letterKeys = keys.filter((k) => k.ch && /[a-z]/.test(k.ch));

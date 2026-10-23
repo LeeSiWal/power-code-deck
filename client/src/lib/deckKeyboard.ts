@@ -7,7 +7,7 @@ export type Modifier = 'shift' | 'ctrl' | 'alt' | 'fn';
 
 export interface DeckKey {
   id: string;
-  /** Width in row units; every row adds up to ROW_UNITS. */
+  /** Width in row units; every row of a layout adds up to its `units`. */
   w: number;
   /** Printable key: what it types, unshifted and shifted. Letters also type Hangul. */
   ch?: string;
@@ -34,13 +34,18 @@ const chars = (pairs: string, fnKeys: string[] = []): DeckKey[] =>
 
 const F = Array.from({ length: 12 }, (_, i) => `F${i + 1}`);
 
-/** Landscape (and 13" portrait): a desktop-like layout, 15 units a row. */
+// Both layouts keep what fingers already know from a hardware keyboard: the
+// letter rows step right by the same proportions (q, then a, then z), esc sits
+// in the top-left corner, ctrl where Caps Lock is (beside a, for Ctrl combos),
+// and F/J carry the homing marks. The keys used most in a terminal — ⌫,
+// return, space — are the widest, at the right edge and under the thumbs.
+
+/** Landscape (and 13" portrait): a desktop (ANSI) layout, 15 units a row. */
 const WIDE_ROWS: DeckKey[][] = [
   [
     { id: 'esc', w: 1, key: 'Escape', label: 'esc' },
-    ...chars('`~'),
     ...chars('1! 2@ 3# 4$ 5% 6^ 7& 8* 9( 0) -_ =+', F),
-    { id: 'bksp', w: 1, key: 'Backspace', label: '⌫', fnKey: 'Delete', fnLabel: 'del', repeat: true },
+    { id: 'bksp', w: 2, key: 'Backspace', label: '⌫', fnKey: 'Delete', fnLabel: 'del', repeat: true },
   ],
   [
     { id: 'tab', w: 1.5, key: 'Tab', label: 'tab' },
@@ -53,29 +58,33 @@ const WIDE_ROWS: DeckKey[][] = [
     { id: 'enter', w: 2.25, key: 'Enter', label: 'return' },
   ],
   [
-    // ↑ sits right above ↓, so the arrows form the usual inverted T.
-    { id: 'shiftL', w: 2, mod: 'shift', label: '⇧' },
+    { id: 'shiftL', w: 2.25, mod: 'shift', label: '⇧' },
     ...chars('z x c v b n m ,< .> /?'),
-    { id: 'shiftR', w: 1, mod: 'shift', label: '⇧' },
+    // ↑ sits right above ↓, so the arrows form the usual inverted T.
     { id: 'up', w: 1, key: 'ArrowUp', label: '↑', fnKey: 'PageUp', fnLabel: 'pgup', repeat: true },
-    { id: 'del', w: 1, key: 'Delete', label: '⌦', fnKey: 'Insert', fnLabel: 'ins', repeat: true },
+    { id: 'shiftR', w: 1.75, mod: 'shift', label: '⇧' },
   ],
   [
-    { id: 'lang', w: 1.5, lang: true, label: '한/영' },
-    { id: 'fn', w: 1.25, mod: 'fn', label: 'fn' },
-    { id: 'alt', w: 1.25, mod: 'alt', label: 'alt' },
-    { id: 'space', w: 8, ch: ' ', shiftCh: ' ', label: '', repeat: true },
+    { id: 'lang', w: 1.25, lang: true, label: '한/영' },
+    { id: 'fn', w: 1, mod: 'fn', label: 'fn' },
+    { id: 'alt', w: 1, mod: 'alt', label: 'alt' },
+    ...chars('`~'),
+    { id: 'space', w: 7, ch: ' ', shiftCh: ' ', label: '', repeat: true },
     { id: 'left', w: 1, key: 'ArrowLeft', label: '←', fnKey: 'Home', fnLabel: 'home', repeat: true },
     { id: 'down', w: 1, key: 'ArrowDown', label: '↓', fnKey: 'PageDown', fnLabel: 'pgdn', repeat: true },
     { id: 'right', w: 1, key: 'ArrowRight', label: '→', fnKey: 'End', fnLabel: 'end', repeat: true },
+    { id: 'del', w: 0.75, key: 'Delete', label: '⌦', fnKey: 'Insert', fnLabel: 'ins', repeat: true },
   ],
 ];
 
 /** Portrait on narrower iPads: 12 units a row so keys stay as wide as a finger
- *  needs, with the symbols the letter rows give up moved to a sixth row (a
+ *  needs, with the symbols the letter rows give up moved to a fifth row (a
  *  portrait screen has the height to spare). */
 const NARROW_ROWS: DeckKey[][] = [
-  chars('1! 2@ 3# 4$ 5% 6^ 7& 8* 9( 0) -_ =+', F),
+  [
+    { id: 'esc', w: 1, key: 'Escape', label: 'esc' },
+    ...chars('1! 2@ 3# 4$ 5% 6^ 7& 8* 9( 0) -_', F),
+  ],
   [
     { id: 'tab', w: 1, key: 'Tab', label: 'tab' },
     ...chars('q w e r t y u i o p'),
@@ -87,14 +96,14 @@ const NARROW_ROWS: DeckKey[][] = [
     { id: 'enter', w: 1.5, key: 'Enter', label: 'return' },
   ],
   [
-    { id: 'shiftL', w: 1.5, mod: 'shift', label: '⇧' },
+    { id: 'shiftL', w: 2, mod: 'shift', label: '⇧' },
     ...chars('z x c v b n m ,< .>'),
-    { id: 'shiftR', w: 1.5, mod: 'shift', label: '⇧' },
+    { id: 'shiftR', w: 1, mod: 'shift', label: '⇧' },
   ],
   [
-    { id: 'esc', w: 1.5, key: 'Escape', label: 'esc' },
     ...chars('`~ [{ ]} \\| ;: \'" /?'),
-    { id: 'alt', w: 1.5, mod: 'alt', label: 'alt' },
+    ...chars('=+', ['F12']),
+    { id: 'alt', w: 2, mod: 'alt', label: 'alt' },
     { id: 'up', w: 1, key: 'ArrowUp', label: '↑', fnKey: 'PageUp', fnLabel: 'pgup', repeat: true },
     { id: 'del', w: 1, key: 'Delete', label: '⌦', fnKey: 'Insert', fnLabel: 'ins', repeat: true },
   ],
@@ -107,6 +116,9 @@ const NARROW_ROWS: DeckKey[][] = [
     { id: 'right', w: 1, key: 'ArrowRight', label: '→', fnKey: 'End', fnLabel: 'end', repeat: true },
   ],
 ];
+
+/** The keys the index fingers rest on (F, J), marked like a hardware keyboard's bumps. */
+export const HOME_KEYS = new Set(['cf', 'cj']);
 
 export interface DeckLayout {
   name: 'wide' | 'narrow';
