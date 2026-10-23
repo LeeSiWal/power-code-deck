@@ -4,6 +4,7 @@ import { TerminalView, type TerminalHandle } from '../components/terminal/Termin
 import { NativeChat } from '../components/native/NativeChat';
 import { MobileToolbar } from '../components/terminal/MobileToolbar';
 import { TerminalKeyBar } from '../components/terminal/TerminalKeyBar';
+import { DeckKeyboard } from '../components/terminal/DeckKeyboard';
 import { PromptBar } from '../components/terminal/PromptBar';
 import { HandoffModal } from '../components/terminal/HandoffModal';
 import { SessionHistory } from '../components/terminal/SessionHistory';
@@ -22,6 +23,8 @@ import { useDevice } from '../hooks/useDevice';
 import { useFileExplorer } from '../hooks/useFileExplorer';
 import { useAgentActivity } from '../hooks/useAgentActivity';
 import { useGoUp } from '../hooks/useGoUp';
+import { useKeyboardMode } from '../hooks/useKeyboardMode';
+import { deckKeyboardFits } from '../lib/deckKeyboard';
 import { IconBack, IconFiles, IconClose, IconTerminal, IconHistory, IconPhone, IconGlobe, IconExpand, IconRefresh, IconBell, AGENT_ICON_MAP } from '../components/icons';
 import { NotificationBadge } from '../components/notification/NotificationBadge';
 import { api } from '../lib/api';
@@ -96,7 +99,10 @@ export function TerminalPage() {
   const navigate = useNavigate();
   const goUp = useGoUp('/control');
   const [searchParams, setSearchParams] = useSearchParams();
-  const { isMobile, isTablet, isTouchDevice } = useDevice();
+  const { isMobile, isTablet, isTouchDevice, width, height } = useDevice();
+  // iPad without a physical keyboard: the on-screen deck keyboard replaces the
+  // iOS keyboard in terminal sessions (it types into the unified input).
+  const keyboard = useKeyboardMode(isTouchDevice && UNIFIED_INPUT && deckKeyboardFits(width, height));
   const handoffEnabled = useAppStore((s) => s.authConfig?.handoffEnabled ?? true);
   const [agent, setAgent] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<CenterTab>('terminal');
@@ -372,6 +378,27 @@ export function TerminalPage() {
   const AgentIcon = AGENT_ICON_MAP[agent.preset];
   const fileName = selectedFile ? selectedFile.split('/').pop() || '' : '';
 
+  // The deck keyboard, or how to bring it back: the key bars offer it whenever
+  // it fits (hidden, or system mode by choice or because a physical keyboard
+  // turned up).
+  const deckKeyboard = (
+    <DeckKeyboard
+      target={() => terminalApiRef.current?.input() ?? null}
+      width={width}
+      height={height}
+      onSystemKeyboard={keyboard.switchToSystem}
+      onHide={() => keyboard.setHidden(true)}
+      onPaste={handlePaste}
+      onCopy={handleCopy}
+    />
+  );
+  const deckOffer = isTouchDevice && UNIFIED_INPUT && deckKeyboardFits(width, height) ? keyboard.switchToDeck : undefined;
+  const keyboardNotice = keyboard.notice ? (
+    <div className="fixed left-1/2 -translate-x-1/2 bottom-32 z-50 px-4 py-2 rounded-lg text-xs text-center shadow-xl bg-deck-surface border border-deck-accent/40 text-deck-text max-w-[90%]">
+      {keyboard.notice}
+    </div>
+  ) : null;
+
   // ──────────── MOBILE LAYOUT ────────────
   if (isMobile) {
     return (
@@ -488,6 +515,7 @@ export function TerminalPage() {
                 agentId={agentId}
                 onFocusTerminal={focusTerminal}
                 onHangulDirect={handleHangulDirectInput}
+                deckKeyboard={keyboard.deck}
               />
             )}
           </div>
@@ -524,11 +552,15 @@ export function TerminalPage() {
                 onFocusChange={handlePromptFocusChange}
               />
             )}
-            <MobileToolbar agentId={agentId} sendKey={sendTerminalKey} onCopy={handleCopy} onPaste={handlePaste} />
+            {keyboard.deck && !keyboard.hidden ? deckKeyboard : (
+              <MobileToolbar agentId={agentId} sendKey={sendTerminalKey} onCopy={handleCopy} onPaste={handlePaste}
+                onDeckKeyboard={deckOffer} />
+            )}
           </>
         )}
 
         {/* Hangul-in-terminal hint (once per session) */}
+        {keyboardNotice}
         {hangulToast && (
           <div className="fixed left-1/2 -translate-x-1/2 bottom-32 z-50 px-4 py-2 rounded-lg text-xs text-center shadow-xl bg-deck-surface border border-deck-accent/40 text-deck-text max-w-[90%]">
             한글 입력은 하단 <span className="text-deck-accent font-medium">Prompt Bar</span>를 사용하면 자모 분리를 피할 수 있습니다.
@@ -799,6 +831,7 @@ export function TerminalPage() {
                   agentId={agentId}
                   onFocusTerminal={focusTerminal}
                   onHangulDirect={handleHangulDirectInput}
+                  deckKeyboard={keyboard.deck}
                 />
               )}
             </div>
@@ -842,12 +875,15 @@ export function TerminalPage() {
                   autoFocus={!forcePromptBar}
                 />
               )}
-              <TerminalKeyBar
-                agentId={agentId}
-                onKeySent={() => terminalApiRef.current?.focus()}
-                sendKey={sendTerminalKey}
-                isTouch={isTouchDevice}
-              />
+              {keyboard.deck && !keyboard.hidden ? deckKeyboard : (
+                <TerminalKeyBar
+                  agentId={agentId}
+                  onKeySent={() => terminalApiRef.current?.focus()}
+                  sendKey={sendTerminalKey}
+                  isTouch={isTouchDevice}
+                  onDeckKeyboard={deckOffer}
+                />
+              )}
             </>
           )}
         </div>
@@ -888,6 +924,7 @@ export function TerminalPage() {
       </div>
 
       {/* Hangul-in-terminal hint (once per session) */}
+      {keyboardNotice}
       {hangulToast && (
         <div className="fixed left-1/2 -translate-x-1/2 bottom-24 z-50 px-4 py-2 rounded-lg text-xs text-center shadow-xl bg-deck-surface border border-deck-accent/40 text-deck-text max-w-[90%]">
           한글 입력은 하단 <span className="text-deck-accent font-medium">Prompt Bar</span>를 사용하면 자모 분리를 피할 수 있습니다.

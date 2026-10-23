@@ -8,7 +8,19 @@ import { agentDeckWS } from '../../lib/ws';
 export interface UnifiedInputHandle {
   submit: () => void;
   insert: (text: string) => void;
+  /** Deck keyboard: replace the syllable being composed (if any) with `commit`
+   *  followed by the new in-progress `preedit`, at the caret. */
+  compose: (commit: string, preedit: string) => void;
+  /** Deck keyboard: whether the last `preedit` is still in place (the user has
+   *  not moved the caret or typed elsewhere since). */
+  composing: () => boolean;
+  /** Deck keyboard: a non-text key, as if pressed on a physical keyboard. */
+  pressKey: (key: string, mods: KeyMods) => void;
+  /** Focus the input so the system soft keyboard comes up (call from a tap). */
+  focusSystemKeyboard: () => void;
 }
+
+export interface KeyMods { ctrl?: boolean; alt?: boolean; shift?: boolean }
 
 /**
  * UnifiedInput — the experiment behind `?unifiedInput`. It grafts the Prompt Bar's
@@ -37,7 +49,9 @@ const FIXED: Record<string, string> = {
   F5: '\x1b[15~', F6: '\x1b[17~', F7: '\x1b[18~', F8: '\x1b[19~',
   F9: '\x1b[20~', F10: '\x1b[21~', F11: '\x1b[23~', F12: '\x1b[24~',
 };
-const CTRL_SYM: Record<string, string> = { '[': '\x1b', '\\': '\x1c', ']': '\x1d', '^': '\x1e', '_': '\x1f' };
+const CTRL_SYM: Record<string, string> = { '[': '\x1b', '\\': '\x1c', ']': '\x1d', '^': '\x1e', '_': '\x1f', ' ': '\x00' };
+// Ctrl+arrow (word moves in readline and most editors): CSI 1;5 X.
+const CTRL_ARROW: Record<string, string> = { ArrowUp: '\x1b[1;5A', ArrowDown: '\x1b[1;5B', ArrowRight: '\x1b[1;5C', ArrowLeft: '\x1b[1;5D' };
 
 interface UnifiedInputProps {
   term: CustomTerm;
@@ -52,10 +66,14 @@ interface UnifiedInputProps {
   /** Touch device: soft-keyboard Enter arrives as a beforeinput 'insertLineBreak'
    *  (not a keydown), and there's no Shift, so every Enter submits. */
   touch?: boolean;
+  /** The deck keyboard is in use: keep the system soft keyboard down
+   *  (inputmode="none") while the input still takes focus, a caret and
+   *  physical-keyboard keys. */
+  deckKeyboard?: boolean;
 }
 
 export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(function UnifiedInput(
-  { term, agentId, channel = 'terminal', masked = false, autoFocus, touch },
+  { term, agentId, channel = 'terminal', masked = false, autoFocus, touch, deckKeyboard },
   ref,
 ) {
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -64,6 +82,11 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
   const valueRef = useRef('');
   valueRef.current = value;
   const composingRef = useRef(false);
+  // Deck keyboard state: where the caret is and how long the in-progress
+  // syllable before it is. Tracked here rather than read from the DOM because
+  // several keys can land before React re-renders the textarea.
+  const caretRef = useRef(0);
+  const preeditLenRef = useRef(0);
   const [style, setStyle] = useState<{ family: string; size: string; color: string; bg: string }>({
     family: 'monospace', size: '14px', color: 'var(--term-fg, #e7e9f0)', bg: 'var(--term-bg, #0a0a0f)',
   });
@@ -143,13 +166,103 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
     const next = base.slice(0, start) + text + base.slice(end);
     setValue(next);
     const caret = start + text.length;
+    caretRef.current = caret;
+    preeditLenRef.current = 0;
     requestAnimationFrame(() => {
       const t = taRef.current;
       if (t) { t.focus({ preventScroll: true }); t.setSelectionRange(caret, caret); }
     });
   }, []);
 
-  useImperativeHandle(ref, () => ({ submit, insert }), [submit, insert]);
+  // Replace the draft and place the caret, synchronously for the refs (the next
+  // deck key may arrive before the re-render) and on the textarea after it.
+  const setDraft = useCallback((next: string, caret: number) => {
+    valueRef.current = next;
+    caretRef.current = caret;
+    setValue(next);
+    if (!next) setRect(term.cursorRect());
+    requestAnimationFrame(() => taRef.current?.setSelectionRange(caret, caret));
+  }, [term]);
+
+  const compose = useCallback((commit: string, preedit: string) => {
+    const base = valueRef.current;
+    const end = Math.min(caretRef.current, base.length);
+    const start = Math.max(0, end - preeditLenRef.current);
+    preeditLenRef.current = preedit.length;
+    setDraft(base.slice(0, start) + commit + preedit + base.slice(end), start + commit.length + preedit.length);
+  }, [setDraft]);
+
+  // Key handling shared by physical keys (keydown) and deck keys (pressKey).
+  // Returns whether the key was consumed; an unconsumed physical key falls
+  // through to the textarea (typing, caret moves while drafting).
+  const handleKey = useCallback((k: string, mods: KeyMods, deck: boolean): boolean => {
+    const hasDraft = valueRef.current.length > 0;
+    if (k === 'Enter' && !mods.shift) { submit(); return true; }
+    if (k === 'Enter') return false; // newline into the draft (textarea default)
+
+    // Ctrl+<key> → control byte, always to the PTY (signals / readline shortcuts).
+    if (mods.ctrl && !mods.alt) {
+      if (k.length === 1) {
+        const code = k.toLowerCase().charCodeAt(0);
+        if (code >= 97 && code <= 122) { sendInput(String.fromCharCode(code - 96)); return true; }
+        if (CTRL_SYM[k]) { sendInput(CTRL_SYM[k]); return true; }
+      }
+      if (deck && !hasDraft && CTRL_ARROW[k]) { sendInput(CTRL_ARROW[k]); return true; }
+    }
+    // Alt (Meta) prefixes ESC, as terminals do for the Meta key.
+    if (deck && mods.alt && !mods.ctrl) {
+      if (k.length === 1) { sendInput('\x1b' + k); return true; }
+      const nav = (term.applicationCursorKeys ? APP_CURSOR : NORMAL_CURSOR)[k];
+      if (nav && !hasDraft) { sendInput('\x1b' + nav); return true; }
+    }
+
+    if (k === 'Escape') { sendInput('\x1b'); return true; }
+
+    // Cursor / Backspace: drive the app only when there's no draft; with a draft
+    // they edit the draft (the textarea does it for physical keys).
+    if (!hasDraft) {
+      const nav = (term.applicationCursorKeys ? APP_CURSOR : NORMAL_CURSOR)[k];
+      if (nav) { sendInput(nav); return true; }
+      if (k === 'Backspace') { sendInput('\x7f'); return true; }
+    } else if (deck) {
+      const v = valueRef.current;
+      const at = Math.min(caretRef.current, v.length);
+      preeditLenRef.current = 0;
+      switch (k) {
+        case 'Backspace': if (at > 0) setDraft(v.slice(0, at - 1) + v.slice(at), at - 1); return true;
+        case 'ArrowLeft': setDraft(v, Math.max(0, at - 1)); return true;
+        case 'ArrowRight': setDraft(v, Math.min(v.length, at + 1)); return true;
+        case 'Home': setDraft(v, 0); return true;
+        case 'End': setDraft(v, v.length); return true;
+        case 'ArrowUp': case 'ArrowDown': return true;
+      }
+    }
+
+    if (k === 'Tab') { sendInput(mods.shift ? '\x1b[Z' : '\t'); return true; }
+    const fixed = FIXED[k];
+    if (fixed) { sendInput(fixed); return true; }
+    return false;
+  }, [term, submit, sendInput, setDraft]);
+
+  const pressKey = useCallback((key: string, mods: KeyMods) => {
+    preeditLenRef.current = 0;
+    handleKey(key, mods, true);
+  }, [handleKey]);
+
+  const focusSystemKeyboard = useCallback(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    // The attribute must change before focus() for iOS to raise its keyboard in
+    // this same tap; React re-renders it to the same value right after.
+    ta.inputMode = 'text';
+    ta.blur();
+    ta.focus({ preventScroll: true });
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    submit, insert, compose, pressKey, focusSystemKeyboard,
+    composing: () => preeditLenRef.current > 0,
+  }), [submit, insert, compose, pressKey, focusSystemKeyboard]);
 
   // Mobile soft keyboards don't emit a keydown Enter — the return key arrives as a
   // beforeinput 'insertLineBreak'. Intercept it to submit (there's no Shift on
@@ -172,36 +285,10 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
 
   const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || composingRef.current) return; // never steal keys mid-IME
-    const k = e.key;
-    const hasDraft = valueRef.current.length > 0;
-
-    if (k === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return; }
-    if (k === 'Enter' && e.shiftKey) return; // newline into the draft (textarea default)
-
-    // Ctrl+<key> → control byte, always to the PTY (signals / readline shortcuts).
-    if (e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (k.length === 1) {
-        const code = k.toLowerCase().charCodeAt(0);
-        if (code >= 97 && code <= 122) { e.preventDefault(); sendInput(String.fromCharCode(code - 96)); return; }
-        if (CTRL_SYM[k]) { e.preventDefault(); sendInput(CTRL_SYM[k]); return; }
-      }
-    }
-
-    if (k === 'Escape') { e.preventDefault(); sendInput('\x1b'); return; }
-
-    // Cursor / Backspace: drive the app only when there's no draft; with a draft
-    // let the textarea handle them (caret move / delete) so editing feels normal.
-    if (!hasDraft) {
-      const nav = (term.applicationCursorKeys ? APP_CURSOR : NORMAL_CURSOR)[k];
-      if (nav) { e.preventDefault(); sendInput(nav); return; }
-      if (k === 'Backspace') { e.preventDefault(); sendInput('\x7f'); return; }
-    }
-
-    if (k === 'Tab') { e.preventDefault(); sendInput(e.shiftKey ? '\x1b[Z' : '\t'); return; }
-    const fixed = FIXED[k];
-    if (fixed) { e.preventDefault(); sendInput(fixed); return; }
+    preeditLenRef.current = 0;
+    if (handleKey(e.key, { ctrl: e.ctrlKey && !e.metaKey, alt: e.altKey, shift: e.shiftKey }, false)) e.preventDefault();
     // Printable key → fall through; the character lands in the textarea (drafted).
-  }, [term, submit, sendInput]);
+  }, [handleKey]);
 
   if (!rect) return null;
 
@@ -247,6 +334,13 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
         // Draft just went empty → re-anchor to the live cursor so tracking resumes
         // from the app's real input position (it was frozen while drafting).
         if (!v) setRect(term.cursorRect());
+        caretRef.current = e.target.selectionEnd;
+        preeditLenRef.current = 0;
+      }}
+      // A tap that moves the caret ends any deck-keyboard syllable in progress.
+      onSelect={(e) => {
+        const at = e.currentTarget.selectionEnd;
+        if (at !== caretRef.current) { caretRef.current = at; preeditLenRef.current = 0; }
       }}
       onKeyDown={onKeyDown}
       onCompositionStart={() => { composingRef.current = true; }}
@@ -255,7 +349,7 @@ export const UnifiedInput = forwardRef<UnifiedInputHandle, UnifiedInputProps>(fu
       autoCorrect="off"
       autoCapitalize="off"
       spellCheck={false}
-      inputMode="text"
+      inputMode={deckKeyboard ? 'none' : 'text'}
       rows={lineCount}
       style={boxStyle}
     />
