@@ -24,6 +24,16 @@ for (const n of ['Escape', 'Tab', 'Enter', 'Backspace', 'Delete', 'ArrowUp', 'Ar
 for (const m of ['shift', 'ctrl', 'alt', 'fn']) equal(keys.some((k) => k.mod === m), true, `has ${m}`);
 equal(keys.some((k) => k.lang), true, 'has 한/영');
 
+// ↑ sits exactly above ↓ (the inverted T of a hardware keyboard).
+const offset = (id: string) => {
+  for (const row of DECK_ROWS) {
+    let x = 0;
+    for (const k of row) { if (k.id === id) return x; x += k.w; }
+  }
+  return -1;
+};
+equal(offset('up'), offset('down'), '↑ is above ↓');
+
 // Every Hangul jamo of the two-set layout sits on a letter key.
 const letterKeys = keys.filter((k) => k.ch && /[a-z]/.test(k.ch));
 const jamo = new Set(letterKeys.flatMap((k) => [jamoFor(k.ch!, false), jamoFor(k.ch!, true)]));

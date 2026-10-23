@@ -215,7 +215,8 @@ export function DeckKeyboard({ target, width, height, onSystemKeyboard, onHide, 
           <div key={i} className="flex" style={{ gap: m.gap, height: m.keyHeight }}>
             {row.map((k) => {
               const modState = k.mod ? mods[k.mod] : 0;
-              const special = !!(k.key || k.mod || k.lang);
+              // Modifiers and word keys are dimmed; arrows, ⌫ and characters are not.
+              const special = !!(k.mod || k.lang || (k.key && /^[a-z]{2,}$/.test(k.label ?? '')));
               const accent = k.key === 'Enter' || modState > 0 || (k.lang && lang === 'ko');
               const h = hint(k);
               return (

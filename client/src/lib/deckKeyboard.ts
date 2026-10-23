@@ -53,10 +53,12 @@ export const DECK_ROWS: DeckKey[][] = [
     { id: 'enter', w: 2.25, key: 'Enter', label: 'return' },
   ],
   [
-    { id: 'shiftL', w: 2.25, mod: 'shift', label: '⇧' },
+    // ↑ sits right above ↓, so the arrows form the usual inverted T.
+    { id: 'shiftL', w: 2, mod: 'shift', label: '⇧' },
     ...chars('z x c v b n m ,< .> /?'),
+    { id: 'shiftR', w: 1, mod: 'shift', label: '⇧' },
     { id: 'up', w: 1, key: 'ArrowUp', label: '↑', fnKey: 'PageUp', fnLabel: 'pgup', repeat: true },
-    { id: 'shiftR', w: 1.75, mod: 'shift', label: '⇧' },
+    { id: 'del', w: 1, key: 'Delete', label: '⌦', fnKey: 'Insert', fnLabel: 'ins', repeat: true },
   ],
   [
     { id: 'lang', w: 1.5, lang: true, label: '한/영' },
