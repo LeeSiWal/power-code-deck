@@ -1,62 +1,87 @@
 // Framework-free assertions (type-checked by tsc like the other *.test.ts files).
-import { DECK_ROWS, ROW_UNITS, deckKeyboardFits, deckMetrics } from './deckKeyboard';
+import { HOME_KEYS, NARROW_LAYOUT, WIDE_LAYOUT, deckKeyboardFits, deckLayout, deckMetrics } from './deckKeyboard';
 import { jamoFor } from './hangul';
 
 function equal(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
 }
 
-// Every row fills the keyboard width.
-DECK_ROWS.forEach((row, i) => equal(row.reduce((n, k) => n + k.w, 0), ROW_UNITS, `row ${i} width`));
+for (const layout of [WIDE_LAYOUT, NARROW_LAYOUT]) {
+  const at = (what: string) => `${layout.name}: ${what}`;
+  // Every row fills the keyboard width.
+  layout.rows.forEach((row, i) => equal(row.reduce((n, k) => n + k.w, 0), layout.units, at(`row ${i} width`)));
 
-const keys = DECK_ROWS.flat();
-equal(new Set(keys.map((k) => k.id)).size, keys.length, 'key ids are unique');
+  const keys = layout.rows.flat();
+  equal(new Set(keys.map((k) => k.id)).size, keys.length, at('key ids are unique'));
 
-// A full keyboard: every letter and digit, every ASCII symbol (shifted or not),
-// F1–F12 under Fn, and the keys a terminal needs.
-const typed = new Set(keys.flatMap((k) => [k.ch, k.shiftCh]).filter(Boolean));
-for (const c of 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') equal(typed.has(c), true, `types ${c}`);
-for (const c of '`~!@#$%^&*()-_=+[]{}\\|;:\'",.<>/? ') equal(typed.has(c), true, `types ${JSON.stringify(c)}`);
-const named = new Set(keys.flatMap((k) => [k.key, k.fnKey]).filter(Boolean));
-for (let i = 1; i <= 12; i++) equal(named.has(`F${i}`), true, `F${i} under fn`);
-for (const n of ['Escape', 'Tab', 'Enter', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'])
-  equal(named.has(n), true, `has ${n}`);
-for (const m of ['shift', 'ctrl', 'alt', 'fn']) equal(keys.some((k) => k.mod === m), true, `has ${m}`);
-equal(keys.some((k) => k.lang), true, 'has 한/영');
+  // A full keyboard: every letter and digit, every ASCII symbol (shifted or not),
+  // F1–F12 under Fn, and the keys a terminal needs.
+  const typed = new Set(keys.flatMap((k) => [k.ch, k.shiftCh]).filter(Boolean));
+  for (const c of 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') equal(typed.has(c), true, at(`types ${c}`));
+  for (const c of '`~!@#$%^&*()-_=+[]{}\\|;:\'",.<>/? ') equal(typed.has(c), true, at(`types ${JSON.stringify(c)}`));
+  const named = new Set(keys.flatMap((k) => [k.key, k.fnKey]).filter(Boolean));
+  for (let i = 1; i <= 12; i++) equal(named.has(`F${i}`), true, at(`F${i} under fn`));
+  for (const n of ['Escape', 'Tab', 'Enter', 'Backspace', 'Delete', 'Insert', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'])
+    equal(named.has(n), true, at(`has ${n}`));
+  for (const m of ['shift', 'ctrl', 'alt', 'fn']) equal(keys.some((k) => k.mod === m), true, at(`has ${m}`));
+  equal(keys.some((k) => k.lang), true, at('has 한/영'));
+  for (const id of HOME_KEYS) equal(keys.some((k) => k.id === id), true, at(`homing key ${id} exists`));
 
-// ↑ sits exactly above ↓ (the inverted T of a hardware keyboard).
-const offset = (id: string) => {
-  for (const row of DECK_ROWS) {
-    let x = 0;
-    for (const k of row) { if (k.id === id) return x; x += k.w; }
-  }
-  return -1;
-};
-equal(offset('up'), offset('down'), '↑ is above ↓');
+  // ↑ sits exactly above ↓ (the inverted T of a hardware keyboard).
+  const offset = (id: string) => {
+    for (const row of layout.rows) {
+      let x = 0;
+      for (const k of row) { if (k.id === id) return x; x += k.w; }
+    }
+    return -1;
+  };
+  equal(offset('up'), offset('down'), at('↑ is above ↓'));
 
-// Every Hangul jamo of the two-set layout sits on a letter key.
-const letterKeys = keys.filter((k) => k.ch && /[a-z]/.test(k.ch));
-const jamo = new Set(letterKeys.flatMap((k) => [jamoFor(k.ch!, false), jamoFor(k.ch!, true)]));
-for (const j of 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎㅏㅐㅑㅒㅓㅔㅕㅖㅗㅛㅜㅠㅡㅣ') equal(jamo.has(j), true, `types ${j}`);
+  // Ergonomics carried over from a hardware keyboard: the letter rows step
+  // right in order (q, then a, then z) by at most half a key each, the digits
+  // sit over the q row, esc is the top-left key and ctrl starts the a row.
+  const q = offset('cq'), a = offset('ca'), z = offset('cz');
+  equal(q < a && a < z, true, at(`rows step right (q ${q}, a ${a}, z ${z})`));
+  equal(a - q <= 0.5 && z - a <= 0.5, true, at('each step is at most half a key'));
+  equal(offset('c1') <= q, true, at('1 is above or left of q'));
+  equal(layout.rows[0][0].id, 'esc', at('esc is the top-left key'));
+  equal(layout.rows.find((r) => r.some((k) => k.id === 'ca'))![0].id, 'ctrl', at('ctrl starts the a row'));
+  // Space is the widest key, then return; ⌫ is at least a full key.
+  const width = (id: string) => keys.find((k) => k.id === id)!.w;
+  equal(keys.every((k) => k.id === 'space' || k.w < width('space')), true, at('space is the widest key'));
+  equal(width('enter') >= 1.5 && width('bksp') >= 1, true, at('return and ⌫ are wide'));
 
-// Sizes per iPad and orientation (CSS px of the visible screen). Keys stay
-// tappable everywhere, and the keyboard never takes half of the screen.
-const screens: [string, number, number][] = [
-  ['mini portrait', 744, 1133], ['mini landscape', 1133, 744],
-  ['11" portrait', 834, 1194], ['11" landscape', 1194, 834],
-  ['13" portrait', 1024, 1366], ['13" landscape', 1366, 1024],
-  ['split view half', 678, 1024],
+  // Every Hangul jamo of the two-set layout sits on a letter key.
+  const letterKeys = keys.filter((k) => k.ch && /[a-z]/.test(k.ch));
+  const jamo = new Set(letterKeys.flatMap((k) => [jamoFor(k.ch!, false), jamoFor(k.ch!, true)]));
+  for (const j of 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎㅏㅐㅑㅒㅓㅔㅕㅖㅗㅛㅜㅠㅡㅣ') equal(jamo.has(j), true, at(`types ${j}`));
+}
+
+// Every iPad, both orientations (CSS px of the visible screen), plus Split View.
+// Keys are finger-sized everywhere — on a full screen at least 55px wide (a
+// 1-unit key, gaps taken out; the old 15-key rows gave 44px on an iPad mini in
+// portrait), in a Split View half 48px — and at least 46px tall, above Apple's
+// 44pt minimum target. The keyboard leaves more than half of the screen.
+const screens: [string, number, number, number][] = [
+  ['mini portrait', 744, 1133, 55], ['mini landscape', 1133, 744, 55],
+  ['iPad / Air portrait', 820, 1180, 55], ['iPad / Air landscape', 1180, 820, 55],
+  ['11" portrait', 834, 1194, 55], ['11" landscape', 1194, 834, 55],
+  ['13" portrait', 1024, 1366, 55], ['13" landscape', 1366, 1024, 55],
+  ['split view half', 678, 1024, 48],
 ];
-for (const [name, w, h] of screens) {
+for (const [name, w, h, minKeyWidth] of screens) {
   const m = deckMetrics(w, h);
-  const total = m.stripHeight + DECK_ROWS.length * m.keyHeight + (DECK_ROWS.length + 1) * m.gap;
-  equal(m.keyHeight >= 40, true, `${name}: key height ${m.keyHeight}`);
-  equal(total < h * 0.45, true, `${name}: keyboard ${total}px of ${h}`);
-  equal((w - 2 * m.padX) / ROW_UNITS >= 40, true, `${name}: a 1-unit key is at least 40px wide`);
+  const layout = deckLayout(w);
+  const rows = layout.rows.length;
+  const keyWidth = (w - 2 * m.padX - (layout.units - 1) * m.gap) / layout.units;
+  const total = m.stripHeight + rows * m.keyHeight + (rows + 1) * m.gap;
+  equal(keyWidth >= minKeyWidth, true, `${name}: key width ${keyWidth.toFixed(1)}px (${layout.name})`);
+  equal(m.keyHeight >= 46, true, `${name}: key height ${m.keyHeight}`);
+  equal(total < h * 0.47, true, `${name}: keyboard ${total}px of ${h}`);
   equal(deckKeyboardFits(w, h), true, `${name}: offered`);
 }
-// Landscape keys are smaller than portrait keys on the same iPad.
-equal(deckMetrics(1133, 744).keyHeight < deckMetrics(744, 1133).keyHeight, true, 'mini: landscape keys are shorter');
+equal(deckLayout(744).name, 'narrow', 'mini portrait uses the 12-unit layout');
+equal(deckLayout(1133).name, 'wide', 'landscape uses the full 15-unit layout');
 // Phones are not offered the deck keyboard.
 equal(deckKeyboardFits(390, 844), false, 'iPhone portrait');
 equal(deckKeyboardFits(844, 390), false, 'iPhone landscape');

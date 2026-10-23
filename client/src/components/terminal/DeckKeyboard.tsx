@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { DECK_ROWS, deckMetrics, type DeckKey, type Modifier } from '../../lib/deckKeyboard';
+import { HOME_KEYS, deckLayout, deckMetrics, type DeckKey, type Modifier } from '../../lib/deckKeyboard';
 import { HangulComposer, jamoFor } from '../../lib/hangul';
 import { IconCopy, IconPaste } from '../icons';
 import { useUiZoom } from '../../lib/uiScale';
@@ -69,6 +69,7 @@ export function DeckKeyboard({ target, width, height, onSystemKeyboard, onHide, 
   // would scale them again, so take it back out.
   const zoom = useUiZoom();
   const raw = deckMetrics(width, height);
+  const layout = deckLayout(width);
   const m = {
     keyHeight: raw.keyHeight / zoom, gap: raw.gap / zoom, fontSize: raw.fontSize / zoom,
     padX: raw.padX / zoom, stripHeight: raw.stripHeight / zoom,
@@ -228,7 +229,7 @@ export function DeckKeyboard({ target, width, height, onSystemKeyboard, onHide, 
         </button>
       </div>
       <div className="flex flex-col" style={{ gap: m.gap }}>
-        {DECK_ROWS.map((row, i) => (
+        {layout.rows.map((row, i) => (
           <div key={i} className="flex" style={{ gap: m.gap, height: m.keyHeight }}>
             {row.map((k) => {
               const modState = k.mod ? mods[k.mod] : 0;
@@ -252,6 +253,10 @@ export function DeckKeyboard({ target, width, height, onSystemKeyboard, onHide, 
                 >
                   {h && <span className="opacity-50" style={{ fontSize: Math.round(m.fontSize * 0.6), marginBottom: 2 }}>{h}</span>}
                   {label(k)}
+                  {/* Homing mark (F, J), like the bumps on a hardware keyboard. */}
+                  {HOME_KEYS.has(k.id) && (
+                    <span className="absolute left-1/2 -translate-x-1/2 rounded-full bg-current opacity-40" style={{ bottom: 5, width: 12, height: 2 }} />
+                  )}
                 </button>
               );
             })}
