@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -66,6 +67,7 @@ type Config struct {
 func Load() *Config {
 	envPath := findEnvFile()
 	if envPath != "" {
+		restrictEnvFile(envPath)
 		godotenv.Load(envPath)
 	}
 
@@ -471,8 +473,27 @@ func saveEnvFile(cfg *Config) {
 	fmt.Fprintf(&b, "POWERCODEDECK_LAN_HANDOFF_ENABLED=%t\n", cfg.LanHandoffEnabled)
 	fmt.Fprintf(&b, "POWERCODEDECK_LAN_URL=%s\n", cfg.LanURL)
 
-	os.WriteFile(envFilePath(), []byte(b.String()), 0600)
+	p := envFilePath()
+	os.WriteFile(p, []byte(b.String()), 0600)
+	// WriteFile's mode only applies to a new file; an existing one keeps its own.
+	restrictEnvFile(p)
 }
+
+// restrictEnvFile makes the .env owner-only. It holds the JWT secret and the
+// PIN, and installs (and older saveEnvFile runs) left it 0644 — readable by
+// every process on the box, including a session's `cat`, which is all it takes
+// to mint tokens. No-op on Windows, where the mode bits don't mean this.
+func restrictEnvFile(p string) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if fi, err := os.Stat(p); err == nil && fi.Mode().Perm()&0o077 != 0 {
+		os.Chmod(p, 0o600)
+	}
+}
+
+// EnvFilePath is where this deck's .env lives (read or to be written).
+func EnvFilePath() string { return envFilePath() }
 
 // updateEnvValue upserts a single key in the existing .env without clobbering
 // other user-set values. Preserves comments/order is not required here.

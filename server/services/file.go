@@ -39,7 +39,13 @@ var ignoredDirs = map[string]bool{}
 var sensitiveHomeDirs = []string{
 	".ssh", ".aws", ".gnupg", ".kube", ".docker",
 	".config/gcloud", ".config/gh", ".azure", ".gcloud",
+	// The AI CLIs' own logins — a session reading these can act as the user.
+	".claude/.credentials.json", ".codex/auth.json",
 }
+
+// SensitiveFiles are absolute paths outside home's credential dirs that the file
+// API must not expose either — the deck's own .env (JWT secret, PIN), set at startup.
+var SensitiveFiles []string
 
 // ValidatePath resolves requestedPath to an absolute path and verifies it stays
 // within baseDir. It defends against ".." traversal, absolute-path escapes,
@@ -136,6 +142,14 @@ func (s *FileService) IsSensitivePath(p string) bool {
 	}
 	for _, d := range sensitiveHomeDirs {
 		if withinBase(filepath.Join(home, d), abs) {
+			return true
+		}
+	}
+	for _, f := range SensitiveFiles {
+		if rf, err := filepath.EvalSymlinks(f); err == nil {
+			f = rf
+		}
+		if abs == filepath.Clean(f) {
 			return true
 		}
 	}
