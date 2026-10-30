@@ -3,7 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
-
+	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -19,9 +19,12 @@ import (
 // TestMemoEvalLive compares memo models on this project's own past Claude Code
 // conversations: at cut points in the longest ones, each model writes a memo,
 // and a grader that reads the whole conversation plus what the full-context
-// agent actually did next scores the memos blind (A/B order shuffled).
+// agent actually did next scores the memos blind (A/B/… order shuffled).
 //
 //	RUN_MEMO_EVAL=1 MEMO_EVAL_CWD=/path/to/project MEMO_EVAL_OUT=report.json go test ./services -run MemoEvalLive -v -timeout 60m
+//
+// MEMO_EVAL_WRITERS picks the claude memo models as name=model[:effort],…
+// (default: the shipped Sonnet 5 low against Haiku 4.5).
 //
 // It spends real subscription usage (memo models + the grader).
 func TestMemoEvalLive(t *testing.T) {
@@ -29,9 +32,23 @@ func TestMemoEvalLive(t *testing.T) {
 		t.Skip("set RUN_MEMO_EVAL=1 (spends subscription usage)")
 	}
 	cwd := os.Getenv("MEMO_EVAL_CWD")
-	writers := map[string]MemoWriter{
-		"haiku":  {Adapter: "claude", Model: "claude-haiku-4-5"},
-		"sonnet": {Adapter: "claude", Model: "claude-sonnet-5", Effort: "low"},
+	spec := os.Getenv("MEMO_EVAL_WRITERS")
+	if spec == "" {
+		spec = "haiku=claude-haiku-4-5,sonnet=claude-sonnet-5:low"
+	}
+	writers := map[string]MemoWriter{}
+	var order []string
+	for _, item := range strings.Split(spec, ",") {
+		name, model, ok := strings.Cut(strings.TrimSpace(item), "=")
+		if !ok || name == "" || model == "" {
+			t.Fatalf("MEMO_EVAL_WRITERS item %q: want name=model[:effort]", item)
+		}
+		model, effort, _ := strings.Cut(model, ":")
+		writers[name] = MemoWriter{Adapter: "claude", Model: model, Effort: effort}
+		order = append(order, name)
+	}
+	if len(order) > 26 {
+		t.Fatal("at most 26 writers")
 	}
 	grader := "claude-opus-5-5"
 	samples := memoEvalSamples(t, cwd, 3, []float64{0.5, 0.85})
@@ -53,21 +70,27 @@ func TestMemoEvalLive(t *testing.T) {
 	for i, s := range samples {
 		req := BuildMemoRequest(s.history, s.goal)
 		r := result{Session: s.session, Goal: s.goal, InputChars: len(req), Memo: map[string]string{}, Seconds: map[string]float64{}, Usage: map[string]any{}, Verdict: map[string]verdict{}}
-		for name, w := range writers {
+		for _, name := range order {
 			start := time.Now()
-			memo, usage, err := WriteMemo(context.Background(), w, cwd, req)
+			memo, usage, err := WriteMemo(context.Background(), writers[name], cwd, req)
 			r.Seconds[name] = time.Since(start).Seconds()
 			if err != nil {
 				t.Fatalf("sample %d %s: %v", i, name, err)
 			}
 			r.Memo[name], r.Usage[name] = memo, usage
 		}
-		names := []string{"haiku", "sonnet"}
+		names := append([]string(nil), order...)
 		rng.Shuffle(len(names), func(a, b int) { names[a], names[b] = names[b], names[a] })
 		body, _ := handoffBody(s.history, 0, memoInputMaxChars)
+		var memos, shape []string
+		for k, name := range names {
+			l := string(rune('A' + k))
+			memos = append(memos, "<메모 "+l+">\n"+r.Memo[name]+"\n</메모 "+l+">")
+			shape = append(shape, `"`+l+`":{"score":n,"missing":[...],"wrong":[...]}`)
+		}
 		prompt := "<대화 기록>\n" + body + "\n</대화 기록>\n\n[다음 요청]\n" + s.goal +
 			"\n\n<전체 대화를 가진 에이전트가 실제로 한 일>\n" + s.next + "\n</전체 대화를 가진 에이전트가 실제로 한 일>\n\n" +
-			"<메모 A>\n" + r.Memo[names[0]] + "\n</메모 A>\n\n<메모 B>\n" + r.Memo[names[1]] + "\n</메모 B>\n\n" + graderPrompt
+			strings.Join(memos, "\n\n") + "\n\n" + graderPrompt + "{" + strings.Join(shape, ",") + "}"
 		out, err := runMemoCLI(context.Background(), "claude", []string{"-p", "--output-format", "json", "--tools", "", "--no-session-persistence", "--model", grader,
 			"--system-prompt", "You grade handoff memos for coding agents. Reply with JSON only."}, cwd, prompt)
 		if err != nil {
@@ -83,11 +106,29 @@ func TestMemoEvalLive(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &g); err != nil {
 			t.Fatalf("grade %d: unreadable %q", i, env.Result)
 		}
-		r.Verdict[names[0]], r.Verdict[names[1]] = g["A"], g["B"]
-		t.Logf("sample %d (%d chars in): haiku %d (%.0fs, %d chars) · sonnet %d (%.0fs, %d chars) | %s", i, len(req),
-			r.Verdict["haiku"].Score, r.Seconds["haiku"], utf8.RuneCountInString(r.Memo["haiku"]),
-			r.Verdict["sonnet"].Score, r.Seconds["sonnet"], utf8.RuneCountInString(r.Memo["sonnet"]), clipRunes(s.goal, 60))
+		var line []string
+		for k, name := range names {
+			v, ok := g[string(rune('A'+k))]
+			if !ok {
+				t.Fatalf("grade %d: no score for %s in %q", i, name, env.Result)
+			}
+			r.Verdict[name] = v
+		}
+		for _, name := range order {
+			line = append(line, fmt.Sprintf("%s %d (%.0fs, %d chars)", name, r.Verdict[name].Score, r.Seconds[name], utf8.RuneCountInString(r.Memo[name])))
+		}
+		t.Logf("sample %d (%d chars in): %s | %s", i, len(req), strings.Join(line, " · "), clipRunes(s.goal, 60))
 		results = append(results, r)
+	}
+	for _, name := range order {
+		var sum, missing, wrong int
+		for _, r := range results {
+			sum += r.Verdict[name].Score
+			missing += len(r.Verdict[name].Missing)
+			wrong += len(r.Verdict[name].Wrong)
+		}
+		t.Logf("%s (%s %s): mean %.2f/5, %d missing, %d wrong over %d samples", name, writers[name].Model, writers[name].Effort,
+			float64(sum)/float64(len(results)), missing, wrong, len(results))
 	}
 	if p := os.Getenv("MEMO_EVAL_OUT"); p != "" {
 		b, _ := json.MarshalIndent(results, "", " ")
@@ -95,7 +136,7 @@ func TestMemoEvalLive(t *testing.T) {
 	}
 }
 
-const graderPrompt = `위 대화를 새 대화로 옮기면서, 다음 AI는 대화 기록 대신 메모 하나와 최근 2턴 원문, 저장소 파일만 보고 [다음 요청]을 처리합니다. 메모 A와 B를 각각 채점하세요.
+const graderPrompt = `위 대화를 새 대화로 옮기면서, 다음 AI는 대화 기록 대신 메모 하나와 최근 2턴 원문, 저장소 파일만 보고 [다음 요청]을 처리합니다. 메모를 각각 따로 채점하세요.
 
 점수 (1~5):
 5 = 이 메모만으로 다음 요청을 전체 대화를 가진 에이전트처럼 올바르게 이어갈 수 있다
@@ -107,7 +148,7 @@ const graderPrompt = `위 대화를 새 대화로 옮기면서, 다음 AI는 대
 missing: 다음 요청을 처리하는 데 필요한데 빠진 것 (없으면 빈 배열)
 wrong: 대화와 다른 틀린 내용 (없으면 빈 배열)
 
-JSON만 답하세요: {"A":{"score":n,"missing":[...],"wrong":[...]},"B":{"score":n,"missing":[...],"wrong":[...]}}`
+JSON만 답하세요: `
 
 type memoSample struct {
 	session, goal, next string
