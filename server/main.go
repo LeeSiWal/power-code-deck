@@ -188,6 +188,9 @@ func main() {
 	// cfg.ClientOrigins). Passing the raw env string here was how CORS drifted out
 	// of sync with the other two guards.
 	r.Use(middleware.CORS(cfg.ClientOrigins()))
+	// CORS only decides who may READ a response; this refuses cross-site writes,
+	// which with auth off would otherwise reach POST /api/agents from any website.
+	r.Use(middleware.CrossSiteGuard(cfg.ClientOrigins()))
 
 	// Rate limiter for auth endpoints
 	authLimiter := middleware.NewRateLimiter(10, time.Minute)

@@ -18,6 +18,16 @@ function isLocalUrl(inputUrl: string): boolean {
   }
 }
 
+// The frame is usually another origin (a dev server, or a sandboxed srcdoc page),
+// where touching contentWindow.history throws — a dead button beats an uncaught error.
+function frameHistory(frame: HTMLIFrameElement | null, delta: number) {
+  try {
+    frame?.contentWindow?.history.go(delta);
+  } catch {
+    /* cross-origin frame */
+  }
+}
+
 export function BrowserPanel({ agentId, onClose }: BrowserPanelProps) {
   const meta = useAppStore((s) => s.agentMeta.get(agentId));
   const ports = meta?.listeningPorts || [];
@@ -94,8 +104,8 @@ export function BrowserPanel({ agentId, onClose }: BrowserPanelProps) {
   return (
     <div className="flex flex-col h-full bg-deck-surface overflow-hidden">
       <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-deck-border shrink-0">
-        <button onClick={() => iframeRef.current?.contentWindow?.history.back()} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs"><IconBack size={13} /></button>
-        <button onClick={() => iframeRef.current?.contentWindow?.history.forward()} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs"><IconChevronRight size={13} /></button>
+        <button onClick={() => frameHistory(iframeRef.current, -1)} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs"><IconBack size={13} /></button>
+        <button onClick={() => frameHistory(iframeRef.current, 1)} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs"><IconChevronRight size={13} /></button>
         <button onClick={() => navigateTo(displayUrl)} className="p-1.5 rounded hover:bg-deck-border/50 active:bg-deck-border/50 text-deck-text-dim text-xs"><IconRefresh size={13} /></button>
 
         <form onSubmit={(e) => { e.preventDefault(); navigateTo(displayUrl); }} className="flex-1 flex">
@@ -166,7 +176,7 @@ export function BrowserPanel({ agentId, onClose }: BrowserPanelProps) {
             ref={iframeRef}
             src={iframeSrc}
             style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'auto', position: 'relative', zIndex: 1, touchAction: 'manipulation' }}
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
           />
         )}
 
@@ -175,7 +185,10 @@ export function BrowserPanel({ agentId, onClose }: BrowserPanelProps) {
             ref={iframeRef}
             srcDoc={srcdoc}
             style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'auto', position: 'relative', zIndex: 1, touchAction: 'manipulation' }}
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation"
+            // No allow-same-origin: a srcdoc frame inherits the DECK's origin, so the
+            // proxied page's scripts could read the deck token and call /api/agents.
+            // No allow-top-navigation: the page must not replace the deck itself.
+            sandbox="allow-scripts allow-forms allow-popups"
           />
         )}
 

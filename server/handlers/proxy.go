@@ -82,22 +82,27 @@ func ProxyHandler() http.HandlerFunc {
 			return
 		}
 
-		// Non-HTML: pass through as-is (images, CSS, JS, etc.)
-		resp.Header.Del("X-Frame-Options")
-		resp.Header.Del("Content-Security-Policy")
-		resp.Header.Del("Cross-Origin-Embedder-Policy")
-		resp.Header.Del("Cross-Origin-Opener-Policy")
-		resp.Header.Del("Cross-Origin-Resource-Policy")
-
-		for key, vals := range resp.Header {
-			for _, val := range vals {
-				w.Header().Add(key, val)
+		// Non-HTML: hand back the bytes, but never as a live document of the deck's
+		// own origin. This response is served from the deck, so an SVG or XML page
+		// opened here (/api/proxy?url=https://evil/x.svg) would run its scripts with
+		// the deck's privileges — one click to POST /api/agents. `sandbox` gives any
+		// document an opaque origin with scripts off, `attachment` stops top-level
+		// rendering, and only content headers are copied (no Set-Cookie onto the
+		// deck's origin).
+		for _, key := range proxyPassHeaders {
+			if v := resp.Header.Get(key); v != "" {
+				w.Header().Set(key, v)
 			}
 		}
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
+		w.Header().Set("Content-Disposition", "attachment")
 		w.WriteHeader(resp.StatusCode)
 		w.Write(body)
 	}
 }
+
+// proxyPassHeaders are the upstream headers a non-HTML proxy response keeps.
+var proxyPassHeaders = []string{"Content-Type", "Content-Language", "Cache-Control", "ETag", "Last-Modified"}
 
 var (
 	srcRe    = regexp.MustCompile(`(src|href|action)\s*=\s*"(/[^"]*)"`)
