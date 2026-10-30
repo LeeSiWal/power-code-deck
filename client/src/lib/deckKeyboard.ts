@@ -171,8 +171,18 @@ export function deckMetrics(width: number, height: number): DeckMetrics {
   };
 }
 
+/** Height of the whole keyboard (strip + rows + gaps) on one screen, in CSS px. */
+export function deckKeyboardHeight(width: number, height: number): number {
+  const m = deckMetrics(width, height);
+  const rows = deckLayout(width).rows.length;
+  return m.stripHeight + rows * m.keyHeight + (rows + 1) * m.gap;
+}
+
 /** The deck keyboard is offered on touch screens whose shorter side is at least
- *  that of an iPad mini (744 CSS px); a phone is too narrow for a full keyboard. */
+ *  600 CSS px (a phone is too narrow for a full keyboard) AND where it leaves
+ *  more than half the height for the session. The second rule is for a foldable
+ *  phone opened sideways (iPhone Duo, 890×626): wide enough, but the keyboard
+ *  would leave the chat about 100px — iOS's own, shorter keyboard is used there. */
 export function deckKeyboardFits(width: number, height: number): boolean {
-  return Math.min(width, height) >= 600;
+  return Math.min(width, height) >= 600 && deckKeyboardHeight(width, height) < height * 0.47;
 }

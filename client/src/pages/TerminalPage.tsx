@@ -188,7 +188,10 @@ export function TerminalPage() {
   const { zoomedPanel, setZoomedPanel } = useAppStore();
 
   // Panels
-  const [leftPanelOpen, setLeftPanelOpen] = useState(!isMobile);
+  // A short screen in the tablet layout (iPhone Duo opened sideways, 890×626)
+  // starts with the file tree closed — open, it takes a third of the width
+  // from a chat that already has little height. Every iPad is taller than this.
+  const [leftPanelOpen, setLeftPanelOpen] = useState(!isMobile && height >= 700);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [rightTab, setRightTab] = useState<'subagent' | 'browser' | 'sessions' | 'shell'>('subagent');
   const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
