@@ -1154,71 +1154,75 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
           />
 
           <div className="flex items-center gap-2">
-            <ChatDeckToggle keyboard={keyboard} />
-            <button
-              onClick={() => setMenu(menu === 'add' ? null : 'add')}
-              disabled={uploading}
-              className="shrink-0 w-8 h-8 rounded-lg bg-deck-surface border border-deck-border text-deck-text-dim flex items-center justify-center disabled:opacity-40"
-              title="추가"
-            >
-              {uploading ? <IconSpinner size={15} className="animate-spin" /> : <IconPlus size={15} />}
-            </button>
-            <button
-              onClick={() => setMenu(menu === 'model' ? null : 'model')}
-              className="shrink-0 h-8 px-2.5 rounded-full bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1.5"
-              title="도구 · 모델 전환"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-deck-accent" />
-              {autoOn && '자동 · '}{driver === 'antigravity' ? currentTool.name : driver === 'codex' ? `Codex · ${modelLabel}` : modelLabel}
-            </button>
-            {driver !== 'antigravity' && <button
-              onClick={() => setMenu(menu === 'mode' ? null : 'mode')}
-              className={`shrink-0 h-8 px-2.5 rounded-full border text-xs font-medium flex items-center gap-1.5 ${currentMode.pill} ${
-                menu === 'mode' ? 'ring-1 ring-deck-accent' : ''
-              }`}
-              title="권한 모드 전환 (Shift+Tab)"
-            >
-              <currentMode.icon size={13} />
-              {currentMode.label}
-            </button>}
-            {driver === 'antigravity' && <span className="text-xs text-deck-text-dim">CLI 설정 사용</span>}
-            {autoOn && onLocal && !working && items.some((i) => i.kind === 'user') && (
+            {/* The option chips scroll sideways on a narrow screen (a folded iPhone
+                Duo is ~370px wide) so 중단/보내기 at the end stay on screen —
+                in one non-wrapping row they were pushed out past the edge. */}
+            <div className="flex-1 min-w-0 flex items-center gap-2 overflow-x-auto overscroll-x-contain [scrollbar-width:none]">
+              <ChatDeckToggle keyboard={keyboard} />
               <button
-                onClick={escalate}
-                disabled={escalating}
-                className="shrink-0 h-8 px-2.5 rounded-full border border-amber-400/40 text-amber-300 text-xs disabled:opacity-40"
-                title="로컬 모델의 답이 틀렸거나 부족하면, 같은 요청을 유료 모델로 다시 보냅니다"
+                onClick={() => setMenu(menu === 'add' ? null : 'add')}
+                disabled={uploading}
+                className="shrink-0 w-8 h-8 rounded-lg bg-deck-surface border border-deck-border text-deck-text-dim flex items-center justify-center disabled:opacity-40"
+                title="추가"
               >
-                {escalating ? '전환 중…' : '유료 모델로 다시'}
+                {uploading ? <IconSpinner size={15} className="animate-spin" /> : <IconPlus size={15} />}
               </button>
-            )}
-            {showEffort && (
               <button
-                onClick={() => { setMenu(null); setOptionsOpen(true); }}
-                className="shrink-0 w-8 h-8 rounded-lg bg-deck-surface border border-deck-border text-deck-text-dim flex items-center justify-center relative"
-                title="세션 옵션 — 추가 경로 · 예산 · 자동 압축 · 폴백 모델"
+                onClick={() => setMenu(menu === 'model' ? null : 'model')}
+                className="shrink-0 h-8 px-2.5 rounded-full bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1.5"
+                title="도구 · 모델 전환"
               >
-                <IconSliders size={15} />
-                {/* A dot only when something is actually configured: the control is
-                    otherwise indistinguishable from an unused one at a glance. */}
-                {hasSessionOptions(options) && (
-                  <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-deck-accent" />
-                )}
+                <span className="w-1.5 h-1.5 rounded-full bg-deck-accent" />
+                {autoOn && '자동 · '}{driver === 'antigravity' ? currentTool.name : driver === 'codex' ? `Codex · ${modelLabel}` : modelLabel}
               </button>
-            )}
-            {showEffort && (
-              <button
-                onClick={() => setMenu(menu === 'effort' ? null : 'effort')}
-                className={`shrink-0 h-8 px-2.5 rounded-full bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1.5 ${
-                  menu === 'effort' ? 'ring-1 ring-deck-accent' : ''
+              {driver !== 'antigravity' && <button
+                onClick={() => setMenu(menu === 'mode' ? null : 'mode')}
+                className={`shrink-0 h-8 px-2.5 rounded-full border text-xs font-medium flex items-center gap-1.5 ${currentMode.pill} ${
+                  menu === 'mode' ? 'ring-1 ring-deck-accent' : ''
                 }`}
-                title="Effort 전환 — 사고 깊이와 토큰 사용량"
+                title="권한 모드 전환 (Shift+Tab)"
               >
-                <IconGauge size={13} />
-                {currentEffort.label}
-              </button>
-            )}
-            <div className="flex-1" />
+                <currentMode.icon size={13} />
+                {currentMode.label}
+              </button>}
+              {driver === 'antigravity' && <span className="shrink-0 whitespace-nowrap text-xs text-deck-text-dim">CLI 설정 사용</span>}
+              {autoOn && onLocal && !working && items.some((i) => i.kind === 'user') && (
+                <button
+                  onClick={escalate}
+                  disabled={escalating}
+                  className="shrink-0 h-8 px-2.5 rounded-full border border-amber-400/40 text-amber-300 text-xs disabled:opacity-40"
+                  title="로컬 모델의 답이 틀렸거나 부족하면, 같은 요청을 유료 모델로 다시 보냅니다"
+                >
+                  {escalating ? '전환 중…' : '유료 모델로 다시'}
+                </button>
+              )}
+              {showEffort && (
+                <button
+                  onClick={() => { setMenu(null); setOptionsOpen(true); }}
+                  className="shrink-0 w-8 h-8 rounded-lg bg-deck-surface border border-deck-border text-deck-text-dim flex items-center justify-center relative"
+                  title="세션 옵션 — 추가 경로 · 예산 · 자동 압축 · 폴백 모델"
+                >
+                  <IconSliders size={15} />
+                  {/* A dot only when something is actually configured: the control is
+                      otherwise indistinguishable from an unused one at a glance. */}
+                  {hasSessionOptions(options) && (
+                    <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-deck-accent" />
+                  )}
+                </button>
+              )}
+              {showEffort && (
+                <button
+                  onClick={() => setMenu(menu === 'effort' ? null : 'effort')}
+                  className={`shrink-0 h-8 px-2.5 rounded-full bg-deck-surface border border-deck-border text-deck-text-dim text-xs flex items-center gap-1.5 ${
+                    menu === 'effort' ? 'ring-1 ring-deck-accent' : ''
+                  }`}
+                  title="Effort 전환 — 사고 깊이와 토큰 사용량"
+                >
+                  <IconGauge size={13} />
+                  {currentEffort.label}
+                </button>
+              )}
+            </div>
             {/* Sending mid-turn is allowed. Measured against the real CLI: a message
                 written to stdin while a turn is in flight neither interrupts nor
                 steers it — the running answer completes untouched, then the queued
