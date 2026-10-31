@@ -121,6 +121,8 @@ var dangerousCmds = map[string]bool{
 	"launchctl": true, "apt": true, "apt-get": true, "yum": true, "dnf": true,
 	"brew": true, "curl": true, "wget": true, "ssh": true, "scp": true, "sftp": true,
 	"nc": true, "ncat": true, "telnet": true, "eval": true, "exec": true, "truncate": true,
+	// A shell named anywhere runs whatever string follows it (`env sh -c …`).
+	"sh": true, "bash": true, "zsh": true, "dash": true, "fish": true,
 }
 
 // dangerousPhrases are patterns matched as substrings — multi-word operations and
@@ -133,6 +135,14 @@ var dangerousPhrases = []string{
 	"| sh", "|sh", "| bash", "|bash", "| zsh", "|zsh",
 	"> /", ">/", ">>/", "> ~", "> $", ":(){",
 	"/etc/", "/dev/", "/usr/", "/bin/", "/sbin/", "~/.ssh",
+	// Substitutions run a command the leading-word check never sees.
+	"$(", "`", "<(", ">(",
+	// find runs or deletes on its own.
+	" -exec", " -ok ", " -delete", " -fprint",
+	// Fetch-and-run a package by name.
+	"dlx ", "bunx ",
+	// git config can install an alias, pager or hook that runs a shell.
+	"git -c", "git config",
 }
 
 // safeBashCmds are the leading commands we let run unattended in "auto" mode. Tools
@@ -141,20 +151,35 @@ var dangerousPhrases = []string{
 var safeBashCmds = map[string]bool{
 	"ls": true, "cat": true, "head": true, "tail": true, "pwd": true, "echo": true,
 	"printf": true, "grep": true, "rg": true, "ag": true, "find": true, "fd": true,
-	"wc": true, "which": true, "type": true, "env": true, "date": true, "whoami": true,
+	"wc": true, "which": true, "type": true, "date": true, "whoami": true,
 	"hostname": true, "uname": true, "tree": true, "stat": true, "file": true,
 	"diff": true, "sort": true, "uniq": true, "cut": true, "tr": true, "jq": true,
 	"yq": true, "true": true, "test": true, "basename": true, "dirname": true,
 	"realpath": true, "readlink": true, "column": true,
-	"git": true, "npm": true, "pnpm": true, "yarn": true, "npx": true, "bun": true,
+	"git": true, "npm": true, "pnpm": true, "yarn": true, "bun": true,
 	"node": true, "deno": true, "python": true, "python3": true,
 	"tsc": true, "eslint": true, "prettier": true, "vitest": true, "jest": true,
 	"go": true, "gofmt": true, "cargo": true, "rustc": true, "make": true,
 }
 
+// inlineCodeFlags make an interpreter run code from the command line itself rather
+// than a file in the project — `python3 -c`, `node -e` — so the call is the code.
+var inlineCodeFlags = map[string]bool{
+	"-c": true, "-e": true, "-p": true, "--eval": true, "--print": true, "eval": true,
+}
+
+var interpreterCmds = map[string]bool{
+	"node": true, "deno": true, "bun": true, "python": true, "python3": true,
+}
+
+// harmlessRedirects are the only `>` uses allowed unattended; any other one writes a
+// file, and a write outside an Edit tool call is never checked against the project.
+var harmlessRedirects = strings.NewReplacer("2>&1", "", "1>&2", "", ">&2", "")
+
 // isSafeBash allows a shell command only when: no dangerous phrase appears, no
-// dangerous command NAME appears as a word anywhere, AND every chained segment
-// (split on && || | ; newline) leads with an allow-listed command.
+// dangerous command NAME appears as a word anywhere, nothing is redirected into a
+// file, AND every chained segment (split on && || | ; newline) leads with an
+// allow-listed command that isn't handed inline code.
 func isSafeBash(input json.RawMessage) bool {
 	cmd := strings.TrimSpace(firstStringField(input, "command"))
 	if cmd == "" {
@@ -171,6 +196,9 @@ func isSafeBash(input json.RawMessage) bool {
 			return false
 		}
 	}
+	if strings.Contains(harmlessRedirects.Replace(low), ">") {
+		return false
+	}
 	segs := splitBashSegments(cmd)
 	if len(segs) == 0 {
 		return false
@@ -182,6 +210,13 @@ func isSafeBash(input json.RawMessage) bool {
 		}
 		if !safeBashCmds[first] {
 			return false
+		}
+		if interpreterCmds[first] {
+			for _, tok := range strings.Fields(seg) {
+				if inlineCodeFlags[tok] {
+					return false
+				}
+			}
 		}
 	}
 	return true
