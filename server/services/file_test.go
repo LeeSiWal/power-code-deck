@@ -106,4 +106,24 @@ func TestIsSensitivePath(t *testing.T) {
 	if fs.IsSensitivePath(filepath.Join(home, "code", "proj", "main.go")) {
 		t.Fatal("a normal project file should NOT be sensitive")
 	}
+	// The AI CLIs' login files.
+	if !fs.IsSensitivePath(filepath.Join(home, ".claude", ".credentials.json")) {
+		t.Fatal("~/.claude/.credentials.json should be sensitive")
+	}
+	if !fs.IsSensitivePath(filepath.Join(home, ".codex", "auth.json")) {
+		t.Fatal("~/.codex/auth.json should be sensitive")
+	}
+	if fs.IsSensitivePath(filepath.Join(home, ".claude", "settings.json")) {
+		t.Fatal("other ~/.claude files stay readable")
+	}
+	// The deck's own .env, registered at startup.
+	envPath := filepath.Join(home, "PowerCodeDeck", ".env")
+	defer func(old []string) { SensitiveFiles = old }(SensitiveFiles)
+	SensitiveFiles = append(SensitiveFiles, envPath)
+	if !fs.IsSensitivePath(envPath) {
+		t.Fatal("the deck's .env should be sensitive")
+	}
+	if fs.IsSensitivePath(filepath.Join(home, "PowerCodeDeck", ".env.example")) {
+		t.Fatal("only the exact .env is blocked")
+	}
 }

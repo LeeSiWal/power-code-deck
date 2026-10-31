@@ -77,6 +77,9 @@ func main() {
 	// 한다. 한 프로젝트에 세션이 둘일 때 서로의 활동·할일이 섞이는 것을 막는다.
 	activitySvc.SetSessionIDLookup(agentSvc.ClaudeSessionID)
 	fileSvc := services.NewFileService()
+	if envPath, err := filepath.Abs(config.EnvFilePath()); err == nil {
+		services.SensitiveFiles = append(services.SensitiveFiles, envPath)
+	}
 	watcherSvc := services.NewWatcherService()
 	projectSvc := services.NewProjectService(database)
 	projectSvc.SetWorkspaceRoot(cfg.WorkspaceRoot) // default project-browser root
@@ -188,6 +191,9 @@ func main() {
 	// cfg.ClientOrigins). Passing the raw env string here was how CORS drifted out
 	// of sync with the other two guards.
 	r.Use(middleware.CORS(cfg.ClientOrigins()))
+	// CORS only decides who may READ a response; this refuses cross-site writes,
+	// which with auth off would otherwise reach POST /api/agents from any website.
+	r.Use(middleware.CrossSiteGuard(cfg.ClientOrigins()))
 
 	// Rate limiter for auth endpoints
 	authLimiter := middleware.NewRateLimiter(10, time.Minute)
