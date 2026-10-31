@@ -224,6 +224,13 @@ func (h *Hub) pollMetaSoon() {
 }
 
 func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+	h.HandleWebSocketScoped(w, r, "")
+}
+
+// HandleWebSocketScoped is HandleWebSocket for a credential confined to one
+// agent (scopeAgent != ""): every agent-targeted event naming another agent is
+// dropped. See Client.scopeAllows.
+func (h *Hub) HandleWebSocketScoped(w http.ResponseWriter, r *http.Request, scopeAgent string) {
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
@@ -231,10 +238,11 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		hub:      h,
-		conn:     conn,
-		send:     make(chan []byte, 256),
-		viewerID: newViewerID(),
+		hub:        h,
+		conn:       conn,
+		send:       make(chan []byte, 256),
+		viewerID:   newViewerID(),
+		scopeAgent: scopeAgent,
 		// Persistent browser id — lets the server tie a WS connection AND a push
 		// subscription to the same device, so "active device" survives reconnects.
 		deviceID: r.URL.Query().Get("device"),
@@ -471,7 +479,31 @@ func (h *Hub) agentName(agentID string) string {
 	return "에이전트"
 }
 
+// scopeAllows reports whether a scoped (QR handoff) connection may send msg.
+// Only the two client-housekeeping events carry no agent; everything else must
+// name this connection's own agent — an event with no agentId is refused too,
+// since some handlers fall back to other state when it's missing.
+func (c *Client) scopeAllows(msg WSMessage) bool {
+	if c.scopeAgent == "" {
+		return true
+	}
+	switch msg.Event {
+	case EventPing, EventClientVisibility:
+		return true
+	}
+	var target struct {
+		AgentID string `json:"agentId"`
+	}
+	if err := json.Unmarshal(msg.Payload, &target); err != nil {
+		return false
+	}
+	return target.AgentID == c.scopeAgent
+}
+
 func (h *Hub) handleMessage(c *Client, msg WSMessage) {
+	if !c.scopeAllows(msg) {
+		return
+	}
 	switch msg.Event {
 	case EventClientVisibility:
 		// The browser reporting its own visibilitychange. Used only to suppress a

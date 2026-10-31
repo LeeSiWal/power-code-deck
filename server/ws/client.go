@@ -23,6 +23,9 @@ type Client struct {
 	watchingAgent string
 	viewerID      string // stable id for this connection (SessionEngine viewer)
 	deviceID      string // persistent per-browser id (from the ?device= query param)
+	// scopeAgent, when set, confines this connection to one agent: it came from
+	// a QR handoff token (auth.Scope). Fixed at connect, never changes.
+	scopeAgent string
 
 	// attachCount counts, per agent, how many independent UI surfaces on THIS
 	// connection asked to watch it.

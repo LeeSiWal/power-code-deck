@@ -129,3 +129,52 @@ func TestShellInputUsesNamespacedAttachedSession(t *testing.T) {
 			eng.writes, eng.acks, eng.resizes)
 	}
 }
+
+// A handoff-scoped connection may only act on its own session, even where the
+// engine would accept it (here viewer-1 is attached to agent-B as well). Without
+// this, the QR grant reached every agent over the WebSocket.
+func TestScopedClientConfinedToItsSession(t *testing.T) {
+	eng := &gateEngine{viewers: map[string]string{"agent-A": "viewer-1", "agent-B": "viewer-1"}}
+	h := &Hub{engine: eng}
+	c := &Client{viewerID: "viewer-1", watchingAgent: "agent-A", scopeAgent: "agent-A"}
+
+	h.handleMessage(c, msg(t, EventTerminalInput, TerminalInputPayload{AgentID: "agent-B", Data: "x"}))
+	h.handleMessage(c, msg(t, EventTerminalResize, TerminalResizePayload{AgentID: "agent-B", Cols: 1, Rows: 1}))
+	h.handleMessage(c, msg(t, EventTerminalAck, TerminalAckPayload{AgentID: "agent-B", Bytes: 1}))
+	if len(eng.writes) != 0 || len(eng.resizes) != 0 || len(eng.acks) != 0 {
+		t.Fatalf("scoped client reached another agent: writes=%v resizes=%v acks=%v", eng.writes, eng.resizes, eng.acks)
+	}
+
+	h.handleMessage(c, msg(t, EventTerminalInput, TerminalInputPayload{AgentID: "agent-A", Data: "ls\r"}))
+	if len(eng.writes) != 1 || eng.writes[0] != "agent-A" {
+		t.Fatalf("scoped client blocked from its own session: %v", eng.writes)
+	}
+}
+
+func TestScopeAllowsEvents(t *testing.T) {
+	c := &Client{scopeAgent: "agent-A"}
+	cases := []struct {
+		event   string
+		payload any
+		want    bool
+	}{
+		{EventPing, nil, true},
+		{EventClientVisibility, ClientVisibilityPayload{Visible: true}, true},
+		{EventNativeOpen, NativeOpenPayload{AgentID: "agent-A"}, true},
+		{EventNativeOpen, NativeOpenPayload{AgentID: "agent-B"}, false},
+		{EventNativeDecide, NativeDecidePayload{AgentID: "agent-B", ID: "r1"}, false},
+		{EventTerminalAttach, TerminalAttachPayload{AgentID: "agent-B"}, false},
+		{EventShellAttach, TerminalAttachPayload{AgentID: "agent-B"}, false},
+		{EventFileWatch, FileWatchPayload{AgentID: "agent-B"}, false},
+		{EventNativeInput, NativeInputPayload{Text: "no agent id"}, false},
+	}
+	for _, tc := range cases {
+		if got := c.scopeAllows(msg(t, tc.event, tc.payload)); got != tc.want {
+			t.Errorf("%s %+v: allowed=%v, want %v", tc.event, tc.payload, got, tc.want)
+		}
+	}
+	// An unscoped client is never filtered here.
+	if !(&Client{}).scopeAllows(msg(t, EventNativeOpen, NativeOpenPayload{AgentID: "agent-B"})) {
+		t.Error("unscoped client was filtered")
+	}
+}
