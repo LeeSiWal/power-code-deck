@@ -346,6 +346,7 @@ type transcriptLine struct {
 
 type transcriptMsg struct {
 	Content json.RawMessage `json:"content"`
+	Usage   *StreamUsage    `json:"usage"`
 }
 
 type contentBlock struct {
