@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // SessionSummary is one past Claude Code session (a single transcript file) for a
@@ -178,16 +179,24 @@ func ReadSession(workingDir, sessionID string) ([]SessionMessage, error) {
 // bare icon (which is what extractSessionText / ReadSession do, deliberately, for
 // the flat history list). Used to seed native history on resume.
 func ReadSessionEvents(workingDir, sessionID string) ([]*StreamEvent, error) {
+	evs, _, err := readSessionEvents(workingDir, sessionID)
+	return evs, err
+}
+
+// readSessionEvents also returns when the conversation's last message was
+// written (zero if no line carries a readable timestamp).
+func readSessionEvents(workingDir, sessionID string) ([]*StreamEvent, time.Time, error) {
+	var last time.Time
 	if !sessionIDRe.MatchString(sessionID) {
-		return nil, os.ErrInvalid
+		return nil, last, os.ErrInvalid
 	}
 	dir := claudeProjectDir(workingDir)
 	if dir == "" {
-		return nil, os.ErrNotExist
+		return nil, last, os.ErrNotExist
 	}
 	f, err := os.Open(filepath.Join(dir, sessionID+".jsonl"))
 	if err != nil {
-		return nil, err
+		return nil, last, err
 	}
 	defer f.Close()
 	out := []*StreamEvent{}
@@ -201,11 +210,14 @@ func ReadSessionEvents(workingDir, sessionID string) ([]*StreamEvent, error) {
 		if (line.Type != "user" && line.Type != "assistant") || line.IsSidechain {
 			continue
 		}
+		if ts, err := time.Parse(time.RFC3339Nano, line.Timestamp); err == nil {
+			last = ts
+		}
 		if ev := historyEvent(line); ev != nil {
 			out = append(out, ev)
 		}
 	}
-	return out, nil
+	return out, last, nil
 }
 
 // historyEvent turns one transcript line into a StreamEvent whose Raw is the exact
@@ -246,9 +258,15 @@ func historyEvent(line transcriptLine) *StreamEvent {
 		"type":    role,
 		"message": map[string]any{"role": role, "content": kept},
 	})
+	msg := &StreamMessage{Role: role, Content: kept}
+	if role == "assistant" {
+		// The conversation's real size, which ConversationTokens reads; the
+		// visible text alone leaves out thinking and the system prompt.
+		msg.Usage = line.Message.Usage
+	}
 	return &StreamEvent{
 		Type:    role,
-		Message: &StreamMessage{Role: role, Content: kept},
+		Message: msg,
 		Raw:     raw,
 	}
 }
