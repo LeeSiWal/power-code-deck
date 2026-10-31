@@ -183,7 +183,8 @@ func memoEvalSamples(t *testing.T, cwd string, sessions int, at []float64) []mem
 		for _, frac := range at {
 			for k := int(float64(len(userIdx)) * frac); k < len(userIdx)-1; k++ {
 				goal := userText(evs[userIdx[k]])
-				if routing.IsFollowUp(goal) || utf8.RuneCountInString(goal) < 15 || strings.HasPrefix(goal, "<") || strings.Contains(goal, "This session is being continued") {
+				if routing.IsFollowUp(goal) || utf8.RuneCountInString(goal) < 15 || strings.HasPrefix(goal, "<") || strings.Contains(goal, "This session is being continued") ||
+					strings.HasPrefix(goal, "Base directory for this skill") { // a skill body, not something the user typed
 					continue
 				}
 				hist := evs[:userIdx[k]]
