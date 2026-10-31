@@ -570,13 +570,20 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 // calls and their output intact, not flattened to a bare icon. (A truncated
 // text-only seed was why a resumed session showed Bash/Read as an icon with no way
 // to see the command that ran or what it returned.)
+//
+// The transcript's last message time also stands in for the last turn end, so
+// per-turn routing sees how long a reopened conversation sat idle (fresh start
+// after a server restart or the next day) instead of no idle at all.
 func seedNativeHistory(sess *nativeSession, cwd, sid string) {
-	evs, err := ReadSessionEvents(cwd, sid)
+	evs, last, err := readSessionEvents(cwd, sid)
 	if err != nil || len(evs) == 0 {
 		return
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	if sess.lastTurnEnd.IsZero() && !last.After(time.Now()) {
+		sess.lastTurnEnd = last
+	}
 	sess.history = append(sess.history, evs...)
 	// Close the last historical turn so it doesn't read as still in flight — the
 	// transcript carries no result of its own. Without this the resumed chat shows

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestReadSessionEventsKeepsToolBlocks guards the resume bug where Bash/Read tool
@@ -102,6 +103,50 @@ func TestSeedNativeHistoryClosesTurn(t *testing.T) {
 	if n := len(sess.history); n < 1 || sess.history[n-1].Type != StreamTypeResult {
 		t.Fatalf("seeded history must end with a result marker; got %d events, last type %q",
 			len(sess.history), lastType(sess.history))
+	}
+}
+
+// TestSeedNativeHistoryKeepsIdleAndSize guards fresh start never firing after a
+// server restart or a reopen: the seeded conversation had no end time (so no
+// idle) and no usage (so its size was guessed from the text it shows, which
+// leaves out thinking and the system prompt). Both come from the transcript.
+func TestSeedNativeHistoryKeepsIdleAndSize(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cwd := "/home/tester/code/demo"
+	dir := filepath.Join(home, ".claude", "projects", encodeProjectPath(cwd))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"type":"user","timestamp":"2026-10-30T09:00:00.000Z","message":{"role":"user","content":"refactor the router"}}`,
+		`{"type":"assistant","timestamp":"2026-10-30T09:01:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Done."}],"usage":{"input_tokens":3,"cache_creation_input_tokens":2000,"cache_read_input_tokens":148000,"output_tokens":500}}}`,
+		`{"type":"assistant","timestamp":"2026-10-30T09:05:00.000Z","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"subagent"}],"usage":{"input_tokens":9,"cache_read_input_tokens":1}}}`,
+		`{"type":"summary","timestamp":"2026-10-30T09:06:00.000Z"}`,
+	}
+	sid := "33333333-3333-3333-3333-333333333333"
+	if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), []byte(joinLines(lines)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := &nativeSession{id: "a1", cwd: cwd}
+	seedNativeHistory(sess, cwd, sid)
+
+	if got := ConversationTokens(sess.history); got != 150003 {
+		t.Errorf("context = %d, want 150003 from the last main-conversation usage", got)
+	}
+	want, _ := time.Parse(time.RFC3339, "2026-10-30T09:01:00Z")
+	if !sess.lastTurnEnd.Equal(want) {
+		t.Errorf("lastTurnEnd = %v, want %v (last main-conversation message)", sess.lastTurnEnd, want)
+	}
+
+	// A session that already ended a turn in this process keeps its own time.
+	live := time.Now()
+	sess = &nativeSession{id: "a2", cwd: cwd, lastTurnEnd: live}
+	seedNativeHistory(sess, cwd, sid)
+	if !sess.lastTurnEnd.Equal(live) {
+		t.Errorf("seed overwrote a live lastTurnEnd: %v", sess.lastTurnEnd)
 	}
 }
 
