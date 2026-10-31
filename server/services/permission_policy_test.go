@@ -52,6 +52,10 @@ func TestAutoModeSafe(t *testing.T) {
 		{"Bash", bash("npm test")},
 		{"Bash", bash("go build ./... && go test ./...")},
 		{"Bash", bash("grep -r foo src | wc -l")},
+		{"Bash", bash("go test ./... 2>&1 | tail -20")},
+		{"Bash", bash("python3 scripts/check.py")},
+		{"Bash", bash("find . -name '*.go' -newer go.mod")},
+		{"Bash", bash("node --version")},
 	} {
 		if !allow(tc.tool, tc.in) {
 			t.Errorf("expected SAFE (auto-allow): %s %s", tc.tool, string(tc.in))
@@ -76,9 +80,26 @@ func TestAutoModeRisky(t *testing.T) {
 		{"Bash", bash("git reset --hard HEAD~1")},
 		{"Bash", bash("node -e 'process.exit()' && rm x")},
 		{"Bash", bash("some-unknown-tool --do-it")},
-		{"Write", edit("/etc/hosts")},              // outside cwd
-		{"Write", edit("../../secret.txt")},        // escapes cwd
-		{"ExitPlanMode", bash("")},                 // unknown tool → ask
+		// Ways a safe leading command smuggled in an arbitrary one.
+		{"Bash", bash(`python3 -c "import os; os.system('id')"`)},
+		{"Bash", bash("node -e 'require(`child_process`).execSync(`id`)'")},
+		{"Bash", bash("deno eval 'Deno.exit()'")},
+		{"Bash", bash("env sh -c 'id'")},
+		{"Bash", bash("echo $(sh -c id)")},
+		{"Bash", bash("echo `id`")},
+		{"Bash", bash("cat <(sh -c id)")},
+		{"Bash", bash("find . -name x -exec sh -c id \\;")},
+		{"Bash", bash("find . -delete")},
+		{"Bash", bash("npx some-package")},
+		{"Bash", bash("pnpm dlx some-package")},
+		{"Bash", bash("npm exec some-package")},
+		{"Bash", bash("git -c core.pager='sh -c id' log")},
+		{"Bash", bash("git config alias.x '!sh -c id'")},
+		{"Bash", bash("echo x >> ../../.bashrc")},
+		{"Bash", bash("echo x > notes.txt")},
+		{"Write", edit("/etc/hosts")},       // outside cwd
+		{"Write", edit("../../secret.txt")}, // escapes cwd
+		{"ExitPlanMode", bash("")},          // unknown tool → ask
 	} {
 		if !asks(tc.tool, tc.in) {
 			t.Errorf("expected RISKY (ask): %s %s", tc.tool, string(tc.in))
