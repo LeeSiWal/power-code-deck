@@ -156,12 +156,9 @@ func HandoffExchange(authSvc *auth.AuthService) http.HandlerFunc {
 			return
 		}
 
-		access, err := authSvc.GenerateToken()
-		if err != nil {
-			jsonError(w, "failed to issue token", http.StatusInternalServerError)
-			return
-		}
-		refresh, err := authSvc.GenerateRefreshToken()
+		// Session-scoped and short-lived (auth.GenerateHandoffTokens), NOT a
+		// login's full 7d/30d pair: whoever scans or photographs the QR gets these.
+		access, refresh, err := authSvc.GenerateHandoffTokens(sessionID)
 		if err != nil {
 			jsonError(w, "failed to issue token", http.StatusInternalServerError)
 			return

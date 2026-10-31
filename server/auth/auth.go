@@ -142,13 +142,98 @@ func (s *AuthService) VerifyHandoffCookie(cookie string) (string, error) {
 	return sessionID, nil
 }
 
+// Lifetimes of the tokens a QR handoff exchanges for. Deliberately far shorter
+// than a login's 7d/30d: whoever scans (or photographs) the QR gets these.
+const (
+	HandoffAccessTTL  = 12 * time.Hour
+	HandoffRefreshTTL = 24 * time.Hour
+)
+
+// Token types of the session-scoped pair. They are distinct from "access" /
+// "refresh" on purpose so a caller still using the unscoped VerifyAccessToken
+// fails closed instead of treating one as a full credential.
+const (
+	typeSessionAccess  = "session-access"
+	typeSessionRefresh = "session-refresh"
+)
+
+// Scope is what an access token may touch. The zero value is full access; a
+// non-empty SessionID confines the bearer to that one session (agent).
+type Scope struct {
+	SessionID string
+}
+
+// GenerateHandoffTokens mints the access/refresh pair a redeemed handoff is
+// exchanged for: bound to one session and short-lived.
+func (s *AuthService) GenerateHandoffTokens(sessionID string) (access, refresh string, err error) {
+	if sessionID == "" {
+		return "", "", errors.New("handoff tokens need a session")
+	}
+	now := time.Now()
+	refresh, err = s.sign(typeSessionRefresh, sessionID, now, now.Add(HandoffRefreshTTL))
+	if err != nil {
+		return "", "", err
+	}
+	access, err = s.sign(typeSessionAccess, sessionID, now, now.Add(HandoffAccessTTL))
+	if err != nil {
+		return "", "", err
+	}
+	return access, refresh, nil
+}
+
+func (s *AuthService) sign(typ, sessionID string, iat, exp time.Time) (string, error) {
+	claims := jwt.MapClaims{
+		"iat":       iat.Unix(),
+		"exp":       exp.Unix(),
+		"type":      typ,
+		"sessionId": sessionID,
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret)
+}
+
+// VerifyAccess validates an API/WebSocket credential and returns its scope:
+// full for a normal access token, one session for a handoff-derived one.
+func (s *AuthService) VerifyAccess(tokenStr string) (Scope, error) {
+	claims, err := s.parse(tokenStr)
+	if err != nil {
+		return Scope{}, err
+	}
+	switch t, _ := claims["type"].(string); t {
+	case "access", "": // "" = legacy, see VerifyAccessToken
+		return Scope{}, nil
+	case typeSessionAccess:
+		sid, _ := claims["sessionId"].(string)
+		if sid == "" {
+			return Scope{}, errors.New("session token missing session")
+		}
+		return Scope{SessionID: sid}, nil
+	default:
+		return Scope{}, errors.New("not an access token")
+	}
+}
+
 func (s *AuthService) RefreshAccessToken(refreshTokenStr string) (string, error) {
 	claims, err := s.parse(refreshTokenStr)
 	if err != nil {
 		return "", err
 	}
-	if t, _ := claims["type"].(string); t != "refresh" {
+	switch t, _ := claims["type"].(string); t {
+	case "refresh":
+		return s.GenerateToken()
+	case typeSessionRefresh:
+		// Keep the scope, and never outlive the refresh token: the handoff grant
+		// ends when its refresh token does, however often it is refreshed.
+		sid, _ := claims["sessionId"].(string)
+		if sid == "" {
+			return "", errors.New("session token missing session")
+		}
+		now := time.Now()
+		exp := now.Add(HandoffAccessTTL)
+		if rexp, err := claims.GetExpirationTime(); err == nil && rexp != nil && rexp.Time.Before(exp) {
+			exp = rexp.Time
+		}
+		return s.sign(typeSessionAccess, sid, now, exp)
+	default:
 		return "", errors.New("not a refresh token")
 	}
-	return s.GenerateToken()
 }

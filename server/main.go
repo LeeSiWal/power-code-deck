@@ -394,11 +394,13 @@ func main() {
 	// terminal input.
 	r.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		token := r.URL.Query().Get("token")
-		if err := authSvc.VerifyAccessToken(token); err != nil {
+		scope, err := authSvc.VerifyAccess(token)
+		if err != nil {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		hub.HandleWebSocket(w, r)
+		// A QR-handoff token reaches only its own session over the socket too.
+		hub.HandleWebSocketScoped(w, r, scope.SessionID)
 	})
 
 	// Static files (embedded Vite build)
