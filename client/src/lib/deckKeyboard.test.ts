@@ -1,5 +1,5 @@
 // Framework-free assertions (type-checked by tsc like the other *.test.ts files).
-import { HOME_KEYS, NARROW_LAYOUT, WIDE_LAYOUT, deckKeyboardFits, deckLayout, deckMetrics } from './deckKeyboard';
+import { HOME_KEYS, NARROW_LAYOUT, WIDE_LAYOUT, deckKeyboardFits, deckKeyboardHeight, deckLayout, deckMetrics } from './deckKeyboard';
 import { jamoFor } from './hangul';
 
 function equal(actual: unknown, expected: unknown, label: string) {
@@ -74,7 +74,7 @@ for (const [name, w, h, minKeyWidth] of screens) {
   const layout = deckLayout(w);
   const rows = layout.rows.length;
   const keyWidth = (w - 2 * m.padX - (layout.units - 1) * m.gap) / layout.units;
-  const total = m.stripHeight + rows * m.keyHeight + (rows + 1) * m.gap;
+  const total = deckKeyboardHeight(w, h);
   equal(keyWidth >= minKeyWidth, true, `${name}: key width ${keyWidth.toFixed(1)}px (${layout.name})`);
   equal(m.keyHeight >= 46, true, `${name}: key height ${m.keyHeight}`);
   equal(total < h * 0.47, true, `${name}: keyboard ${total}px of ${h}`);
@@ -85,3 +85,9 @@ equal(deckLayout(1133).name, 'wide', 'landscape uses the full 15-unit layout');
 // Phones are not offered the deck keyboard.
 equal(deckKeyboardFits(390, 844), false, 'iPhone portrait');
 equal(deckKeyboardFits(844, 390), false, 'iPhone landscape');
+// iPhone Duo (foldable). Folded it is a phone; opened upright it is a small
+// tablet and gets the keyboard; opened sideways the keyboard would take more
+// than half of a 626px height, so iOS's own keyboard is used.
+equal(deckKeyboardFits(466, 678), false, 'iPhone Duo folded');
+equal(deckKeyboardFits(626, 890), true, 'iPhone Duo open, upright');
+equal(deckKeyboardFits(890, 626), false, 'iPhone Duo open, sideways');
