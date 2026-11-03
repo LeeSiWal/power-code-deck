@@ -54,6 +54,7 @@ export function useVoiceInput(language = 'ko-KR') {
   const [interimText, setInterimText] = useState('');
   const [error, setError] = useState('');
   const instanceRef = useRef<Recognition | null>(null);
+  const finalByIndexRef = useRef<Map<number, string>>(new Map());
 
   const stop = useCallback(() => {
     instanceRef.current?.stop();
@@ -62,6 +63,7 @@ export function useVoiceInput(language = 'ko-KR') {
   const reset = useCallback(() => {
     instanceRef.current?.abort();
     instanceRef.current = null;
+    finalByIndexRef.current.clear();
     setFinalText('');
     setInterimText('');
     setError('');
@@ -76,6 +78,7 @@ export function useVoiceInput(language = 'ko-KR') {
       return;
     }
     instanceRef.current?.abort();
+    finalByIndexRef.current.clear();
     const recognizer = new Constructor();
     instanceRef.current = recognizer;
     recognizer.lang = language;
@@ -86,16 +89,15 @@ export function useVoiceInput(language = 'ko-KR') {
     setError('');
     recognizer.onresult = (event) => {
       if (instanceRef.current !== recognizer) return;
-      let newlyFinal = '';
       let interim = '';
+      // Rebuild the final text from stable result indices. Browsers may resend
+      // earlier final hypotheses; appending would duplicate commands.
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i];
-        if (result.isFinal) newlyFinal += result[0]?.transcript ?? '';
+        if (result.isFinal) finalByIndexRef.current.set(i, result[0]?.transcript?.trim() ?? '');
         else interim += result[0]?.transcript ?? '';
       }
-      // Finalized results are appended once; the browser normally advances
-      // resultIndex for new results, but this adapter never submits on its own.
-      if (newlyFinal) setFinalText((prev) => [prev, newlyFinal.trim()].filter(Boolean).join(' '));
+      setFinalText([...finalByIndexRef.current.entries()].sort(([a], [b]) => a - b).map(([, text]) => text).filter(Boolean).join(' '));
       setInterimText(interim.trim());
     };
     recognizer.onerror = (event) => {
