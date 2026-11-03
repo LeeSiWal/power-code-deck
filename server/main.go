@@ -229,6 +229,27 @@ func main() {
 	// Protected API endpoints
 	api := r.PathPrefix("/api").Subrouter()
 	api.Use(auth.Middleware(authSvc))
+	// Voice identity is opt-in and requires PowerCodeDeck's own authentication.
+	// The first release is explicitly NON-EXECUTING: verification only informs
+	// the UI and never dispatches an agent turn.
+	if cfg.AuthEnabled && os.Getenv("PCD_VOICE_IDENTITY_ENABLED") == "1" {
+		endpoint := os.Getenv("PCD_SPEAKER_SIDECAR_URL")
+		if endpoint == "" {
+			endpoint = "http://127.0.0.1:18743"
+		}
+		verifier, err := services.NewLocalSpeakerVerifier(endpoint, 0.72)
+		if err != nil {
+			log.Printf("voice identity disabled: invalid local sidecar URL: %v", err)
+		} else {
+			voiceSvc := services.NewVoiceIdentityService(verifier)
+			handlers.RegisterVoiceRoutes(api, &handlers.VoiceRoutes{
+				Identity: voiceSvc,
+				AuthEnabled: cfg.AuthEnabled,
+			})
+			log.Printf("voice identity verification API enabled (non-executing; in-memory profile)")
+		}
+	}
+
 	var runWorker *orchestration.Worker
 	// Local model servers (routing.json localEndpoints), shared live by the OSS
 	// bridge and the Settings API.
