@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { api } from '../lib/api';
+import { api, apiRequest } from '../lib/api';
 import { useVoicePlayback } from '../hooks/useVoicePlayback';
 import { answerVoiceStatus, type VoiceAgentStatus } from '../lib/voiceStatus';
 import { Link, useParams } from 'react-router-dom';
 import { useVoiceInput } from '../hooks/useVoiceInput';
 import { VoiceIdentityPanel } from '../components/native/VoiceIdentityPanel';
 
-type VoiceNote = { id: number; text: string; answer?: string };
+type VoiceNote = { id: number; text: string; answer?: string; source?: string };
 
 /**
  * Separate voice conversation surface. This first stage deliberately has NO
@@ -50,8 +50,31 @@ export function VoiceModePage() {
       snapshot = summaries.find((entry) => entry.agentId === id);
       setAgentStatus(snapshot);
     } catch { /* Retain the last known snapshot, if any. */ }
-    const answer = answerVoiceStatus(text, snapshot).text;
-    setNotes((previous) => [...previous, { id: nextId, text, answer }]);
+    // A separate server-side dialogue engine is strictly read-only. If it is
+    // disabled, unreachable or fails, fall back to truthful status responses.
+    let answer = answerVoiceStatus(text, snapshot).text;
+    let source = '작업 상태';
+    try {
+      const history = notes.slice(-4).flatMap((note) => [
+        { role: 'user', content: note.text },
+        ...(note.answer ? [{ role: 'assistant', content: note.answer }] : []),
+      ]);
+      const response = await apiRequest('/voice/dialogue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: id, message: text, history }),
+      });
+      if (response.ok && (response.headers.get('content-type') || '').includes('application/json')) {
+        const payload = await response.json() as { text?: string; source?: string };
+        if (typeof payload.text === 'string' && payload.text.trim()) {
+          answer = payload.text.trim();
+          source = '로컬 AI · 읽기 전용';
+        }
+      }
+    } catch {
+      // The status-only path works without local model setup or subscription.
+    }
+    setNotes((previous) => [...previous, { id: nextId, text, answer, source }]);
     setLoadingStatus(false);
     playback.speak(answer);
     setNextId((n) => n + 1);
@@ -79,13 +102,13 @@ export function VoiceModePage() {
         <VoiceIdentityPanel />
         <p className="rounded-xl bg-deck-surface border border-deck-border px-4 py-3 text-sm">
           이 화면의 대화는 코드를 수정하지 않아. 코드나 로그는 읽어주지 않고, 작업 지시는 코딩 화면에서 따로 확인해 전송해.
-          <span className="block mt-2 text-xs text-deck-text-dim">현재는 실제 작업 상태를 바탕으로 제한된 질문에 답하는 첫 단계야. 범용 AI 음성 대화는 아직 연결되지 않았어.</span>
+          <span className="block mt-2 text-xs text-deck-text-dim">서버에 읽기 전용 로컬 AI가 설정되어 있으면 자연스럽게 대화하고, 없으면 확인된 작업 상태만 안내해. 음성 모드에서는 코드를 수정할 수 없어.</span>
         </p>
         {notes.map((note) => (
           <article key={note.id} className="ml-auto max-w-[95%] rounded-2xl bg-deck-surface border border-deck-border p-3">
             <div className="text-xs text-deck-text-dim mb-1">나 · 질문</div>
             <p className="whitespace-pre-wrap break-words text-sm">{note.text}</p>
-            {note.answer && <div className="mt-3 border-t border-deck-border pt-3 text-sm" aria-label="PowerCodeDeck 상태 응답"><span className="block text-xs text-deck-text-dim mb-1">PowerCodeDeck · 상태 안내</span>{note.answer}</div>}
+            {note.answer && <div className="mt-3 border-t border-deck-border pt-3 text-sm" aria-label="PowerCodeDeck 상태 응답"><span className="block text-xs text-deck-text-dim mb-1">PowerCodeDeck · {note.source || '상태 안내'}</span>{note.answer}</div>}
             <button type="button" onClick={() => stageCodingRequest(note.text)}
               className="mt-3 rounded-lg border border-deck-border px-3 py-2 text-xs">
               코딩 요청으로 옮기기 (실행 안 함)
