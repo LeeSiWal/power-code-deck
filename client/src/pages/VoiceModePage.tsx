@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { VoiceCodingPanel } from '../components/native/VoiceCodingPanel';
 import { api, apiRequest } from '../lib/api';
 import { useVoicePlayback } from '../hooks/useVoicePlayback';
 import { answerVoiceStatus, type VoiceAgentStatus } from '../lib/voiceStatus';
@@ -38,6 +39,9 @@ export function VoiceModePage() {
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState('');
   const [nextId, setNextId] = useState(1);
+  const [codingText, setCodingText] = useState('');
+  const onCodingSent = useCallback(() => { setCodingText(''); setDraft(''); voice.reset(); }, [voice.reset]);
+  const onCodingAnnouncement = useCallback((text: string) => { playback.speak(text); }, [playback.speak]);
 
   const addNote = async () => {
     const text = draft.trim() || voice.finalText.trim();
@@ -86,7 +90,8 @@ export function VoiceModePage() {
     // Transfer is just a reviewed draft, NEVER a send. The existing coding
     // composer and its own submit/approvals remain responsible for execution.
     sessionStorage.setItem(`pcd:voice-review:${id}`, text);
-    setNotice('코딩 화면의 입력창으로 옮겼어. 확인 후 직접 전송해 줘.');
+    setCodingText(text);
+    setNotice('개발 지시 검토 칸에 문장을 옮겼어. 실행하려면 별도로 확인해 줘.');
   };
 
   return (
@@ -99,10 +104,11 @@ export function VoiceModePage() {
         <Link to={`/agents/${id}`} className="shrink-0 rounded-lg border border-deck-border px-3 py-2 text-sm">코딩 화면</Link>
       </header>
       <section className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3" aria-label="음성 대화 기록">
+        <VoiceCodingPanel agentId={id} suggestedText={codingText || draft || voice.finalText} onSent={onCodingSent} onAnnouncement={onCodingAnnouncement} />
         <VoiceIdentityPanel />
         <p className="rounded-xl bg-deck-surface border border-deck-border px-4 py-3 text-sm">
-          이 화면의 대화는 코드를 수정하지 않아. 코드나 로그는 읽어주지 않고, 작업 지시는 코딩 화면에서 따로 확인해 전송해.
-          <span className="block mt-2 text-xs text-deck-text-dim">서버에 읽기 전용 로컬 AI가 설정되어 있으면 자연스럽게 대화하고, 없으면 확인된 작업 상태만 안내해. 음성 모드에서는 코드를 수정할 수 없어.</span>
+          일반 음성 대화는 코드를 수정하지 않아. 개발 지시는 별도 확인 버튼을 누른 경우에만 코딩 세션으로 전달해.
+          <span className="block mt-2 text-xs text-deck-text-dim">서버에 읽기 전용 로컬 AI가 설정되어 있으면 상태 질문에 답할 수 있어. 개발 지시에는 명시적인 확인과 기존 코딩 권한 승인이 적용돼.</span>
         </p>
         {notes.map((note) => (
           <article key={note.id} className="ml-auto max-w-[95%] rounded-2xl bg-deck-surface border border-deck-border p-3">
@@ -111,7 +117,7 @@ export function VoiceModePage() {
             {note.answer && <div className="mt-3 border-t border-deck-border pt-3 text-sm" aria-label="PowerCodeDeck 상태 응답"><span className="block text-xs text-deck-text-dim mb-1">PowerCodeDeck · {note.source || '상태 안내'}</span>{note.answer}</div>}
             <button type="button" onClick={() => stageCodingRequest(note.text)}
               className="mt-3 rounded-lg border border-deck-border px-3 py-2 text-xs">
-              코딩 요청으로 옮기기 (실행 안 함)
+              개발 지시 검토하기 (실행 안 함)
             </button>
           </article>
         ))}
@@ -123,7 +129,7 @@ export function VoiceModePage() {
           인식: {voice.finalText} <span className="text-deck-text-dim">{voice.interimText}</span>
         </p>}
         <textarea aria-label="음성 대화 메모" rows={2} value={draft} onChange={(e) => setDraft(e.target.value)}
-          placeholder="말하거나 텍스트를 입력해 대화 메모를 남길 수 있어."
+          placeholder="말하거나 텍스트를 입력해 질문하거나 개발 지시를 검토할 수 있어."
           className="w-full resize-none rounded-lg border border-deck-border bg-deck-bg p-3 text-base" />
         <div className="flex flex-wrap items-center gap-3">
           {playback.supported && <button type="button" aria-pressed={playback.enabled} onClick={playback.speaking ? playback.stop : playback.toggle} className="min-h-12 px-3 rounded-lg border border-deck-border text-sm">{playback.speaking ? '읽기 중지' : playback.enabled ? '🔊 음성 응답 켜짐' : '🔇 음성 응답 꺼짐'}</button>}
