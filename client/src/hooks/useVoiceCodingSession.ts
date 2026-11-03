@@ -67,6 +67,9 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
   const lastAnnouncedRef = useRef(-1);
   const bootstrappedRef = useRef(false);
   const eventsRef = useRef<StreamEvent[]>([]);
+  // Keep local delivery and session ownership fail-closed across reconnects.
+  const sendingRef = useRef(false);
+  const evictedRef = useRef(false);
 
   useEffect(() => {
     if (!enabled || !agentId) return;
@@ -82,6 +85,7 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
       eventsRef.current = incoming;
       setEvents(incoming);
       lastAnnouncedRef.current = lastResultIndex(incoming);
+      sendingRef.current = false;
       setSubmitting(false);
       setProgress(isTurnActive(incoming) ? '진행 중인 작업에 다시 연결했어.' : '세션 기록을 동기화했어.');
       bootstrappedRef.current = true;
@@ -94,6 +98,7 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
       eventsRef.current = next;
       setEvents(next);
       if (event.type === 'user') {
+        sendingRef.current = false;
         setSubmitting(false);
         setProgress('에이전트가 요청을 받아 처리 중이야.');
       }
@@ -101,6 +106,7 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
         setProgress('에이전트가 개발 도구를 실행하고 있어. 상세 내용은 코딩 화면에서 확인해 줘.');
       }
       if (event.type === 'result') {
+        sendingRef.current = false;
         setSubmitting(false);
         const at = next.length - 1;
         if (at > lastAnnouncedRef.current) {
@@ -132,12 +138,16 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
     });
     const offError = agentDeckWS.on('native:error', (payload: any) => {
       if (active && payload.agentId === agentId) {
+        sendingRef.current = false;
         setSubmitting(false);
         setError(payload.message || '에이전트 연결 오류');
       }
     });
     const offEvicted = agentDeckWS.on('native:evicted', (payload: any) => {
       if (active && payload.agentId === agentId) {
+        evictedRef.current = true;
+        sendingRef.current = false;
+        bootstrappedRef.current = false;
         setConnected(false);
         setSubmitting(false);
         setError('다른 기기에서 세션이 열렸어. 이 화면을 새로고침해 다시 연결해 줘.');
@@ -145,6 +155,7 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
     });
     const offClose = agentDeckWS.on('close', () => {
       if (active) {
+        sendingRef.current = false;
         setConnected(false);
         setSubmitting(false);
         bootstrappedRef.current = false;
@@ -153,7 +164,9 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
     const offOpen = agentDeckWS.on('open', () => {
       bootstrappedRef.current = false;
       setConnected(false);
-      open();
+      // A dropped connection must not steal a native session explicitly moved
+      // to another device; only a fresh user-initiated page load can reclaim it.
+      if (!evictedRef.current) open();
     });
     open();
     return () => {
@@ -171,12 +184,14 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
   const busy = useMemo(() => isTurnActive(events), [events]);
   const sendTask = useCallback((text: string) => {
     if (!enabled || !connected || !agentDeckWS.connected || !providerRef.current || !text.trim()) return false;
-    if (pendingApprovals.length || submitting || isTurnActive(eventsRef.current)) return false;
+    if (evictedRef.current || sendingRef.current || pendingApprovals.length || submitting || isTurnActive(eventsRef.current)) return false;
     setError('');
     setLastAnnouncement('');
     setLastResult(null);
     setProgress('요청을 전송했어. 에이전트 수신을 확인 중이야.');
+    sendingRef.current = true;
     if (!agentDeckWS.sendIfConnected('native:input', { agentId, text: text.trim() })) {
+      sendingRef.current = false;
       setError('서버 연결이 끊겨 요청을 보내지 않았어. 연결을 확인한 뒤 다시 승인해 줘.');
       setProgress('명령을 전송하지 않았어.');
       return false;
