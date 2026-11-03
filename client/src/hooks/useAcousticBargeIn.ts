@@ -80,18 +80,40 @@ export function useAcousticBargeIn(onSpeech: () => void) {
       const samples = new Float32Array(analyser.fftSize);
       let elevatedSince = 0;
       let lastTrip = 0;
+      let baseline = 0.012;
+      let previousSpeaking = false;
+      let speakingSince = 0;
       const frame = (time: number) => {
         if (streamRef.current !== stream) return;
         analyser.getFloatTimeDomainData(samples);
         let sum = 0;
-        for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+        let crossings = 0;
+        for (let i = 0; i < samples.length; i++) {
+          sum += samples[i] * samples[i];
+          if (i && ((samples[i] >= 0) !== (samples[i - 1] >= 0))) crossings++;
+        }
         const rms = Math.sqrt(sum / samples.length);
-        // Conservative gate: sustained energy, not momentary clicks. This
-        // cannot conclusively discriminate the user's voice from loud TTS.
-        if (detectingRef.current && !trippedRef.current && time - lastTrip > 1000) {
-          if (rms > 0.075) {
+        // Acoustic-energy heuristic only: dynamic background threshold and
+        // voice-range zero crossing gate reduce brief clicks/hiss; they cannot
+        // reliably separate TTS echo from a live speaker's voice.
+        const crossingHz = crossings * context.sampleRate / (2 * samples.length);
+        const voiceLike = crossingHz >= 70 && crossingHz <= 3600;
+        const speaking = detectingRef.current && !trippedRef.current;
+        if (speaking && !previousSpeaking) {
+          speakingSince = time;
+          elevatedSince = 0;
+        }
+        previousSpeaking = speaking;
+        // Avoid triggering on the initial TTS transient. Learn quiet noise
+        // levels instead of assuming identical input gain on iPad/headsets.
+        const threshold = Math.max(0.045, Math.min(0.18, baseline * 3.2));
+        if (!speaking || rms < threshold) {
+          baseline = Math.min(0.1, baseline * 0.99 + rms * 0.01);
+        }
+        if (speaking && time - speakingSince > 500 && time - lastTrip > 1200 && voiceLike) {
+          if (rms > threshold) {
             if (!elevatedSince) elevatedSince = time;
-            if (time - elevatedSince > 270) {
+            if (time - elevatedSince >= 360) {
               lastTrip = time;
               trippedRef.current = true;
               detectingRef.current = false;
