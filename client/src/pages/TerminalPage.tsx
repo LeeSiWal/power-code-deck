@@ -418,6 +418,9 @@ export function TerminalPage() {
           {AgentIcon && <AgentIcon size={18} />}
           <span className="font-medium text-sm truncate flex-1">{agent.name}</span>
           <StatusBadge status={agent.preset === 'auto' ? 'auto' : agent.status} />
+          {usesNative(agent) && agent.preset !== 'auto' && (
+            <Link to={`/agents/${agentId}/voice`} title="별도 음성 대화 화면" className="shrink-0 text-xs px-2 py-2 rounded-lg border border-deck-border">🎙 음성</Link>
+          )}
           {/* Full reload — iOS standalone PWA has no browser refresh, so a wedged
               session would otherwise be unrecoverable without deleting the app. */}
           <button
@@ -682,6 +685,10 @@ export function TerminalPage() {
         >
           <span className="inline-flex items-center gap-1"><IconHistory size={13} /> 세션 기록</span>
         </button>}
+
+        {usesNative(agent) && agent.preset !== 'auto' && (
+          <Link to={`/agents/${agentId}/voice`} className="text-xs px-2 py-1 rounded border border-deck-border" title="코딩과 분리된 음성 대화 화면">🎙 음성 모드</Link>
+        )}
 
         {handoffEnabled && (
           <button
