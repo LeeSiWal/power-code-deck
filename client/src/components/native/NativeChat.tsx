@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useVoiceInput } from '../../hooks/useVoiceInput';
+import { useVoicePlayback } from '../../hooks/useVoicePlayback';
 import { agentDeckWS } from '../../lib/ws';
 import { api, type AutoUsage, type DelegateJob, type FreshJob, type RouteTurnResult } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
@@ -116,6 +117,8 @@ const MODES: { id: string; label: string; desc: string; icon: React.ComponentTyp
 
 export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted = false, onAgentChange, keyboard }: NativeChatProps) {
   const voice = useVoiceInput('ko-KR');
+  const playback = useVoicePlayback();
+  const spokenResultIndexRef = useRef(-1);
   const navigate = useNavigate(); // /clear swaps to a freshly created session
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pending, setPending] = useState<PendingApproval[]>([]);
@@ -338,6 +341,18 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
 
   const items = useMemo(() => foldEvents(events), [events]);
 
+  // Only speak a newly completed turn, never a history replay. The marker is
+  // advanced on native:history and on every result, even while speech is muted.
+  useEffect(() => {
+    const resultIndex = events.findLastIndex((event) => event.type === 'result');
+    if (resultIndex <= spokenResultIndexRef.current) return;
+    spokenResultIndexRef.current = resultIndex;
+    if (!playback.enabled) return;
+    const latestUserIndex = items.findLastIndex((item) => item.kind === 'user');
+    const reply = items.slice(latestUserIndex + 1).filter((item) => item.kind === 'assistant' && !item.subagent).at(-1);
+    if (reply?.kind === 'assistant' && !reply.streaming) playback.speak(reply.text);
+  }, [events, items, playback.enabled, playback.speak]);
+
   // Everything you've sent, oldest first — the composer's ↑ history. Derived from
   // the conversation rather than tracked separately, so it is already correct after
   // a reconnect or a resume (the server's history is the source of truth).
@@ -401,6 +416,8 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
     // events ARE the state, so reconnecting just means folding them again.
     const offHistory = agentDeckWS.on('native:history', (p: any) => {
       if (p.agentId !== agentId) return;
+      // History is already seen, not a new reply to read aloud.
+      spokenResultIndexRef.current = (p.events as StreamEvent[]).findLastIndex((event) => event.type === 'result');
       setEvents(p.events as StreamEvent[]);
       setRunning(!!p.running);
       const first = pendingStartRef.current;
@@ -1176,7 +1193,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
               <ChatDeckToggle keyboard={keyboard} />
               <button
                 type="button"
-                onClick={() => voice.state === 'listening' ? voice.stop() : voice.start()}
+                onClick={() => { playback.stop(); voice.state === 'listening' ? voice.stop() : voice.start(); }}
                 disabled={!voice.supported}
                 aria-label={voice.state === 'listening' ? '음성 인식 중지' : '음성으로 메시지 입력'}
                 aria-pressed={voice.state === 'listening'}
@@ -1185,6 +1202,16 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
               >
                 {voice.state === 'listening' ? '■' : '🎙'}
               </button>
+              {playback.supported && (
+                <button
+                  type="button"
+                  onClick={playback.speaking ? playback.stop : playback.toggle}
+                  aria-label={playback.speaking ? '음성 응답 정지' : playback.enabled ? '음성 응답 끄기' : '음성 응답 켜기'}
+                  aria-pressed={playback.enabled}
+                  title={playback.speaking ? '읽기 중지' : playback.enabled ? 'AI 답변 음성 읽기 사용 중' : 'AI 답변 음성 읽기 켜기'}
+                  className="shrink-0 min-w-11 min-h-11 rounded-lg border border-deck-border bg-deck-surface text-deck-text-dim"
+                >{playback.speaking ? '■' : playback.enabled ? '🔊' : '🔇'}</button>
+              )}
               <button
                 onClick={() => setMenu(menu === 'add' ? null : 'add')}
                 disabled={uploading}
