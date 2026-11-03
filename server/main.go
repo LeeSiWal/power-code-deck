@@ -250,6 +250,22 @@ func main() {
 		}
 	}
 
+
+	// Separate read-only voice dialogue: a local model sees only the current
+	// Control Room summary, never source files or executable tools. Disabled by
+	// default and not dependent on either Claude Code or Codex installation.
+	if cfg.AuthEnabled && os.Getenv("PCD_VOICE_DIALOGUE_ENABLED") == "1" {
+		endpoint := os.Getenv("PCD_VOICE_DIALOGUE_URL")
+		if endpoint == "" { endpoint = "http://127.0.0.1:11434" }
+		model := os.Getenv("PCD_VOICE_DIALOGUE_MODEL")
+		dialogue, err := handlers.NewVoiceDialogue(controlRoom, endpoint, model)
+		if err != nil {
+			log.Printf("voice dialogue disabled: %v", err)
+		} else {
+			handlers.RegisterVoiceDialogueRoutes(api, dialogue)
+			log.Printf("read-only voice dialogue enabled (no agent tools or source code access)")
+		}
+	}
 	var runWorker *orchestration.Worker
 	// Local model servers (routing.json localEndpoints), shared live by the OSS
 	// bridge and the Settings API.
