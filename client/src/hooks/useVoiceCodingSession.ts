@@ -30,9 +30,22 @@ export function summarizeNativeTurn(events: StreamEvent[], provider: NativeProvi
   if (result.is_error) return `${name} 작업이 오류로 종료됐어. 자세한 내용은 코딩 화면에서 확인해 줘.`;
   if (denied > 0) return `${name} 작업에서 권한 요청 ${denied}건이 거부됐어. 코딩 화면을 확인해 줘.`;
   if (failed > 0) return `${name} 작업이 끝났지만 실패한 도구 실행이 ${failed}건 있어. 코딩 화면에서 결과를 확인해 줘.`;
+
+  // Tool *attempts* can be described without reading source files, paths,
+  // commands, raw logs, private prompts or model assertions. Completion of
+  // an agent turn does not prove that a test passed or a change was applied.
+  const names = new Set(toolCalls.map((item) => item.kind === 'tool' ? item.name : ''));
+  const changedFiles = ['Edit', 'Write', 'MultiEdit', 'apply_patch', 'file_edit'].some((n) => names.has(n));
+  const executedCommands = ['Bash', 'functions.shell', 'functions.command', 'shell_command', 'command'].some((n) => names.has(n));
+  const inspectedFiles = ['Read', 'Glob', 'Grep', 'LS', 'search'].some((n) => names.has(n));
+  const actions = [
+    changedFiles ? '파일 수정 도구 사용이 기록됐어.' : '',
+    executedCommands ? '명령 실행 기록이 있어.' : '',
+    inspectedFiles ? '파일 조회나 검색을 수행했어.' : '',
+  ].filter(Boolean).join(' ');
   return toolCalls.length
-    ? `${name} 작업이 끝났어. 도구 작업 ${toolCalls.length}건이 기록됐어. 변경 내용과 테스트 결과는 코딩 화면에서 확인해 줘.`
-    : `${name} 답변이 완료됐어. 자세한 내용은 코딩 화면에서 확인할 수 있어.`;
+    ? `${name}의 이번 응답은 종료됐어. ${actions || `도구 호출 ${toolCalls.length}건이 기록됐어.`} 실제 변경 내용과 테스트 통과 여부는 코딩 화면에서 확인해 줘.`
+    : `${name}의 답변이 완료됐어. 실제 변경이나 테스트 성공이 확인된 것은 아니야. 자세한 내용은 코딩 화면에서 확인해 줘.`;
 }
 
 /**
