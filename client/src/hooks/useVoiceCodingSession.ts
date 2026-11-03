@@ -45,6 +45,7 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [provider, setProvider] = useState<NativeProvider | null>(null);
   const [connected, setConnected] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [error, setError] = useState('');
   const [lastAnnouncement, setLastAnnouncement] = useState('');
@@ -66,6 +67,7 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
       eventsRef.current = incoming;
       setEvents(incoming);
       lastAnnouncedRef.current = lastResultIndex(incoming);
+      setSubmitting(false);
       bootstrappedRef.current = true;
       setConnected(true);
     });
@@ -75,7 +77,9 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
       const next = [...eventsRef.current, event];
       eventsRef.current = next;
       setEvents(next);
+      if (event.type === 'user') setSubmitting(false);
       if (event.type === 'result') {
+        setSubmitting(false);
         const at = next.length - 1;
         if (at > lastAnnouncedRef.current) {
           lastAnnouncedRef.current = at;
@@ -96,12 +100,23 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
       }
     });
     const offError = agentDeckWS.on('native:error', (payload: any) => {
-      if (active && payload.agentId === agentId) setError(payload.message || '에이전트 연결 오류');
+      if (active && payload.agentId === agentId) {
+        setSubmitting(false);
+        setError(payload.message || '에이전트 연결 오류');
+      }
     });
     const offEvicted = agentDeckWS.on('native:evicted', (payload: any) => {
       if (active && payload.agentId === agentId) {
         setConnected(false);
+        setSubmitting(false);
         setError('다른 기기에서 세션이 열렸어. 이 화면을 새로고침해 다시 연결해 줘.');
+      }
+    });
+    const offClose = agentDeckWS.on('close', () => {
+      if (active) {
+        setConnected(false);
+        setSubmitting(false);
+        bootstrappedRef.current = false;
       }
     });
     const offOpen = agentDeckWS.on('open', () => {
@@ -112,7 +127,7 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
     open();
     return () => {
       active = false;
-      offHistory(); offEvent(); offApproval(); offState(); offError(); offEvicted(); offOpen();
+      offHistory(); offEvent(); offApproval(); offState(); offError(); offEvicted(); offClose(); offOpen();
     };
   }, [agentId, enabled]);
 
@@ -124,13 +139,14 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
 
   const busy = useMemo(() => isTurnActive(events), [events]);
   const sendTask = useCallback((text: string) => {
-    if (!enabled || !connected || !providerRef.current || !text.trim()) return false;
-    if (pendingApprovals.length) return false;
+    if (!enabled || !connected || !agentDeckWS.connected || !providerRef.current || !text.trim()) return false;
+    if (pendingApprovals.length || submitting || isTurnActive(eventsRef.current)) return false;
     setError('');
     setLastAnnouncement('');
+    setSubmitting(true);
     agentDeckWS.send('native:input', { agentId, text: text.trim() });
     return true;
-  }, [agentId, enabled, connected, pendingApprovals.length]);
+  }, [agentId, enabled, connected, pendingApprovals.length, submitting]);
 
   const interrupt = useCallback(() => {
     if (!enabled || !connected || !busy) return;
@@ -138,7 +154,7 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
   }, [agentId, enabled, connected, busy]);
 
   return {
-    provider, configureProvider, connected, busy, pendingApprovals,
+    provider, configureProvider, connected, busy, submitting, pendingApprovals,
     error, lastAnnouncement, sendTask, interrupt,
   };
 }
