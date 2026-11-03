@@ -4,6 +4,7 @@ import { useVoicePlayback } from '../hooks/useVoicePlayback';
 import { answerVoiceStatus, type VoiceAgentStatus } from '../lib/voiceStatus';
 import { Link, useParams } from 'react-router-dom';
 import { useVoiceInput } from '../hooks/useVoiceInput';
+import { VoiceIdentityPanel } from '../components/native/VoiceIdentityPanel';
 
 type VoiceNote = { id: number; text: string; answer?: string };
 
@@ -75,6 +76,7 @@ export function VoiceModePage() {
         <Link to={`/agents/${id}`} className="shrink-0 rounded-lg border border-deck-border px-3 py-2 text-sm">코딩 화면</Link>
       </header>
       <section className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3" aria-label="음성 대화 기록">
+        <VoiceIdentityPanel />
         <p className="rounded-xl bg-deck-surface border border-deck-border px-4 py-3 text-sm">
           이 화면의 대화는 코드를 수정하지 않아. 코드나 로그는 읽어주지 않고, 작업 지시는 코딩 화면에서 따로 확인해 전송해.
           <span className="block mt-2 text-xs text-deck-text-dim">현재는 실제 작업 상태를 바탕으로 제한된 질문에 답하는 첫 단계야. 범용 AI 음성 대화는 아직 연결되지 않았어.</span>
