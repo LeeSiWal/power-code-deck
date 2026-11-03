@@ -163,14 +163,20 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
     setLastAnnouncement('');
     setLastResult(null);
     setProgress('요청을 전송했어. 에이전트 수신을 확인 중이야.');
+    if (!agentDeckWS.sendIfConnected('native:input', { agentId, text: text.trim() })) {
+      setError('서버 연결이 끊겨 요청을 보내지 않았어. 연결을 확인한 뒤 다시 승인해 줘.');
+      setProgress('명령을 전송하지 않았어.');
+      return false;
+    }
     setSubmitting(true);
-    agentDeckWS.send('native:input', { agentId, text: text.trim() });
     return true;
   }, [agentId, enabled, connected, pendingApprovals.length, submitting]);
 
   const interrupt = useCallback(() => {
     if (!enabled || !connected || !busy) return;
-    agentDeckWS.send('native:interrupt', { agentId });
+    if (!agentDeckWS.sendIfConnected('native:interrupt', { agentId })) {
+      setError('연결이 끊겨 중단 요청을 전달하지 못했어. 코딩 화면에서 실행 상태를 확인해 줘.');
+    }
   }, [agentId, enabled, connected, busy]);
 
   return {
