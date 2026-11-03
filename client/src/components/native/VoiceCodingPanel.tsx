@@ -27,6 +27,7 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
   const [candidate, setCandidate] = useState('');
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [sentPending, setSentPending] = useState(false);
   const session = useVoiceCodingSession(agentId, provider !== null);
 
   useEffect(() => {
@@ -48,6 +49,7 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
 
   useEffect(() => {
     if (!session.lastAnnouncement) return;
+    setSentPending(false);
     setFeedback(session.lastAnnouncement);
     onAnnouncement(session.lastAnnouncement);
   }, [session.lastAnnouncement, onAnnouncement]);
@@ -67,7 +69,8 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
     }
     setAwaitingConfirmation(false);
     setCandidate('');
-    setFeedback('개발 지시를 에이전트에 전달했어. 실제 작업 결과는 코딩 화면에서 확인할 수 있어.');
+    setSentPending(true);
+    setFeedback('전송을 요청했어. 에이전트의 실제 수신 및 실행 상태를 확인해 줘.');
     onSent();
   };
 
@@ -113,6 +116,7 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
           <a href={`/agents/${encodeURIComponent(agentId)}`} className="underline ml-1">코딩 화면에서 확인</a>
         </p>
       )}
+      {sentPending && session.busy && <p role="status" className="text-xs">에이전트가 작업을 수행 중이야.</p>}
       {session.busy && <button type="button" onClick={session.interrupt}
         className="min-h-11 rounded-lg border border-deck-border px-3 text-sm">진행 중인 개발 작업 중단</button>}
       {session.error && <p role="alert" className="text-xs text-red-400">{session.error}</p>}
