@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useVoiceInput } from '../../hooks/useVoiceInput';
 import { agentDeckWS } from '../../lib/ws';
 import { api, type AutoUsage, type DelegateJob, type FreshJob, type RouteTurnResult } from '../../lib/api';
 import { foldEvents, isTurnActive, toolSummary, type AskQuestion, type ChatItem, type StreamEvent } from '../../lib/nativeEvents';
@@ -114,6 +115,7 @@ const MODES: { id: string; label: string; desc: string; icon: React.ComponentTyp
 ];
 
 export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted = false, onAgentChange, keyboard }: NativeChatProps) {
+  const voice = useVoiceInput('ko-KR');
   const navigate = useNavigate(); // /clear swaps to a freshly created session
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pending, setPending] = useState<PendingApproval[]>([]);
@@ -1051,6 +1053,19 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
 
         <div className="p-2 space-y-2">
           <input ref={fileRef} type="file" multiple className="hidden" onChange={onFilePick} />
+          {(voice.state === 'listening' || voice.finalText || voice.interimText || voice.error) && (
+            <div className="rounded-lg border border-deck-border bg-deck-surface px-3 py-2 text-sm" role="status" aria-live="polite">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-deck-text-dim text-xs">{voice.state === 'listening' ? '● 음성 인식 중 · 말해 주세요' : '음성 인식 결과 · 전송 전 확인'}</span>
+                <button type="button" onClick={voice.reset} className="min-h-9 px-2 rounded text-deck-text-dim text-xs" aria-label="음성 인식 초기화">지우기</button>
+              </div>
+              {voice.error && <p className="text-xs text-red-400 mt-1" role="alert">{voice.error}</p>}
+              {(voice.finalText || voice.interimText) && <p className="mt-1 whitespace-pre-wrap break-words text-deck-text">{voice.finalText} <span className="text-deck-text-dim">{voice.interimText}</span></p>}
+              {voice.finalText && voice.state !== 'listening' && (
+                <button type="button" onClick={() => { setDraft((prev) => [prev.trim(), voice.finalText.trim()].filter(Boolean).join(' ')); voice.reset(); taRef.current?.focus(); }} className="mt-2 min-h-10 px-3 rounded-lg border border-deck-accent text-deck-text text-sm">입력창에 넣기 · 확인 후 보내기</button>
+              )}
+            </div>
+          )}
           <textarea
             ref={taRef}
             value={draft}
@@ -1159,6 +1174,17 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
                 in one non-wrapping row they were pushed out past the edge. */}
             <div className="flex-1 min-w-0 flex items-center gap-2 overflow-x-auto overscroll-x-contain [scrollbar-width:none]">
               <ChatDeckToggle keyboard={keyboard} />
+              <button
+                type="button"
+                onClick={() => voice.state === 'listening' ? voice.stop() : voice.start()}
+                disabled={!voice.supported}
+                aria-label={voice.state === 'listening' ? '음성 인식 중지' : '음성으로 메시지 입력'}
+                aria-pressed={voice.state === 'listening'}
+                title={voice.supported ? '음성으로 메시지 입력 · 텍스트 확인 후 전송' : '이 브라우저는 음성 인식을 지원하지 않습니다'}
+                className={`shrink-0 min-w-11 min-h-11 rounded-lg border flex items-center justify-center text-base ${voice.state === 'listening' ? 'border-red-400 text-red-300 bg-red-400/10' : 'bg-deck-surface border-deck-border text-deck-text-dim'} disabled:opacity-40`}
+              >
+                {voice.state === 'listening' ? '■' : '🎙'}
+              </button>
               <button
                 onClick={() => setMenu(menu === 'add' ? null : 'add')}
                 disabled={uploading}
