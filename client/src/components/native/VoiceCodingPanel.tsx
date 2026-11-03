@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { useVoiceCodingSession } from '../../hooks/useVoiceCodingSession';
 
@@ -28,6 +28,8 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [sentPending, setSentPending] = useState(false);
+  const onAnnouncementRef = useRef(onAnnouncement);
+  useEffect(() => { onAnnouncementRef.current = onAnnouncement; }, [onAnnouncement]);
   const session = useVoiceCodingSession(agentId, provider !== null);
 
   useEffect(() => {
@@ -51,8 +53,8 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
     if (!session.lastAnnouncement) return;
     setSentPending(false);
     setFeedback(session.lastAnnouncement);
-    onAnnouncement(session.lastAnnouncement);
-  }, [session.lastAnnouncement, onAnnouncement]);
+    onAnnouncementRef.current(session.lastAnnouncement);
+  }, [session.lastAnnouncement]);
 
   const prepare = () => {
     const text = suggestedText.trim();
