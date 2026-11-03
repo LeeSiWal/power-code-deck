@@ -18,10 +18,12 @@ export function useAcousticBargeIn(onSpeech: () => void) {
   const frameRef = useRef<number | null>(null);
   const [active, setActive] = useState(false);
   const [error, setError] = useState('');
+  const generationRef = useRef(0);
   const detectingRef = useRef(false);
   const trippedRef = useRef(false);
 
   const stop = useCallback(() => {
+    generationRef.current += 1;
     detectingRef.current = false;
     trippedRef.current = false;
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
@@ -36,6 +38,7 @@ export function useAcousticBargeIn(onSpeech: () => void) {
 
   const start = useCallback(async () => {
     stop();
+    const generation = generationRef.current;
     setError('');
     if (!navigator.mediaDevices?.getUserMedia) {
       setError('브라우저가 동시 마이크 감지를 지원하지 않아. 응답 중단 버튼을 이용해 줘.');
@@ -46,6 +49,10 @@ export function useAcousticBargeIn(onSpeech: () => void) {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
+      if (generation !== generationRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return false;
+      }
       const AudioContextClass = window.AudioContext;
       if (!AudioContextClass) {
         stream.getTracks().forEach((track) => track.stop());
@@ -65,6 +72,11 @@ export function useAcousticBargeIn(onSpeech: () => void) {
       highpass.connect(analyser);
       // Never connect the live mic to speakers, to avoid feedback.
       await context.resume();
+      if (generation !== generationRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        if (context.state !== 'closed') await context.close().catch(() => {});
+        return false;
+      }
       const samples = new Float32Array(analyser.fftSize);
       let elevatedSince = 0;
       let lastTrip = 0;
@@ -98,6 +110,7 @@ export function useAcousticBargeIn(onSpeech: () => void) {
       setActive(true);
       return true;
     } catch (err) {
+      if (generation !== generationRef.current) return false;
       stop();
       setError(err instanceof Error ? `마이크 상시 감지를 시작하지 못했어: ${err.message}` : '마이크 접근이 거부됐어.');
       return false;
