@@ -64,7 +64,7 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
   const confirm = () => {
     if (!awaitingConfirmation || !candidate.trim()) return;
     if (!session.sendTask(candidate)) {
-      setFeedback('작업을 전달하지 못했어. 연결 상태와 승인 대기 여부를 확인해 줘.');
+      setFeedback('현재 작업 중이거나 연결되지 않았어. 기존 작업 완료와 승인 대기 상태를 확인해 줘.');
       return;
     }
     setAwaitingConfirmation(false);
@@ -91,7 +91,7 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
         <p className="text-xs" role="status">이 세션은 직접 제어할 수 있는 Claude Code 또는 Codex 세션이 아니야. 코딩 화면에서 해당 에이전트를 선택해 줘.</p>
       )}
       {provider && !awaitingConfirmation && (
-        <button type="button" onClick={prepare} disabled={!session.connected || !suggestedText.trim()}
+        <button type="button" onClick={prepare} disabled={!session.connected || session.busy || session.submitting || !suggestedText.trim()}
           className="min-h-11 rounded-lg border border-deck-border px-3 text-sm disabled:opacity-40">
           현재 문장을 개발 지시로 검토하기
         </button>
@@ -103,7 +103,7 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
             rows={3} className="w-full rounded-lg border border-deck-border bg-deck-bg p-3 text-base resize-y" />
           <p className="text-xs text-deck-text-dim">다음 단계에서 {name}가 실제 코드를 수정할 수 있어. 위험한 도구 실행에는 기존 권한 승인이 필요해.</p>
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={confirm} disabled={!session.connected || !candidate.trim() || session.pendingApprovals.length > 0}
+            <button type="button" onClick={confirm} disabled={!session.connected || session.busy || session.submitting || !candidate.trim() || session.pendingApprovals.length > 0}
               className="min-h-11 rounded-lg border border-deck-accent px-3 text-sm disabled:opacity-40">확인하고 개발 지시 실행</button>
             <button type="button" onClick={() => setAwaitingConfirmation(false)}
               className="min-h-11 rounded-lg border border-deck-border px-3 text-sm">취소</button>
@@ -116,6 +116,7 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
           <a href={`/agents/${encodeURIComponent(agentId)}`} className="underline ml-1">코딩 화면에서 확인</a>
         </p>
       )}
+      {sentPending && session.submitting && <p role="status" className="text-xs">에이전트의 작업 수신을 확인 중이야.</p>}
       {sentPending && session.busy && <p role="status" className="text-xs">에이전트가 작업을 수행 중이야.</p>}
       {session.busy && <button type="button" onClick={session.interrupt}
         className="min-h-11 rounded-lg border border-deck-border px-3 text-sm">진행 중인 개발 작업 중단</button>}
