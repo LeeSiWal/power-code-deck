@@ -53,6 +53,14 @@ func NewVoiceIdentityService(verifier SpeakerVerifier) *VoiceIdentityService {
 	}
 }
 
+// Enrolled reports whether a temporary profile is present. Persistence is not
+// implemented; a restart clears it and voice protection becomes unavailable.
+func (s *VoiceIdentityService) Enrolled() bool {
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ return len(s.template)>0
+}
+
 func (s *VoiceIdentityService) Enabled() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
