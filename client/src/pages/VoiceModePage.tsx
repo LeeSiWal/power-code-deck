@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { VoiceCodingPanel } from '../components/native/VoiceCodingPanel';
 import { api, apiRequest } from '../lib/api';
 import { useVoicePlayback } from '../hooks/useVoicePlayback';
@@ -41,10 +41,13 @@ export function VoiceModePage() {
   const [notice, setNotice] = useState('');
   const [nextId, setNextId] = useState(1);
   const [conversationPhase, setConversationPhase] = useState<ConversationPhase>('off');
-  const lastAutoTranscript = useRef('');
   const [codingText, setCodingText] = useState('');
   const onCodingSent = useCallback(() => { setCodingText(''); setDraft(''); voice.reset(); }, [voice.reset]);
-  const onCodingAnnouncement = useCallback((text: string) => { playback.speak(text); }, [playback.speak]);
+  const onCodingAnnouncement = useCallback((text: string) => {
+    if (conversationPhase === 'listening') voice.reset();
+    const spoken = playback.speak(text);
+    if (conversationPhase !== 'off' && spoken) setConversationPhase('speaking');
+  }, [conversationPhase, voice.reset, playback.speak]);
 
   const addNote = async (spokenText?: string) => {
     const text = spokenText?.trim() || draft.trim() || voice.finalText.trim();
@@ -105,7 +108,6 @@ export function VoiceModePage() {
       return;
     }
     if (playback.supported && !playback.enabled) playback.toggle();
-    lastAutoTranscript.current = '';
     setDraft('');
     setConversationPhase('listening');
   };
@@ -125,12 +127,11 @@ export function VoiceModePage() {
   useEffect(() => {
     if (conversationPhase !== 'listening' || loadingStatus) return;
     const transcript = voice.finalText.trim();
-    if (!transcript || voice.interimText.trim() || transcript === lastAutoTranscript.current) return;
+    if (!transcript || voice.interimText.trim()) return;
     // Allow a natural pause for the end of the utterance. Resetting recognition
     // after consumption prevents a transcript from being submitted twice.
     const timeout = window.setTimeout(() => {
       if (conversationPhase !== 'listening') return;
-      lastAutoTranscript.current = transcript;
       setConversationPhase('processing');
       voice.reset();
       void addNote(transcript);
