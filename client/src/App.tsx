@@ -10,6 +10,7 @@ import { ProjectSelectPage } from './pages/ProjectSelectPage';
 import { AgentLauncherPage } from './pages/AgentLauncherPage';
 import { ControlRoomPage } from './pages/ControlRoomPage';
 import { TerminalPage } from './pages/TerminalPage';
+import { VoiceModePage } from './pages/VoiceModePage';
 import { LogsPage } from './pages/LogsPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -180,6 +181,7 @@ export default function App() {
             <Route path="/launch" element={<AgentLauncherPage />} />
             <Route path="/launch/:encodedPath" element={<AgentLauncherPage />} />
             <Route path="/agents/:id" element={<TerminalPage />} />
+            <Route path="/agents/:id/voice" element={<VoiceModePage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
