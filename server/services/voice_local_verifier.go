@@ -105,3 +105,24 @@ func (v *LocalSpeakerVerifier) Match(ctx context.Context, template, sample []byt
 	for i := range stored { similarity += stored[i] * current[i] }
 	return similarity >= v.threshold, nil
 }
+
+
+// VoiceTranscriber extracts text from the same audio that passed verification.
+// The browser must not supply substitute command text after identity checking.
+type VoiceTranscriber interface {
+ Transcribe(ctx context.Context, wav []byte) (string, error)
+}
+
+func (v *LocalSpeakerVerifier) Transcribe(ctx context.Context, wav []byte) (string, error) {
+ if len(wav)<44 || len(wav)>4*1024*1024 {return "",ErrVoiceMismatch}
+ req,err:=http.NewRequestWithContext(ctx,http.MethodPost,v.endpoint+"/transcribe",bytes.NewReader(wav))
+ if err!=nil{return "",err}
+ req.Header.Set("Content-Type","audio/wav")
+ resp,err:=v.client.Do(req)
+ if err!=nil{return "",fmt.Errorf("%w: %v",ErrVoiceUnavailable,err)}
+ defer resp.Body.Close()
+ if resp.StatusCode!=http.StatusOK{return "",ErrVoiceUnavailable}
+ var result struct{Text string `json:"text"`}
+ if err:=json.NewDecoder(http.MaxBytesReader(nil,resp.Body,16*1024)).Decode(&result);err!=nil{return "",ErrVoiceUnavailable}
+ return result.Text,nil
+}
