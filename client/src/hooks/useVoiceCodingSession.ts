@@ -49,6 +49,8 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [error, setError] = useState('');
   const [lastAnnouncement, setLastAnnouncement] = useState('');
+  const [progress, setProgress] = useState('');
+  const [lastResult, setLastResult] = useState<{ tools: number; failed: number; denied: number; error: boolean } | null>(null);
   const lastAnnouncedRef = useRef(-1);
   const bootstrappedRef = useRef(false);
   const eventsRef = useRef<StreamEvent[]>([]);
@@ -68,6 +70,7 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
       setEvents(incoming);
       lastAnnouncedRef.current = lastResultIndex(incoming);
       setSubmitting(false);
+      setProgress(isTurnActive(incoming) ? '진행 중인 작업에 다시 연결했어.' : '세션 기록을 동기화했어.');
       bootstrappedRef.current = true;
       setConnected(true);
     });
@@ -77,14 +80,27 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
       const next = [...eventsRef.current, event];
       eventsRef.current = next;
       setEvents(next);
-      if (event.type === 'user') setSubmitting(false);
+      if (event.type === 'user') {
+        setSubmitting(false);
+        setProgress('에이전트가 요청을 받아 처리 중이야.');
+      }
+      if (event.type === 'assistant' && event.message?.content?.some((part) => part.type === 'tool_use')) {
+        setProgress('에이전트가 개발 도구를 실행하고 있어. 상세 내용은 코딩 화면에서 확인해 줘.');
+      }
       if (event.type === 'result') {
         setSubmitting(false);
         const at = next.length - 1;
         if (at > lastAnnouncedRef.current) {
           lastAnnouncedRef.current = at;
           const kind = providerRef.current;
-          if (kind) setLastAnnouncement(summarizeNativeTurn(next, kind));
+          if (kind) {
+            const turn = next.slice(lastResultIndex(next.slice(0, -1)) + 1);
+            const tools = foldEvents(turn).filter((item) => item.kind === 'tool');
+            setLastResult({ tools: tools.length, failed: tools.filter((item) => item.kind === 'tool' && item.status === 'error').length,
+              denied: event.permission_denials?.length ?? 0, error: !!event.is_error });
+            setLastAnnouncement(summarizeNativeTurn(next, kind));
+            setProgress('작업이 종료됐어. 결과를 확인해 줘.');
+          }
         }
       }
     });
@@ -96,7 +112,9 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
     });
     const offState = agentDeckWS.on('native:state', (payload: any) => {
       if (active && payload.agentId === agentId) {
-        setPendingApprovals(Array.isArray(payload.pending) ? payload.pending : []);
+        const pending = Array.isArray(payload.pending) ? payload.pending : [];
+        setPendingApprovals(pending);
+        if (pending.length) setProgress('도구 실행 승인을 기다리고 있어.');
       }
     });
     const offError = agentDeckWS.on('native:error', (payload: any) => {
@@ -143,6 +161,8 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
     if (pendingApprovals.length || submitting || isTurnActive(eventsRef.current)) return false;
     setError('');
     setLastAnnouncement('');
+    setLastResult(null);
+    setProgress('요청을 전송했어. 에이전트 수신을 확인 중이야.');
     setSubmitting(true);
     agentDeckWS.send('native:input', { agentId, text: text.trim() });
     return true;
@@ -155,6 +175,6 @@ export function useVoiceCodingSession(agentId: string, enabled: boolean) {
 
   return {
     provider, configureProvider, connected, busy, submitting, pendingApprovals,
-    error, lastAnnouncement, sendTask, interrupt,
+    error, progress, lastResult, lastAnnouncement, sendTask, interrupt,
   };
 }
