@@ -40,7 +40,7 @@ export function VoiceModePage() {
   const [notes, setNotes] = useState<VoiceNote[]>([]);
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState('');
-  const [nextId, setNextId] = useState(1);
+  const nextIdRef = useRef(1);
   const [conversationPhase, setConversationPhase] = useState<ConversationPhase>('off');
   const conversationActiveRef = useRef(false);
   const requestGenerationRef = useRef(0);
@@ -106,11 +106,10 @@ export function VoiceModePage() {
     }
     if (generation !== requestGenerationRef.current || controller.signal.aborted) return;
     requestAbortRef.current = null;
-    setNotes((previous) => [...previous, { id: nextId, text, answer, source }]);
+    setNotes((previous) => [...previous, { id: nextIdRef.current++, text, answer, source }]);
     setLoadingStatus(false);
     const spoken = playback.speak(answer);
     if (spokenText !== undefined && conversationActiveRef.current) setConversationPhase(spoken ? 'speaking' : 'listening');
-    setNextId((n) => n + 1);
     setDraft('');
     voice.reset();
     setNotice('읽기 전용 상태 답변이야. 코딩 에이전트에는 명령을 전달하지 않았어.');
@@ -180,6 +179,8 @@ export function VoiceModePage() {
   useEffect(() => {
     if (conversationPhase !== 'listening') return;
     if (voice.state === 'error' || voice.state === 'unsupported') {
+      conversationActiveRef.current = false;
+      bargeIn.stop();
       setConversationPhase('off');
       setNotice(voice.error || '음성 인식을 시작하지 못했어.');
       return;
@@ -187,7 +188,7 @@ export function VoiceModePage() {
     if (voice.state !== 'idle' || voice.finalText.trim() || loadingStatus || playback.speaking) return;
     const timeout = window.setTimeout(() => voice.start(), 350);
     return () => clearTimeout(timeout);
-  }, [conversationPhase, voice.state, voice.finalText, voice.error, loadingStatus, playback.speaking, voice.start]);
+  }, [conversationPhase, voice.state, voice.finalText, voice.error, loadingStatus, playback.speaking, voice.start, bargeIn.stop]);
 
   useEffect(() => {
     if (conversationPhase !== 'listening' || loadingStatus) return;
