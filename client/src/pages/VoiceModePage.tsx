@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { VoiceCodingPanel } from '../components/native/VoiceCodingPanel';
 import { api, apiRequest } from '../lib/api';
 import { useVoicePlayback } from '../hooks/useVoicePlayback';
@@ -41,6 +41,9 @@ export function VoiceModePage() {
   const [notice, setNotice] = useState('');
   const [nextId, setNextId] = useState(1);
   const [conversationPhase, setConversationPhase] = useState<ConversationPhase>('off');
+  const conversationActiveRef = useRef(false);
+  const requestGenerationRef = useRef(0);
+  const requestAbortRef = useRef<AbortController | null>(null);
   const [codingText, setCodingText] = useState('');
   const onCodingSent = useCallback(() => { setCodingText(''); setDraft(''); voice.reset(); }, [voice.reset]);
   const onCodingAnnouncement = useCallback((text: string) => {
@@ -53,6 +56,10 @@ export function VoiceModePage() {
     const text = spokenText?.trim() || draft.trim() || voice.finalText.trim();
     if (!text) return;
     playback.stop();
+    const generation = ++requestGenerationRef.current;
+    requestAbortRef.current?.abort();
+    const controller = new AbortController();
+    requestAbortRef.current = controller;
     setLoadingStatus(true);
     let snapshot = agentStatus;
     try {
@@ -73,6 +80,7 @@ export function VoiceModePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentId: id, message: text, history }),
+        signal: controller.signal,
       });
       if (response.ok && (response.headers.get('content-type') || '').includes('application/json')) {
         const payload = await response.json() as { text?: string; source?: string };
@@ -84,10 +92,12 @@ export function VoiceModePage() {
     } catch {
       // The status-only path works without local model setup or subscription.
     }
+    if (generation !== requestGenerationRef.current || controller.signal.aborted) return;
+    requestAbortRef.current = null;
     setNotes((previous) => [...previous, { id: nextId, text, answer, source }]);
     setLoadingStatus(false);
     const spoken = playback.speak(answer);
-    if (spokenText !== undefined) setConversationPhase(spoken ? 'speaking' : 'listening');
+    if (spokenText !== undefined && conversationActiveRef.current) setConversationPhase(spoken ? 'speaking' : 'listening');
     setNextId((n) => n + 1);
     setDraft('');
     voice.reset();
@@ -98,6 +108,11 @@ export function VoiceModePage() {
   // always require a separate reviewed, explicit confirmation.
   const toggleConversation = () => {
     if (conversationPhase !== 'off') {
+      conversationActiveRef.current = false;
+      requestGenerationRef.current += 1;
+      requestAbortRef.current?.abort();
+      requestAbortRef.current = null;
+      setLoadingStatus(false);
       setConversationPhase('off');
       voice.reset();
       playback.stop();
@@ -109,7 +124,20 @@ export function VoiceModePage() {
     }
     if (playback.supported && !playback.enabled) playback.toggle();
     setDraft('');
+    conversationActiveRef.current = true;
     setConversationPhase('listening');
+  };
+
+  useEffect(() => () => {
+    requestAbortRef.current?.abort();
+    requestGenerationRef.current += 1;
+    conversationActiveRef.current = false;
+  }, []);
+
+  const interruptSpeech = () => {
+    playback.stop();
+    voice.reset();
+    if (conversationActiveRef.current) setConversationPhase('listening');
   };
 
   useEffect(() => {
@@ -186,6 +214,8 @@ export function VoiceModePage() {
           aria-pressed={conversationPhase !== 'off'} className="w-full min-h-12 rounded-xl border border-deck-border px-4 py-3 text-sm font-semibold disabled:opacity-40">
           {conversationPhase === 'off' ? '🎙 자동 대화 시작' : '■ 자동 대화 종료'}
         </button>
+        {conversationPhase === 'speaking' && <button type="button" onClick={interruptSpeech}
+          className="min-h-11 w-full rounded-lg border border-deck-border px-3 text-sm">응답 중단하고 말하기</button>}
         {conversationPhase !== 'off' && <p role="status" className="text-sm text-deck-text-dim">{conversationPhase === 'listening' ? '말씀을 듣고 있어요. 말을 마치면 자동으로 질문해요.' : conversationPhase === 'processing' ? '답변을 준비하고 있어요.' : '음성으로 답변 중이에요.'}</p>}
         {notice && <p role="status" className="text-xs text-deck-text-dim">{notice}</p>}
         {voice.error && <p role="alert" className="text-xs text-red-400">{voice.error}</p>}
