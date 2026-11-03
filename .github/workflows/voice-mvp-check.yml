@@ -1,0 +1,53 @@
+name: Voice MVP checks
+
+on:
+  pull_request:
+    paths:
+      - 'client/**'
+      - 'server/**'
+      - 'tools/speaker_sidecar.py'
+      - '.github/workflows/voice-mvp-check.yml'
+  push:
+    branches:
+      - 'feat/voice-multi-agent-mvp'
+
+permissions:
+  contents: read
+
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+      - name: Typecheck and build
+        working-directory: client
+        run: npm run build
+
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Prepare embedded client directory
+        run: mkdir -p server/static && printf 'placeholder' > server/static/index.html
+      - name: Run Go tests
+        working-directory: server
+        env:
+          CGO_ENABLED: '0'
+        run: go test ./...
+      - name: Compile Go binary
+        working-directory: server
+        env:
+          CGO_ENABLED: '0'
+        run: go build ./...
