@@ -5,6 +5,7 @@ import { useVoicePlayback } from '../hooks/useVoicePlayback';
 import { answerVoiceStatus, type VoiceAgentStatus } from '../lib/voiceStatus';
 import { Link, useParams } from 'react-router-dom';
 import { useVoiceInput } from '../hooks/useVoiceInput';
+import { useAcousticBargeIn } from '../hooks/useAcousticBargeIn';
 import { VoiceIdentityPanel } from '../components/native/VoiceIdentityPanel';
 
 type VoiceNote = { id: number; text: string; answer?: string; source?: string };
@@ -45,6 +46,17 @@ export function VoiceModePage() {
   const requestGenerationRef = useRef(0);
   const requestAbortRef = useRef<AbortController | null>(null);
   const [codingText, setCodingText] = useState('');
+  const bargeIn = useAcousticBargeIn(() => {
+    // An acoustic interruption only stops TTS; it never executes coding work.
+    playback.stop();
+    voice.reset();
+    if (conversationActiveRef.current) setConversationPhase('listening');
+    setNotice('목소리가 감지되어 음성 응답을 중단했어. 이어서 말해 줘.');
+  });
+
+  useEffect(() => {
+    bargeIn.setSpeaking(conversationPhase === 'speaking' && playback.speaking);
+  }, [conversationPhase, playback.speaking, bargeIn.setSpeaking]);
   const onCodingSent = useCallback(() => { setCodingText(''); setDraft(''); voice.reset(); }, [voice.reset]);
   const onCodingAnnouncement = useCallback((text: string) => {
     if (conversationPhase === 'listening') voice.reset();
@@ -116,6 +128,7 @@ export function VoiceModePage() {
       setConversationPhase('off');
       voice.reset();
       playback.stop();
+      bargeIn.stop();
       return;
     }
     if (!voice.supported) {
@@ -123,16 +136,20 @@ export function VoiceModePage() {
       return;
     }
     if (playback.supported && !playback.enabled) playback.toggle();
+    // User gesture starts a separate mic monitor for barge-in. Failure falls
+    // back to the explicit interrupt button, never blocks ordinary dialogue.
+    void bargeIn.start();
     setDraft('');
     conversationActiveRef.current = true;
     setConversationPhase('listening');
   };
 
   useEffect(() => () => {
+    bargeIn.stop();
     requestAbortRef.current?.abort();
     requestGenerationRef.current += 1;
     conversationActiveRef.current = false;
-  }, []);
+  }, [bargeIn.stop]);
 
   const interruptSpeech = () => {
     playback.stop();
@@ -214,6 +231,8 @@ export function VoiceModePage() {
           aria-pressed={conversationPhase !== 'off'} className="w-full min-h-12 rounded-xl border border-deck-border px-4 py-3 text-sm font-semibold disabled:opacity-40">
           {conversationPhase === 'off' ? '🎙 자동 대화 시작' : '■ 자동 대화 종료'}
         </button>
+        {conversationPhase !== 'off' && bargeIn.error && <p role="alert" className="text-xs text-deck-text-dim">{bargeIn.error}</p>}
+        {conversationPhase !== 'off' && bargeIn.active && <p className="text-xs text-deck-text-dim">실험적 음성 끼어들기 감지 활성화 · 이어폰 권장 · 스피커 소리로 오작동할 수 있어.</p>}
         {conversationPhase === 'speaking' && <button type="button" onClick={interruptSpeech}
           className="min-h-11 w-full rounded-lg border border-deck-border px-3 text-sm">응답 중단하고 말하기</button>}
         {conversationPhase !== 'off' && <p role="status" className="text-sm text-deck-text-dim">{conversationPhase === 'listening' ? '말씀을 듣고 있어요. 말을 마치면 자동으로 질문해요.' : conversationPhase === 'processing' ? '답변을 준비하고 있어요.' : '음성으로 답변 중이에요.'}</p>}
