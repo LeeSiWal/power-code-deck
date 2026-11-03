@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { VoiceCodingPanel } from '../components/native/VoiceCodingPanel';
 import { api, apiRequest } from '../lib/api';
 import { useVoicePlayback } from '../hooks/useVoicePlayback';
@@ -8,6 +8,7 @@ import { useVoiceInput } from '../hooks/useVoiceInput';
 import { VoiceIdentityPanel } from '../components/native/VoiceIdentityPanel';
 
 type VoiceNote = { id: number; text: string; answer?: string; source?: string };
+type ConversationPhase = 'off' | 'listening' | 'processing' | 'speaking';
 
 /**
  * Separate voice conversation surface. This first stage deliberately has NO
@@ -39,12 +40,14 @@ export function VoiceModePage() {
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState('');
   const [nextId, setNextId] = useState(1);
+  const [conversationPhase, setConversationPhase] = useState<ConversationPhase>('off');
+  const lastAutoTranscript = useRef('');
   const [codingText, setCodingText] = useState('');
   const onCodingSent = useCallback(() => { setCodingText(''); setDraft(''); voice.reset(); }, [voice.reset]);
   const onCodingAnnouncement = useCallback((text: string) => { playback.speak(text); }, [playback.speak]);
 
-  const addNote = async () => {
-    const text = draft.trim() || voice.finalText.trim();
+  const addNote = async (spokenText?: string) => {
+    const text = spokenText?.trim() || draft.trim() || voice.finalText.trim();
     if (!text) return;
     playback.stop();
     setLoadingStatus(true);
@@ -80,12 +83,67 @@ export function VoiceModePage() {
     }
     setNotes((previous) => [...previous, { id: nextId, text, answer, source }]);
     setLoadingStatus(false);
-    playback.speak(answer);
+    const spoken = playback.speak(answer);
+    if (spokenText !== undefined) setConversationPhase(spoken ? 'speaking' : 'listening');
     setNextId((n) => n + 1);
     setDraft('');
     voice.reset();
     setNotice('읽기 전용 상태 답변이야. 코딩 에이전트에는 명령을 전달하지 않았어.');
   };
+  // A deliberate start gesture enables a bounded listen -> reply -> listen
+  // loop. Only read-only dialogue is submitted automatically. Coding tasks
+  // always require a separate reviewed, explicit confirmation.
+  const toggleConversation = () => {
+    if (conversationPhase !== 'off') {
+      setConversationPhase('off');
+      voice.reset();
+      playback.stop();
+      return;
+    }
+    if (!voice.supported) {
+      setNotice('이 브라우저에서 음성 인식이 지원되지 않아. 텍스트 대화를 이용해 줘.');
+      return;
+    }
+    if (playback.supported && !playback.enabled) playback.toggle();
+    lastAutoTranscript.current = '';
+    setDraft('');
+    setConversationPhase('listening');
+  };
+
+  useEffect(() => {
+    if (conversationPhase !== 'listening') return;
+    if (voice.state === 'error' || voice.state === 'unsupported') {
+      setConversationPhase('off');
+      setNotice(voice.error || '음성 인식을 시작하지 못했어.');
+      return;
+    }
+    if (voice.state !== 'idle' || loadingStatus || playback.speaking) return;
+    const timeout = window.setTimeout(() => voice.start(), 350);
+    return () => clearTimeout(timeout);
+  }, [conversationPhase, voice.state, voice.error, loadingStatus, playback.speaking, voice.start]);
+
+  useEffect(() => {
+    if (conversationPhase !== 'listening' || loadingStatus) return;
+    const transcript = voice.finalText.trim();
+    if (!transcript || voice.interimText.trim() || transcript === lastAutoTranscript.current) return;
+    // Allow a natural pause for the end of the utterance. Resetting recognition
+    // after consumption prevents a transcript from being submitted twice.
+    const timeout = window.setTimeout(() => {
+      if (conversationPhase !== 'listening') return;
+      lastAutoTranscript.current = transcript;
+      setConversationPhase('processing');
+      voice.reset();
+      void addNote(transcript);
+    }, 1300);
+    return () => clearTimeout(timeout);
+  }, [conversationPhase, voice.finalText, voice.interimText, loadingStatus]);
+
+  useEffect(() => {
+    if (conversationPhase !== 'speaking' || playback.speaking) return;
+    const timeout = window.setTimeout(() => setConversationPhase('listening'), 450);
+    return () => clearTimeout(timeout);
+  }, [conversationPhase, playback.speaking]);
+
   const stageCodingRequest = (text: string) => {
     // Transfer is just a reviewed draft, NEVER a send. The existing coding
     // composer and its own submit/approvals remain responsible for execution.
@@ -99,7 +157,7 @@ export function VoiceModePage() {
       <header className="flex items-center justify-between gap-2 border-b border-deck-border bg-deck-surface px-4 py-3">
         <div className="min-w-0">
           <h1 className="font-semibold text-base">음성 모드</h1>
-          <p className="text-xs text-deck-text-dim">대화 공간 · 코드 변경 없음</p>
+          <p className="text-xs text-deck-text-dim">자동 음성 대화 · 개발 지시는 별도 승인</p>
         </div>
         <Link to={`/agents/${id}`} className="shrink-0 rounded-lg border border-deck-border px-3 py-2 text-sm">코딩 화면</Link>
       </header>
@@ -123,6 +181,11 @@ export function VoiceModePage() {
         ))}
       </section>
       <div className="border-t border-deck-border bg-deck-surface p-4 space-y-3">
+        <button type="button" onClick={toggleConversation} disabled={!voice.supported}
+          aria-pressed={conversationPhase !== 'off'} className="w-full min-h-12 rounded-xl border border-deck-border px-4 py-3 text-sm font-semibold disabled:opacity-40">
+          {conversationPhase === 'off' ? '🎙 자동 대화 시작' : '■ 자동 대화 종료'}
+        </button>
+        {conversationPhase !== 'off' && <p role="status" className="text-sm text-deck-text-dim">{conversationPhase === 'listening' ? '말씀을 듣고 있어요. 말을 마치면 자동으로 질문해요.' : conversationPhase === 'processing' ? '답변을 준비하고 있어요.' : '음성으로 답변 중이에요.'}</p>}
         {notice && <p role="status" className="text-xs text-deck-text-dim">{notice}</p>}
         {voice.error && <p role="alert" className="text-xs text-red-400">{voice.error}</p>}
         {(voice.finalText || voice.interimText) && <p role="status" className="text-sm break-words">
@@ -133,7 +196,7 @@ export function VoiceModePage() {
           className="w-full resize-none rounded-lg border border-deck-border bg-deck-bg p-3 text-base" />
         <div className="flex flex-wrap items-center gap-3">
           {playback.supported && <button type="button" aria-pressed={playback.enabled} onClick={playback.speaking ? playback.stop : playback.toggle} className="min-h-12 px-3 rounded-lg border border-deck-border text-sm">{playback.speaking ? '읽기 중지' : playback.enabled ? '🔊 음성 응답 켜짐' : '🔇 음성 응답 꺼짐'}</button>}
-          <button type="button" disabled={!voice.supported}
+          <button type="button" disabled={!voice.supported || conversationPhase !== 'off'}
             onClick={() => { playback.stop(); voice.state === 'listening' ? voice.stop() : voice.start(); }}
             className="min-h-12 min-w-12 rounded-full border border-deck-border bg-deck-bg disabled:opacity-40"
             aria-label={voice.state === 'listening' ? '녹음 중지' : '마이크 시작'}>
@@ -142,7 +205,7 @@ export function VoiceModePage() {
           <span className="text-xs flex-1 text-deck-text-dim">
             {voice.state === 'listening' ? '듣는 중…' : voice.supported ? '마이크를 누르고 말해 줘' : '브라우저 음성 인식 미지원 · 글 입력 가능'}
           </span>
-          <button type="button" onClick={addNote} disabled={loadingStatus || (!draft.trim() && !voice.finalText.trim())}
+          <button type="button" onClick={() => void addNote()} disabled={conversationPhase !== 'off' || loadingStatus || (!draft.trim() && !voice.finalText.trim())}
             className="rounded-lg border border-deck-border px-3 py-3 text-sm disabled:opacity-40">
             {loadingStatus ? '상태 확인 중…' : '상태 질문'}
           </button>
