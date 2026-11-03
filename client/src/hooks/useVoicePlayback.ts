@@ -7,6 +7,9 @@ export function useVoicePlayback() {
   const supported = typeof window !== 'undefined'
     && 'speechSynthesis' in window && typeof window.SpeechSynthesisUtterance !== 'undefined';
   const [enabled, setEnabled] = useState(false);
+  // A newly enabled conversation can speak in the same event turn before
+  // React re-renders: read the authoritative ref instead of stale state.
+  const enabledRef = useRef(false);
   const [speaking, setSpeaking] = useState(false);
   const activeRef = useRef<SpeechSynthesisUtterance | null>(null);
 
@@ -17,7 +20,7 @@ export function useVoicePlayback() {
   }, [supported]);
 
   const speak = useCallback((text: string) => {
-    if (!supported || !enabled || !text.trim()) return false;
+    if (!supported || !enabledRef.current || !text.trim()) return false;
     stop();
     // Audio is a distinct, concise narration derived from the complete
     // visible answer; never overwrite the assistant's on-screen content.
@@ -36,15 +39,18 @@ export function useVoicePlayback() {
     setSpeaking(true);
     window.speechSynthesis.speak(utterance);
     return true;
-  }, [supported, enabled, stop]);
+  }, [supported, stop]);
 
   const toggle = useCallback(() => {
-    if (enabled) stop();
-    setEnabled((value) => !value);
-  }, [enabled, stop]);
+    const next = !enabledRef.current;
+    if (!next) stop();
+    enabledRef.current = next;
+    setEnabled(next);
+  }, [stop]);
 
   // Cancel speech when changing session or unmounting; no background audio.
   useEffect(() => () => {
+    enabledRef.current = false;
     if (supported) window.speechSynthesis.cancel();
     activeRef.current = null;
   }, [supported]);
