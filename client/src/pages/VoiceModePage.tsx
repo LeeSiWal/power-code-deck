@@ -119,10 +119,10 @@ export function VoiceModePage() {
       setNotice(voice.error || '음성 인식을 시작하지 못했어.');
       return;
     }
-    if (voice.state !== 'idle' || loadingStatus || playback.speaking) return;
+    if (voice.state !== 'idle' || voice.finalText.trim() || loadingStatus || playback.speaking) return;
     const timeout = window.setTimeout(() => voice.start(), 350);
     return () => clearTimeout(timeout);
-  }, [conversationPhase, voice.state, voice.error, loadingStatus, playback.speaking, voice.start]);
+  }, [conversationPhase, voice.state, voice.finalText, voice.error, loadingStatus, playback.speaking, voice.start]);
 
   useEffect(() => {
     if (conversationPhase !== 'listening' || loadingStatus) return;
