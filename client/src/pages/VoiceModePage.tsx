@@ -84,7 +84,7 @@ export function VoiceModePage() {
     let answer = answerVoiceStatus(text, snapshot).text;
     let source = '작업 상태';
     try {
-      const history = notes.slice(-4).flatMap((note) => [
+      const history = notes.slice(-8).flatMap((note) => [
         { role: 'user', content: note.text },
         ...(note.answer ? [{ role: 'assistant', content: note.answer }] : []),
       ]);
