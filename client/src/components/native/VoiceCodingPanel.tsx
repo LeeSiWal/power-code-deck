@@ -28,6 +28,8 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [sentPending, setSentPending] = useState(false);
+  const [revisionMode, setRevisionMode] = useState(false);
+  const [revisionText, setRevisionText] = useState('');
   const onAnnouncementRef = useRef(onAnnouncement);
   useEffect(() => { onAnnouncementRef.current = onAnnouncement; }, [onAnnouncement]);
   const session = useVoiceCodingSession(agentId, provider !== null);
@@ -56,6 +58,13 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
     onAnnouncementRef.current(session.lastAnnouncement);
   }, [session.lastAnnouncement]);
 
+  const revise = () => {
+    if (!revisionText.trim()) return;
+    setCandidate(`이전 작업의 방향을 다음과 같이 변경해 줘. 기존 작업 내용을 확인하고, 무리하게 중복 적용하지 말고 변경 사항을 검토한 뒤 진행해: ${revisionText.trim()}`);
+    setAwaitingConfirmation(true);
+    setRevisionMode(false);
+    setFeedback('수정 지시를 검토해 줘. 현재 작업이 완전히 멈춘 뒤에만 실행할 수 있어.');
+  };
   const prepare = () => {
     const text = suggestedText.trim();
     if (!text) return;
@@ -112,6 +121,8 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
           </div>
         </div>
       )}
+      <p className="text-xs text-deck-text-dim" role="status">{session.progress || '작업 대기 중'}</p>
+      {session.lastResult && <p className="text-xs" role="status">마지막 작업 결과 · 도구 {session.lastResult.tools}건 · 오류 {session.lastResult.failed}건 · 승인 거부 {session.lastResult.denied}건{session.lastResult.error ? ' · 작업 오류' : ''}</p>}
       {session.pendingApprovals.length > 0 && (
         <p className="text-sm" role="alert">
           도구 승인 요청 {session.pendingApprovals.length}건이 있어.
@@ -120,8 +131,16 @@ export function VoiceCodingPanel({ agentId, suggestedText, onSent, onAnnouncemen
       )}
       {sentPending && session.submitting && <p role="status" className="text-xs">에이전트의 작업 수신을 확인 중이야.</p>}
       {sentPending && session.busy && <p role="status" className="text-xs">에이전트가 작업을 수행 중이야.</p>}
-      {session.busy && <button type="button" onClick={session.interrupt}
-        className="min-h-11 rounded-lg border border-deck-border px-3 text-sm">진행 중인 개발 작업 중단</button>}
+      {session.busy && <button type="button" onClick={() => { session.interrupt(); setRevisionMode(true); setFeedback('작업 중단을 요청했어. 완료 여부는 작업 상태를 확인해 줘.'); }}
+        className="min-h-11 rounded-lg border border-deck-border px-3 text-sm">작업 중단 요청 · 방향 변경</button>}
+      {provider && <button type="button" onClick={() => setRevisionMode((v) => !v)}
+        className="min-h-11 rounded-lg border border-deck-border px-3 text-sm">{revisionMode ? '방향 변경 취소' : '새 방향 지시 준비'}</button>}
+      {revisionMode && <div className="space-y-2">
+        <label htmlFor="voice-revision" className="text-xs block">바꿀 방향을 설명해 줘</label>
+        <textarea id="voice-revision" value={revisionText} onChange={(e) => setRevisionText(e.target.value)} rows={2}
+          className="w-full rounded-lg border border-deck-border bg-deck-bg p-3 text-base" />
+        <button type="button" onClick={revise} disabled={!revisionText.trim()} className="min-h-11 rounded-lg border border-deck-border px-3 text-sm disabled:opacity-40">방향 변경 지시 검토</button>
+      </div>}
       {session.error && <p role="alert" className="text-xs text-red-400">{session.error}</p>}
       {feedback && <p role="status" className="text-sm">{feedback}</p>}
     </section>
