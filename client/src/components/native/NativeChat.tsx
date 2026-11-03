@@ -344,12 +344,19 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
   // Only speak a newly completed turn, never a history replay. The marker is
   // advanced on native:history and on every result, even while speech is muted.
   useEffect(() => {
-    const resultIndex = events.findLastIndex((event) => event.type === 'result');
+    let resultIndex = -1;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].type === 'result') { resultIndex = i; break; }
+    }
     if (resultIndex <= spokenResultIndexRef.current) return;
     spokenResultIndexRef.current = resultIndex;
     if (!playback.enabled) return;
-    const latestUserIndex = items.findLastIndex((item) => item.kind === 'user');
-    const reply = items.slice(latestUserIndex + 1).filter((item) => item.kind === 'assistant' && !item.subagent).at(-1);
+    let latestUserIndex = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].kind === 'user') { latestUserIndex = i; break; }
+    }
+    const replies = items.slice(latestUserIndex + 1).filter((item) => item.kind === 'assistant' && !item.subagent);
+    const reply = replies[replies.length - 1];
     if (reply?.kind === 'assistant' && !reply.streaming) playback.speak(reply.text);
   }, [events, items, playback.enabled, playback.speak]);
 
@@ -417,7 +424,10 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
     const offHistory = agentDeckWS.on('native:history', (p: any) => {
       if (p.agentId !== agentId) return;
       // History is already seen, not a new reply to read aloud.
-      spokenResultIndexRef.current = (p.events as StreamEvent[]).findLastIndex((event) => event.type === 'result');
+      spokenResultIndexRef.current = -1;
+      for (let i = p.events.length - 1; i >= 0; i--) {
+        if (p.events[i].type === 'result') { spokenResultIndexRef.current = i; break; }
+      }
       setEvents(p.events as StreamEvent[]);
       setRunning(!!p.running);
       const first = pendingStartRef.current;
