@@ -172,6 +172,18 @@ class AgentDeckWS {
     }
   }
 
+  /** Fail-closed delivery for irreversible commands: never queue an action
+   * that might execute unexpectedly after a network reconnect. */
+  sendIfConnected(event: string, payload: unknown): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    try {
+      this.ws.send(JSON.stringify({ event, payload }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   on(event: string, fn: EventHandler): () => void {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
