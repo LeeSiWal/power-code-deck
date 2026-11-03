@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { toVoiceNarration } from '../lib/voiceNarration';
 
 // Browser TTS is optional and independent of the coding provider. Audio is
 // disabled by default so a reopened private coding session never speaks aloud.
@@ -18,11 +19,9 @@ export function useVoicePlayback() {
   const speak = useCallback((text: string) => {
     if (!supported || !enabled || !text.trim()) return false;
     stop();
-    // Don't recite long tool output, filenames, code or whole logs. The chat
-    // continues to show the full message; voice is a short spoken summary.
-    const trimmed = text.replace(/```[\s\S]*?```/g, '코드 내용은 화면을 확인해 주세요.')
-      .replace(/https?:\/\/\S+/g, '링크')
-      .replace(/\s+/g, ' ').trim().slice(0, 500);
+    // Audio is a distinct, concise narration derived from the complete
+    // visible answer; never overwrite the assistant's on-screen content.
+    const trimmed = toVoiceNarration(text).text;
     if (!trimmed) return false;
     const utterance = new SpeechSynthesisUtterance(trimmed);
     utterance.lang = 'ko-KR';
