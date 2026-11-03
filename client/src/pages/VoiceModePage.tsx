@@ -151,6 +151,26 @@ export function VoiceModePage() {
     conversationActiveRef.current = false;
   }, [bargeIn.stop]);
 
+  // iPad Safari can suspend background tabs without firing normal audio
+  // callbacks. Release the microphone and cancel pending replies when hidden.
+  // Do not restart capture on foreground without a new user gesture.
+  useEffect(() => {
+    const hide = () => {
+      if (document.visibilityState !== 'hidden') return;
+      conversationActiveRef.current = false;
+      requestGenerationRef.current += 1;
+      requestAbortRef.current?.abort();
+      requestAbortRef.current = null;
+      setLoadingStatus(false);
+      setConversationPhase('off');
+      voice.reset();
+      playback.stop();
+      bargeIn.stop();
+    };
+    document.addEventListener('visibilitychange', hide);
+    return () => document.removeEventListener('visibilitychange', hide);
+  }, [voice.reset, playback.stop, bargeIn.stop]);
+
   const interruptSpeech = () => {
     playback.stop();
     voice.reset();
