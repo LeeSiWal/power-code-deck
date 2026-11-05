@@ -1,6 +1,6 @@
 # PowerCodeDeck
 
-**PowerCodeDeck v0.2.6** — Claude Code와 Codex를 모바일·데스크톱 어디서나 네이티브 채팅 UI로 실행하고 이어가는 셀프호스트 개발 워크스페이스입니다.
+**PowerCodeDeck v0.6.1** — Claude Code와 Codex를 모바일·데스크톱 어디서나 네이티브 채팅 UI로 실행하고 이어가는 셀프호스트 개발 워크스페이스입니다.
 *A self-hosted native web workspace for Claude Code and Codex.*
 
 Claude Code의 `stream-json`과 Codex의 `app-server`를 직접 연결해 메시지, 도구 실행,
@@ -23,13 +23,16 @@ Claude Code와 Codex를 **어디서든 실행하고, 대화하고, 승인하고,
 - **기존 CLI 환경을 그대로 활용합니다.** 별도 에이전트나 모델을 다시 구성하는 대신,
   로컬에 설치된 Claude Code·Codex와 프로젝트 설정을 사용합니다.
 - **PC에서 하던 작업을 모바일로 넘깁니다.** QR 기반 Session Handoff, 한글 IME를
-  고려한 Prompt Bar, 방향키·제어키 툴바로 이동 중에도 진행 상황을 확인하고 개입할 수
+  고려한 통합 입력창, 방향키·제어키 툴바, 아이패드 덱 키보드로 이동 중에도 진행 상황을 확인하고 개입할 수
   있습니다.
 - **브라우저 종료와 프로세스 종료가 다릅니다.** 자체 PTY 세션 엔진이 셸과 Custom CLI를
   계속 실행하므로 탭을 닫거나 네트워크가 끊겨도 작업이 유지됩니다. 다시 접속하면 최근
   출력과 네이티브 대화를 복원합니다.
 - **AI 작업의 주변 도구까지 한곳에 모았습니다.** 파일 탐색·편집, 웹 터미널, 로컬 서버
   미리보기, 로그, 알림, 세션 히스토리를 프로젝트 단위로 제공합니다.
+- **요청마다 알맞은 모델을 고릅니다.** 선택 기능인 "자동" 세션은 첫 메시지와 이후 턴의
+  난이도를 보고 모델과 도구를 바꿉니다. 긴 대화는 쉬었다 돌아올 때 짧은 메모로 이어 가
+  컨텍스트를 다시 읽는 토큰을 줄입니다. 구독 외 과금은 기본 차단입니다.
 - **가볍게 셀프호스팅합니다.** React UI와 SQLite를 Go 실행 파일에 포함한 단일
   바이너리로 배포하며, tmux나 별도 Node 웹 서버가 필요하지 않습니다.
 
@@ -49,21 +52,24 @@ PowerCodeDeck은 완전한 IDE를 대체하려는 제품이 아닙니다. **에�
 
 ---
 
-> **새 소식 (v0.2.6)**
-> - ✨ **Codex 네이티브 UI** — 공식 클라이언트 계열이 사용하는 `codex app-server`(JSON-RPC/stdio)에 연결합니다. Codex도 Claude Code처럼 반응형 채팅, 도구 실행 결과, 승인 카드, 중단, 모델·권한 모드 전환과 세션 재개를 지원합니다.
-> - 💬 **Claude·Codex 공통 네이티브 트랙** — 두 CLI를 공통 세션 수명주기와 이벤트 모델로 관리합니다. `?terminal`을 붙이면 필요할 때 기존 TUI 터미널로 전환할 수 있습니다.
-> - 🖥️ **자체 터미널 렌더러** — xterm.js를 걷어내고 `@xterm/headless` 파서 위에 **자체 DOM 렌더러**를 올렸습니다. 스크롤/스트리밍 잔상을 없애고, 한글을 **2셀 고정폭**으로 정확히 그립니다. 번들된 **D2Coding** 폰트 사용(희귀 음절은 Nanum Gothic Coding 폴백) ([기술 스택](#기술-스택))
-> - 🕘 **세션 히스토리** — 프로젝트별 과거 Claude Code 세션(트랜스크립트)을 열람·재개(resume)·삭제 ([세션 히스토리](#세션-히스토리))
-> - 🔒 **보안 강화 (v0.2.4)** — WebSocket Origin/토큰 검증, 파일 경로 검증 상시 적용, Host 헤더 검증(DNS rebinding 방지), 토큰 타입 분리, graceful shutdown ([CHANGELOG](CHANGELOG.md#v024--보안-강화-security-hardening)). **v0.2.3 이하는 취약점이 있으므로 업그레이드를 권장합니다.**
-> - 🩹 **리버스 프록시 접속 복구 (v0.2.5)** — 도메인을 `CORS_ORIGINS`에만 설정한 배포가 v0.2.4에서 403으로 깨지던 문제 수정 ([CHANGELOG](CHANGELOG.md))
-> - 📱 **Session Handoff** — QR 한 번으로 PC 세션을 모바일/iPad에서 이어하기 ([자세히](#session-handoff))
-> - 🧩 **tmux 제거** — 자체 내장 PTY 세션 엔진으로 동작 (tmux 불필요). 브라우저를 닫아도 세션 유지 ([Session Engine](#session-engine))
-> - 🪟 **Windows 지원** — **WSL2 한 줄 설치**가 권장 ([Windows 설치](#windows-설치-wsl2-권장) · [docs/windows.md](docs/windows.md))
+> **새 소식 (main, 다음 릴리스 예정)**
+> - 🧭 **"자동" 세션** — 도구를 고르지 않고 시작하면 첫 메시지로 모델을 정하고, 이후 턴마다 난이도에 맞춰 바꿉니다. 쉬었다 돌아오면 Claude·Codex 사이도 옮겨 갑니다 ([자동 세션과 모델 라우팅](#자동-세션과-모델-라우팅))
+> - 💤 **Fresh start** — 오래 쉰 긴 대화는 메모와 최근 두 턴만으로 새 대화를 시작해 다시 읽는 토큰을 줄입니다. 서버 재시작이나 다음 날 재접속 뒤에도 동작합니다.
+> - 🖥️ **로컬 모델** — 설정에서 사설망·Tailscale의 로컬 모델 서버를 추가합니다. 쉬운 요청은 로컬로 보내고, 결과가 마음에 안 들면 "유료 모델로 다시"로 넘깁니다.
+> - ⌨️ **아이패드 덱 키보드** — 물리 키보드가 없을 때 터미널과 채팅에서 Esc·Ctrl·방향키·두벌식 한글을 쓰는 화면 키보드. 폴더블 아이폰을 펼쳐 옆으로 눕힌 화면에도 맞습니다.
+> - 🤖 **모델 선택 목록 최신화** — Claude Sonnet 5.5·Haiku 5.5, GPT-6 Astra·GPT-6.1 Sol·Terra·GPT-6 Luna 추가.
+> - 🔒 **보안 강화** — 외부 사이트발 상태 변경 요청 차단, QR 핸드오프 토큰을 해당 세션으로 제한, `.env` 소유자 전용 권한, IP별 요청 제한 ([Session Handoff](#세션-전용-접속-토큰) · [보안 주의](#보안-주의))
 >
-> 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 로드맵은 [아래 Roadmap](#roadmap) 참고.
+> **최근 릴리스**
+> - **v0.6.1** — 할일 사이드 패널, 체크리스트 복구, 권한 모드 제자리 전환
+> - **v0.6.0** — 승인 "항상 허용" 규칙
+> - **v0.5.0** — 할일 체크리스트, 알림 센터, 동반 셸
+> - **v0.4.0** — 대시보드를 흡수한 통합 관제실
+>
+> ⚠️ v0.2.3 이하는 보안 취약점이 있으니 업그레이드하세요. 전체 변경 내역은 [CHANGELOG.md](CHANGELOG.md), 다음 계획은 [아래 Roadmap](#roadmap) 참고.
 
-![Version](https://img.shields.io/badge/version-0.2.6-6366f1)
-![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)
+![Version](https://img.shields.io/badge/version-0.6.1-6366f1)
+![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![SQLite](https://img.shields.io/badge/SQLite-embedded-003B57?logo=sqlite&logoColor=white)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
@@ -134,6 +140,7 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 - [보안 주의](#보안-주의)
 - [사용법](#사용법)
 - [세션 히스토리](#세션-히스토리)
+- [자동 세션과 모델 라우팅](#자동-세션과-모델-라우팅)
 - [Session Handoff](#session-handoff)
 - [원격 접속](#원격-접속)
 - [설정](#설정)
@@ -149,16 +156,20 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 ## 주요 기능
 
 - **Claude·Codex 네이티브 채팅** — Claude `stream-json`과 Codex `app-server` 기반 메시지·도구 호출·결과·승인·중단 UI
-- **멀티 에이전트** — 여러 AI 에이전트를 동시에 실행/모니터링 (Claude Code / Codex / Custom)
-- **웹 터미널** — `@xterm/headless` 파서 + **자체 DOM 렌더러**(잔상 없는 CJK 2셀 고정폭, 번들 D2Coding 폰트) 기반 단일 Interactive Terminal + 디바이스별 Prompt Bar(한글/긴 프롬프트), 방향키 툴바, 내부 PTY 세션 엔진으로 프로세스 유지 (브라우저를 닫아도 유지)
-- **대시보드** — 그리드/리스트 뷰로 전체 에이전트 상태를 한눈에, `+`로 즉시 생성
-- **관제실 (Control Room)** — 여러 에이전트 세션을 한 화면에서 관리: 동작중/대기/정지 상태 애니메이션, 프로젝트별 그룹, 승인 대기 큐, 세션별 요약·정지·재시작
-- **에이전트 메타** — Git 브랜치·변경 여부·ahead 커밋 수, 리스닝 포트 자동 감지 표시
+- **멀티 에이전트** — 여러 AI 에이전트를 동시에 실행/모니터링 (Claude Code / Codex / Antigravity / Custom)
+- **자동 세션** *(선택 기능)* — 요청 난이도에 따라 모델·도구를 고르고, 토큰 사용량을 설정에서 확인 ([자세히](#자동-세션과-모델-라우팅))
+- **웹 터미널** — `@xterm/headless` 파서 + **자체 DOM 렌더러**(잔상 없는 CJK 2셀 고정폭, 번들 D2Coding 폰트) 기반 단일 Interactive Terminal + 커서 위치 통합 입력창(한글/긴 프롬프트), 방향키 툴바, 내부 PTY 세션 엔진으로 프로세스 유지 (브라우저를 닫아도 유지)
+- **관제실 (Control Room)** — 여러 에이전트 세션을 한 화면에서 관리: 동작중/대기/정지 상태 애니메이션, 프로젝트별 그룹, 승인 대기 큐, 세션별 요약·정지·재시작·삭제, 프로젝트 추가
+- **에이전트 메타** — Git 브랜치·변경 여부·ahead 커밋 수 표시
+- **승인 허용 목록** — "항상 허용"으로 같은 호출을 프로젝트에서 다시 묻지 않음. 위험한 호출은 규칙으로 저장할 수 없고, 규칙은 설정에서 확인·삭제
+- **할일 체크리스트** — Claude가 세운 계획을 관제실 타일·세션 스트립·채팅 카드·사이드 패널에서 확인
+- **동반 셸** — 네이티브 채팅을 유지한 채 같은 디렉토리에서 명령 실행
+- **덱 키보드** — 물리 키보드 없는 아이패드용 화면 키보드 (터미널·채팅 공통, 두벌식 한글 조합)
 - **세션 히스토리** — 프로젝트별 과거 Claude Code 세션(트랜스크립트)을 열람·재개(resume)·삭제
 - **파일 탐색기** — 프로젝트 파일 탐색/편집/생성/삭제/이름변경
 - **내장 브라우저** — 에이전트가 띄운 로컬 포트를 iframe으로 미리보기 (외부 URL은 프록시 경유)
-- **알림 센터** — 에이전트의 완료/대기/승인요청 등 이벤트를 수집·표시
-- **로그 뷰어** — 에이전트별 출력 로그를 SQLite에 저장하고 검색
+- **알림 센터** — 완료·승인 요청·정체·에러 알림을 모아 보고 지우기, 웹 푸시 지원
+- **로그 뷰어** — 에이전트별 이벤트 로그(생성·시작·종료·재시작·알림)를 SQLite에 저장하고 검색
 - **도트 캐릭터** — 에이전트 활동을 픽셀 애니메이션으로 시각화 (Default/Cat 테마)
 - **슬래시 자동완성** — `~/.claude/commands`, `agents`, `skills`와 활성 플러그인 명령을 자동 감지
 - **플러그인 관리** — 채팅에서 `/plugin`으로 마켓플레이스 검색·설치·활성화. CLI의 대화형 `/plugin`은 stream 모드에서 동작하지 않으므로 deck이 가로채 자체 관리 패널로 처리 (설치→캐시 배치→`enabledPlugins` 토글)
@@ -173,13 +184,14 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 
 ## 기능 상태 (Stable / Experimental / Roadmap)
 
-### Stable in v0.5
+### Stable in v0.6
 - **Control Room (통합 관제실)** — 에이전트 목록·생성·승인·정지/삭제가 한 화면. v0.4.0에서 대시보드를 흡수했습니다.
 - **Todo checklist (할일 체크리스트)** — Claude가 세운 계획을 관제실 타일·세션 스트립·채팅 카드에서 확인
 - **Notification centre (알림 센터)** — 지난 알림 목록·지우기, 진입점 네 곳
 - **Companion shell (동반 셸)** — 채팅을 유지한 채 같은 디렉토리에서 명령 실행
+- **Approval allowlist (항상 허용)** — 프로젝트별 완전 일치 규칙, 위험 호출 제외
 - Interactive Terminal (단일 터미널)
-- Prompt Bar (한글/긴 프롬프트 — 모바일·iPad 필수, 데스크톱 선택)
+- Unified input (커서 위치 통합 입력창 — 한글/긴 프롬프트)
 - 방향키/제어키 툴바 (데스크톱·모바일)
 - Project Sessions (프로젝트별 세션)
 - Session History (과거 Claude Code 세션 열람·재개·삭제)
@@ -192,6 +204,10 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 
 ### Experimental
 아래 기능은 동작하지만 아직 크게 다듬지 않았고, 이후 버전에서 변경될 수 있습니다.
+- "자동" 세션과 모델 라우팅 (`PCD_V2_ENABLED=1` + `routing.json`)
+- 로컬 모델 연결
+- Antigravity 네이티브 채팅
+- 아이패드 덱 키보드
 - Browser preview (내장 브라우저)
 - Pixel character (도트 캐릭터)
 - Sound effects (효과음)
@@ -205,10 +221,10 @@ iwr -useb https://raw.githubusercontent.com/LeeSiWal/power-code-deck/main/win-in
 ## 한눈에 보는 구조
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│  Browser (React SPA, 단일 바이너리에 임베드됨)              │
-│  Dashboard · Terminal · Files · Browser · Logs · Settings  │
-└───────────────┬────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│  Browser (React SPA, 단일 바이너리에 임베드됨)                  │
+│  Control · Chat · Terminal · Files · Browser · Logs · Settings │
+└───────────────┬────────────────────────────────────────────────┘
                 │  REST (HTTP/JWT)  +  WebSocket (터미널 스트림)
                 ▼
 ┌────────────────────────────────────────────────────────────┐
@@ -249,6 +265,7 @@ PowerCodeDeck은 AI CLI 도구의 **런처**입니다. 사용하려는 CLI가 �
 |-----|----------|
 | [Claude Code](https://docs.anthropic.com/ko/docs/claude-code) | `npm install -g @anthropic-ai/claude-code` |
 | [OpenAI Codex CLI](https://github.com/openai/codex) | `npm install -g @openai/codex` (`app-server` 지원 버전) |
+| Antigravity CLI (선택) | 공식 설치 스크립트 `https://antigravity.google/cli/install.sh` (npm 아님, 명령어 `agy`, 첫 실행 시 Google 로그인) |
 
 > PowerCodeDeck 자체는 CLI를 설치하지 않습니다. 원하는 CLI를 먼저 설치한 뒤 실행하세요.
 > `Custom` 프리셋을 쓰면 위 목록 외 임의의 커맨드도 실행할 수 있습니다.
@@ -334,7 +351,7 @@ WSL2는 **BIOS/UEFI에서 가상화가 켜져 있어야** 합니다. 설치가 �
 
 ### 수동 설치
 
-필요 도구: `go 1.23+`, `pnpm`
+필요 도구: `go 1.25+`, `pnpm`
 
 ```bash
 git clone https://github.com/LeeSiWal/power-code-deck.git
@@ -358,7 +375,7 @@ make build    # client 빌드 → server/static/ 복사 → go build (→ ./pcd)
 (터미널이 아닌 방식 — PM2, `.app` 더블클릭 등 — 으로 실행되면 자동으로 인증 없음으로 설정됩니다.)
 
 ```
-  PowerCodeDeck v0.2.6 first run
+  PowerCodeDeck v0.6.1 first run
   ------------------------------------------------
   인증을 사용할까요?  (Choose authentication)
     [1] 사용 안 함 / none   (기본값, default)
@@ -371,7 +388,7 @@ make build    # client 빌드 → server/static/ 복사 → go build (→ ./pcd)
 
 ```
   ================================================
-     PowerCodeDeck v0.2.6
+     PowerCodeDeck v0.6.1
      Native web workspace for Claude Code and Codex
   ================================================
 
@@ -453,6 +470,12 @@ PowerCodeDeck은 **서버 터미널과 파일에 접근할 수 있는 도구**�
 - 작업 가능한 루트 디렉터리 제한 (`POWERCODEDECK_WORKSPACE_ROOT`)
 - 리버스 프록시 도메인으로 접근할 때는 `POWERCODEDECK_ALLOWED_HOSTS`에 해당 호스트를 추가 (Host 검증 통과용)
 
+기본으로 적용되는 보호:
+- 외부 사이트에서 온 상태 변경 요청은 403으로 차단합니다. 인증이 꺼져 있어도 적용됩니다.
+- `/api/proxy`의 HTML 외 응답은 샌드박스 처리하고 다운로드로 내려, 덱의 권한으로 스크립트가 실행되지 않습니다.
+- 파일 API는 CLI 로그인 정보 같은 민감한 경로를 숨기고, `.env`는 소유자만 읽을 수 있습니다.
+- "자동" 권한 모드에서 명령 치환, `find -exec`, 인터프리터 `-c`/`-e` 같은 호출은 사람에게 묻습니다.
+
 ---
 
 ## 사용법
@@ -470,9 +493,12 @@ PowerCodeDeck은 **서버 터미널과 파일에 접근할 수 있는 도구**�
 프로젝트를 선택하면 에이전트 타입(프리셋)을 고릅니다:
 - **Claude Code** — Anthropic의 AI 코딩 에이전트
 - **Codex CLI** — OpenAI의 AI CLI
+- **Antigravity** — Google의 `agy` CLI
 - **Custom** — 원하는 커맨드 직접 입력
 
-각 에이전트는 고유 색상(hue)과 도트 캐릭터를 부여받아 대시보드에서 구분됩니다.
+프리셋을 고르지 않고 "자동"으로 시작할 수도 있습니다 → [자동 세션과 모델 라우팅](#자동-세션과-모델-라우팅).
+
+각 에이전트는 고유 색상(hue)과 도트 캐릭터를 부여받아 관제실에서 구분됩니다.
 
 ### 3. 네이티브 채팅과 터미널
 
@@ -487,8 +513,8 @@ CLI의 대화형 전용 커맨드는 stream 모드에서 동작하지 않으므�
 빌트인·스킬만 슬래시 피커에 노출됩니다.
 
 **Shell과 Custom 프리셋은 Interactive Terminal을 사용**합니다. 구조화 프로토콜이 없는
-임의 CLI는 PTY 화면을 그대로 렌더링하며, 한글·긴 프롬프트는 Prompt Bar에서 작성해
-현재 터미널로 전송합니다. 별도의 Chat/Raw 모드는 없습니다.
+임의 CLI는 PTY 화면을 그대로 렌더링하며, 한글·긴 프롬프트는 커서 위치의 통합 입력창에서
+작성해 Enter로 전송합니다. 별도의 Chat/Raw 모드는 없습니다.
 
 **Terminal (직접 입력 및 TUI 호환 모드)**
 - 셸 명령과 Custom CLI를 실행하며, Claude·Codex의 `?terminal` 모드에서는 선택지·승인(y/n)·방향키·Tab·Esc·Ctrl+C 등의 조작을 담당합니다.
@@ -497,14 +523,17 @@ CLI의 대화형 전용 커맨드는 stream 모드에서 동작하지 않으므�
   - Claude Code 같은 TUI에서는 **그냥 드래그만 해도 복사**됩니다 — 앱이 선택을 `OSC 52`로 클립보드에 보내고, PowerCodeDeck이 이를 받아 시스템 클립보드에 씁니다. (안 되는 경우 **⌥(Option, macOS)·Shift(그 외) 누른 채 드래그**로 로컬 선택 후 복사 버튼/단축키를 쓰세요.)
   - `http://<IP>:33033`(집 서버·LAN) 같은 **비보안 접속**에서는 브라우저 클립보드 API가 막혀, 복사는 내부 `execCommand` 폴백으로 처리합니다. 붙여넣기는 `⌘V`(네이티브)를 쓰세요. 완전한 클립보드 지원이 필요하면 `localhost`·`https`·Tailscale 등 **보안 컨텍스트**로 접속하세요.
 
-**Prompt Bar (한글/긴 프롬프트)**
-- textarea에서 IME 조합이 정상 동작하므로 **한글이 자모 분리 없이** 입력됩니다. 완성된 문자열만 터미널로 붙여넣습니다.
-- **Send** — 붙여넣고 Enter까지 전송 (Cmd/Ctrl+Enter) · **Paste** — 붙여넣기만 (Enter 없음) · **Clear** — 지우기 · **터미널 조작** — 터미널로 포커스 이동
-- `Shift+Enter`로 줄바꿈. 한글 조합 중 Enter는 Send로 처리되지 않습니다.
-- **데스크톱**: 선택형 — 상단 **Prompt** 버튼(모든 OS) 또는 `⌘K` / `⌘P`(macOS)로 열고, `Esc`로 닫습니다.
-- **모바일 / iPad**: 항상 표시(접기만 가능) — 터미널에 한글을 직접 입력하면 자모가 분리되므로 Prompt Bar 사용을 기본으로 합니다.
+**통합 입력창 (한글/긴 프롬프트)**
+- 입력창이 터미널 커서 위에 놓여, 글자가 커서 자리에서 바로 조합됩니다. 한글이 **자모 분리 없이** 입력됩니다.
+- 글자는 Enter를 누를 때까지 모았다가 한 번에 붙여넣어 보냅니다. 제어키와 이동 키는 바로 터미널로 갑니다.
+- 작성 중인 글이 없으면 방향키·Backspace가 앱을 조작하고, 글이 있으면 그 글을 편집합니다.
+- URL에 `?classicInput`을 붙이면 이전 방식인 별도 Prompt Bar로 돌아갑니다.
 
-> Terminal은 명령·방향키·승인 조작, Prompt Bar는 한글·긴 문장·멀티라인 — 라는 단순한 역할 분리입니다.
+**덱 키보드 (아이패드)**
+- 물리 키보드가 없는 터치 기기에서 화면이 충분히 크면 iOS 키보드 대신 뜹니다. 터미널과 채팅 입력창이 같은 키보드를 씁니다.
+- Esc·Tab·Ctrl·Alt·Fn·방향키와 모든 기호가 한 화면에 있고, 한/영 키로 두벌식 한글을 직접 조합합니다.
+- Ctrl/Alt/Shift는 한 번 탭하면 다음 키 하나에, 두 번 탭하면 고정으로 적용됩니다.
+- 키 크기는 실제 화면 크기와 방향으로 정해집니다. 물리 키 입력이 들어오면 기본 키보드 모드로 자동 전환합니다.
 
 ### 4. 패널
 
@@ -521,7 +550,7 @@ CLI의 대화형 전용 커맨드는 stream 모드에서 동작하지 않으므�
 - **동작중 / 대기 / 정지** 3상태를 애니메이션으로 구분
 - **Attention 레일** — 승인 대기·에러·정체 세션을 긴급도순으로 상단에 모아 표시
 - **전역 승인 큐** — 세션을 열지 않고도 여러 세션의 승인을 한곳에서 처리 (데스크톱 우측 패널 · 모바일 하단 시트)
-- **타일별 정보** — 최근 도구·대상·활동 시각, Git 브랜치/ahead/dirty, 리스닝 포트(클릭하면 새 탭)
+- **타일별 정보** — 최근 도구·대상·활동 시각, 할일 진행률, Git 브랜치/ahead/dirty
 - **액션** — 열기 / 재시작 / **정지**(실행 중, 되돌릴 수 있음) 또는 **삭제**(정지된 세션만, 확인 후)
 - 헤더의 **프로젝트 추가**로 새 세션 생성
 - 커맨드 팔레트(⌘/Ctrl+K 계열)로 빠른 이동
@@ -531,7 +560,7 @@ CLI의 대화형 전용 커맨드는 stream 모드에서 동작하지 않으므�
 - **알림** — 작업 완료·승인 요청·정체·에러가 발생하면 화면 안 토스트와 배지로 알립니다. 알림을 누르면 해당 세션으로 이동합니다.
 - **알림 센터** (`/notifications`) — 지난 알림을 모아 봅니다. 읽음/안읽음 구분, 종류별 색, 세션 이름과 시각, 그리고 지우기. 진입점은 네 곳입니다 — 모바일 하단 탭(Alerts), 모바일 세션 헤더, 데스크톱 관제실 헤더, 데스크톱 세션 헤더.
 - **웹 푸시** — 세션을 소유한 기기에만 보냅니다. 다만 **그 기기가 앱을 보고 있으면 보내지 않습니다** — 화면 안 토스트가 이미 같은 알림을 띄우므로, 한 사건에 두 번 알리지 않기 위해서입니다. 앱이 백그라운드로 가거나 연결이 끊기면 다시 푸시합니다.
-- **로그 뷰어** — 에이전트별 이벤트 로그 검색 (SQLite 저장, FTS5 + LIKE 폴백)
+- **로그 뷰어** — 에이전트별 이벤트 로그 검색 (SQLite 저장, FTS5 + LIKE 폴백). 터미널 원본 출력이 아니라 생성·시작·종료·재시작·알림 기록입니다.
 
 ---
 
@@ -549,6 +578,31 @@ Claude Code가 `~/.claude/projects/`에 남기는 세션 기록(JSONL)을 서버
 
 ---
 
+## 자동 세션과 모델 라우팅
+
+도구와 모델을 직접 고르지 않고 시작하면 요청에 맞는 실행 프로필(도구·모델·추론 강도·과금 경로)을 고릅니다. **선택 기능**이며, `PCD_V2_ENABLED=1`과 `routing.json`이 있어야 켜집니다. 없으면 "자동" 세션은 Claude Code로 시작합니다.
+
+- **첫 메시지** — 요청 난이도를 VERY_EASY부터 ULTRA까지 등급으로 나누고, 그 등급의 허용된 프로필을 고릅니다.
+- **이후 턴** — 어려운 요청에는 바로 상위 모델로 올라갑니다. 내려가는 것은 5분 이상 쉬었거나 옮기는 쪽이 싸다고 계산될 때입니다. 작업 중간에는 바꾸지 않습니다.
+- **도구 전환** — 쉬었다 돌아오면 Claude와 Codex 사이도 옮겨 갑니다. 대화 내용은 인계문으로 넘깁니다.
+- **조언 구하기** — 긴 대화의 어려운 요청은 모델을 옮기는 대신 상위 모델에게 짧은 조언만 받아 현재 모델에 전달합니다.
+- **Fresh start** — 오래 쉰 긴 대화는 메모와 최근 두 턴, git 상태로 새 대화를 시작합니다. "이전 대화로 바로 보내기"로 건너뛸 수 있습니다.
+- **수동 선택 우선** — 모델이나 추론 강도를 직접 고르면 그 세션의 자동 전환은 꺼집니다.
+
+과금이 확인되지 않거나 구독 밖인 프로필, Antigravity 자동 실행은 기본 차단입니다. 턴별 사용량은 **설정 → 자동 세션 사용량**에서 볼 수 있습니다. Codex는 사용량을 보고하지 않아 "미보고"로 표시됩니다.
+
+### 설정 방법
+
+```bash
+PCD_V2_ENABLED=1                         # .env 또는 서비스 환경에 추가
+PCD_ROUTING_CONFIG=/path/to/routing.json # 선택. 기본은 <사용자 설정 폴더>/powercodedeck/routing.json
+PCD_AUTO_IDLE_SECONDS=300                # 선택. "쉬었다"로 보는 시간
+```
+
+`routing.json`은 서버 시작 시 읽으므로, 직접 고친 뒤에는 재시작해야 합니다. 설정 화면의 **로컬 모델**에서 추가한 서버는 재시작 없이 적용됩니다. 로컬 모델 서버는 사설망과 Tailscale 주소만 허용합니다. 프로필 형식과 판단 규칙은 [docs/architecture/multimodel-routing.md](docs/architecture/multimodel-routing.md)를 참고하세요.
+
+---
+
 ## Session Handoff
 
 데스크톱에서 실행 중인 터미널 또는 Claude·Codex 코딩 세션을 **모바일 / iPad로 그대로 이어받는** 기능입니다.
@@ -557,7 +611,7 @@ QR 코드 한 번 스캔으로, 같은 세션에 그대로 붙어 이어서 작�
 1. 데스크톱에서 터미널 또는 Claude·Codex 세션을 엽니다.
 2. **Continue on Mobile**(모바일에서 이어하기) 버튼을 클릭합니다.
 3. 화면에 표시된 QR 코드를 휴대폰/iPad로 스캔합니다.
-4. 모바일 / iPad에서 같은 세션을 이어서 사용합니다 — 한글·긴 프롬프트 입력을 위해 **Prompt Bar가 자동으로 펼쳐집니다.**
+4. 모바일 / iPad에서 같은 세션을 이어서 사용합니다.
 
 ### 일회용 토큰 (one-time token)
 
@@ -567,6 +621,13 @@ QR 코드 한 번 스캔으로, 같은 세션에 그대로 붙어 이어서 작�
 - **단일 사용(single-use)** — 한 번 사용(redeem)되면 즉시 무효화됩니다.
 - **세션 바인딩** — 발급 시점의 특정 세션에만 연결되어, 다른 에이전트/세션으로는 사용할 수 없습니다.
 - **원문 미저장** — 원문 토큰(raw token)은 데이터베이스에 저장되지 않습니다. **SHA-256 해시만** 저장하고 대조합니다.
+
+### 세션 전용 접속 토큰
+
+인증이 켜져 있으면 QR을 스캔한 기기는 전체 로그인이 아니라 **그 세션에만 쓸 수 있는 토큰**을 받습니다.
+
+- 접근 토큰은 12시간, 갱신 토큰은 24시간 유효합니다. 갱신해도 범위는 넓어지지 않습니다.
+- 다른 세션이나 세션 밖 API를 요청하면 403으로 막힙니다. WebSocket 이벤트도 같습니다.
 
 ### Public URL
 
@@ -684,6 +745,10 @@ Tailscale 주소로 UI(`:5173`)와 서버(`:33209`)를 **다른 오리진**에 �
 - **알림 / 사운드** — 웹 푸시 알림·효과음 on/off
 - **캐릭터 테마** — 도트 캐릭터 스킨 (Default / Cat)
 
+서버에 저장되는 항목:
+- **항상 허용 규칙** — 저장한 규칙을 프로젝트별로 확인·삭제
+- **모델 라우팅 · 로컬 모델 · 자동 세션 사용량** — [자동 세션과 모델 라우팅](#자동-세션과-모델-라우팅) 참고
+
 ### 환경변수 (`.env`)
 
 `POWERCODEDECK_*` prefix를 권장합니다.
@@ -708,6 +773,9 @@ Tailscale 주소로 UI(`:5173`)와 서버(`:33209`)를 **다른 오리진**에 �
 | `POWERCODEDECK_HANDOFF_TOKEN_TTL_SECONDS` | `600` | 일회용 핸드오프 토큰 만료 시간(초) |
 | `POWERCODEDECK_LAN_HANDOFF_ENABLED` | `false` | 같은 LAN에서의 핸드오프 허용 여부 |
 | `POWERCODEDECK_LAN_URL` | (빈 값) | LAN 핸드오프 시 QR에 사용할 주소 |
+| `PCD_V2_ENABLED` | (빈 값) | `1`이면 자동 세션과 모델 라우팅 사용 |
+| `PCD_ROUTING_CONFIG` | `<사용자 설정 폴더>/powercodedeck/routing.json` | 라우팅 설정 파일 경로 |
+| `PCD_AUTO_IDLE_SECONDS` | `300` | 자동 세션이 "쉬었다"로 보는 시간(초) |
 
 > 기존 `AGENTDECK_*` 환경변수도 하위 호환을 위해 계속 지원됩니다.
 > 동일한 값이 함께 존재하면 `POWERCODEDECK_*`가 우선됩니다.
@@ -742,7 +810,7 @@ pcd status [id]        # 상태 확인
 pcd delete <id>        # 에이전트 삭제
 pcd open               # 브라우저 열기
 pcd ping               # 서버 상태 확인
-pcd version            # 버전 (pcd v0.2.6)
+pcd version            # 버전 (pcd v0.6.1)
 pcd help               # 도움말
 ```
 
@@ -752,7 +820,7 @@ CLI 토큰 저장 위치: macOS `~/Library/Application Support/powercodedeck/`, 
 
 ## 기술 스택
 
-### 서버 (Go 1.23)
+### 서버 (Go 1.25)
 - **Gorilla Mux** — HTTP 라우터
 - **Gorilla WebSocket** — 실시간 터미널 스트림
 - **SQLite** (modernc.org/sqlite, 순수 Go·cgo 불필요, WAL 모드) — 에이전트/프로젝트/로그/알림 저장
@@ -786,7 +854,7 @@ power-code-deck/
 │   ├── main.go            # 엔트리포인트: 서비스 조립, 라우터, static 임베드, 배너
 │   ├── cli/               # 서브커맨드 CLI (root, agents, auth)
 │   ├── auth/              # JWT 발급/검증, HTTP·WS 인증 미들웨어
-│   ├── version/           # 제품명/버전 상수 (PowerCodeDeck v0.2.6)
+│   ├── version/           # 제품명/버전 상수 (VERSION 파일에서 읽음)
 │   ├── config/            # 이중 prefix env 로드 + 최초 실행 인증 마법사
 │   ├── db/                # SQLite 초기화 + 마이그레이션
 │   ├── handlers/          # HTTP 핸들러
@@ -802,6 +870,7 @@ power-code-deck/
 │   │   ├── proxy.go       #   외부 URL 프록시 (iframe X-Frame-Options 우회)
 │   │   └── helpers.go     #   공통 응답 헬퍼
 │   ├── middleware/        # CORS, Helmet(CSP), Rate Limiter
+│   ├── internal/          # routing(모델 라우팅), orchestration(v2 작업), ossbridge(로컬 모델 브리지), providers(Antigravity)
 │   ├── services/          # 비즈니스 로직
 │   │   ├── agent.go       #   에이전트 생성/삭제/재시작 (SessionEngine 경유)
 │   │   ├── native_service.go       #   Claude·Codex 네이티브 세션 수명주기·이벤트·승인
@@ -827,14 +896,17 @@ power-code-deck/
 │       ├── pages/         # 라우트 페이지
 │       │   ├── ProjectSelectPage.tsx
 │       │   ├── AgentLauncherPage.tsx
-│       │   ├── DashboardPage.tsx
+│       │   ├── ControlRoomPage.tsx
 │       │   ├── TerminalPage.tsx
 │       │   ├── LogsPage.tsx
+│       │   ├── NotificationsPage.tsx
 │       │   ├── SettingsPage.tsx
 │       │   └── LoginPage.tsx
 │       ├── components/
 │       │   ├── agent/     # 에이전트 카드, 런처, 생성 시트
-│       │   ├── terminal/  # 터미널 뷰, 자체 렌더러(CustomTerminal), Prompt Bar, 세션 히스토리, 핸드오프, 모바일 툴바
+│       │   ├── control/   # 관제실
+│       │   ├── native/    # 네이티브 채팅, 자동 세션, 채팅용 덱 키보드, 플러그인 패널
+│       │   ├── terminal/  # 터미널 뷰, 자체 렌더러(CustomTerminal), 통합 입력창, 덱 키보드, 할일, 동반 셸, 세션 히스토리, 핸드오프
 │       │   ├── file/      # 파일 탐색기, 에디터, 프리뷰
 │       │   ├── browser/   # 내장 브라우저 패널
 │       │   ├── animation/ # 도트 캐릭터, 오비탈, 타임라인, sprites
@@ -851,7 +923,9 @@ power-code-deck/
 │       ├── stores/        # appStore.ts (Zustand)
 │       └── styles/        # 전역 스타일
 ├── install.sh                # 설치 스크립트 (macOS·Linux)
-├── install.ps1 / install.bat # 설치 스크립트 (Windows)
+├── win-install.ps1        # Windows(WSL2) 설치 스크립트
+├── install.ps1 / install.bat # 네이티브 Windows 설치 스크립트
+├── deploy.sh              # systemd 서비스 배포 스크립트
 ├── Makefile               # 빌드 커맨드
 ├── ecosystem.config.js    # PM2 설정
 ├── ARCHITECTURE.md        # 상세 설계 문서
@@ -901,7 +975,7 @@ power-code-deck/
 ┌─────────────────────────────────────────────────────────────┐
 │  PTY 세션 (pcd 서버가 소유)                                   │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │  Claude Code / Codex CLI / Custom                     │  │
+│  │  Shell / Custom / Claude·Codex TUI(?terminal)         │  │
 │  │  (alternate screen buffer + mouse tracking)           │  │
 │  └───────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
@@ -923,7 +997,7 @@ Server:  hub.BroadcastToAgent(agentId, 'terminal:output', data)
 Browser: agentDeckWS.on('terminal:output') → CustomTerm.write(data)
 ```
 
-출력은 동시에 SQLite `logs` 테이블에도 저장되어 로그 뷰어에서 검색됩니다.
+터미널 출력은 스크롤백 링버퍼에만 남습니다. SQLite `logs` 테이블에는 에이전트 생성·시작·종료·재시작과 알림 같은 이벤트가 저장되어 로그 뷰어에서 검색됩니다.
 
 ### DB 스키마 (SQLite, WAL)
 
@@ -931,7 +1005,7 @@ Browser: agentDeckWS.on('terminal:output') → CustomTerm.write(data)
 |--------|-----------|------|
 | `agents` | id, preset, name, tmux_session *(legacy, 미사용)*, working_dir, command, args, status, color_hue, color_name | 에이전트 레코드 |
 | `recent_projects` | path, name, last_opened_at, last_agent_preset, open_count | 최근 프로젝트 이력 |
-| `logs` | agent_id, data, created_at | 터미널 출력 로그 (agent 삭제 시 CASCADE) |
+| `logs` | agent_id, data, created_at | 이벤트/활동 로그 (agent 삭제 시 CASCADE) |
 | `notifications` | agent_id, reason, message, read, created_at | 알림 (agent 삭제 시 CASCADE) |
 
 ### REST API (주요 엔드포인트)
@@ -987,8 +1061,8 @@ GET  /ws?token=<JWT>                               WebSocket
 |------|--------|------|
 | C→S | `terminal:attach` / `terminal:detach` | 터미널 연결/해제 (agentId, cols, rows) |
 | C→S | `terminal:input` | 키 입력 전송 (터미널 직접 입력) |
-| C→S | `terminal:pasteSubmit` | Prompt Bar 텍스트를 붙여넣고 Enter 전송 (서버가 bracketed paste로 래핑) |
-| C→S | `terminal:pasteOnly` | Prompt Bar 텍스트를 붙여넣기만 (Enter 없음) |
+| C→S | `terminal:pasteSubmit` | 입력창 텍스트를 붙여넣고 Enter 전송 (서버가 bracketed paste로 래핑) |
+| C→S | `terminal:pasteOnly` | 입력창 텍스트를 붙여넣기만 (Enter 없음) |
 | C→S | `terminal:resize` | 터미널 크기 변경 |
 | C→S | `file:watch` / `file:unwatch` | 파일 감시 시작/중지 |
 | S→C | `terminal:output` | 터미널 출력 스트림 |
@@ -1034,6 +1108,20 @@ server/*.go + server/static/ ──(go build + embed.FS)──▶ ./pcd
 
 ## Roadmap
 
+### 다음 릴리스 (main에 머지됨)
+
+자동 세션과 모델 라우팅, Fresh start, 로컬 모델, 덱 키보드, 보안 강화, 세션 전용 핸드오프 토큰, 모델 목록 최신화.
+
+### v0.6.1 — 할일 사이드 패널 · 체크리스트 복구 · 권한 모드 제자리 전환 ✅ 출시됨
+
+- **할일 사이드 패널** — 우측 패널 위에 고정되어 탭을 옮겨도 남은 양이 보입니다
+- CLI의 `TaskCreate`/`TaskUpdate` 전환으로 비어 있던 체크리스트 복구
+- 권한 모드를 세션 재시작 없이 전환
+
+### v0.6.0 — 승인 허용 목록 ✅ 출시됨
+
+"항상 허용" 규칙을 프로젝트별로 저장합니다. 위험한 호출은 저장할 수 없고, 플랜 모드는 규칙보다 우선합니다.
+
 ### v0.5.0 — 할일 · 알림 센터 · 동반 셸 ✅ 출시됨
 
 에이전트가 지금 뭘 하는지, 그리고 놓친 알림이 무엇인지를 찾아다니지 않아도 되게 했습니다:
@@ -1061,10 +1149,8 @@ server/*.go + server/static/ ──(go build + embed.FS)──▶ ./pcd
 ### 다음
 
 상세 로드맵은 [ROADMAP.md](ROADMAP.md) 참고. 남은 줄기는:
-- 세션 재진입 시 활동 표시 누락 (버그)
-- 알림에서 해당 **작업**으로 바로 이동 (세션까지는 이미 됩니다)
-- 승인 정책 — "앞으로도 허용"(허용 목록)
-- 관제실 활동 표시 · 할일 체크리스트
+- 알림에서 해당 **작업**으로 바로 이동 (세션까지는 이미 됩니다. 실사용을 보고 착수 여부 결정)
+- 관제실 활동 표시 (의도적 보류)
 
 ---
 
