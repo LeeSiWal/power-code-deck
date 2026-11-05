@@ -62,12 +62,14 @@ const MODELS: { id: string; label: string; desc: string }[] = [
   { id: '', label: 'Auto', desc: 'CLI 기본 선택' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1', desc: '최신 · 복잡하고 긴 작업' },
   { id: 'claude-opus-5-5', label: 'Opus 5.5', desc: '최신 Opus · 복잡한 에이전틱 코딩' },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', desc: '최신 · 균형 · 빠르고 똑똑' },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5', desc: '최신 · 가장 빠름 · 가벼운 작업' },
   { id: 'claude-fable-5', label: 'Fable 5', desc: '이전 세대 · 복잡하고 긴 작업' },
   { id: 'claude-opus-5', label: 'Opus 5', desc: '이전 세대 · 에이전틱 코딩 (1M)' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5', desc: '이전 세대 · 균형' },
   { id: 'claude-opus-4-8', label: 'Opus 4.8', desc: '이전 세대 · 깊은 추론' },
-  { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 · 1M', desc: '초대용량 컨텍스트(1M)' },
-  { id: 'claude-sonnet-5', label: 'Sonnet 5', desc: '균형 · 빠르고 똑똑' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', desc: '가장 빠름 · 가벼운 작업' },
+  { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 · 1M', desc: '이전 세대 · 초대용량 컨텍스트(1M)' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', desc: '이전 세대 · 가벼운 작업' },
 ];
 
 // Effort는 사고 깊이와 토큰 소비량을 함께 정한다 — 모델 다음으로 비용에 크게 영향을 주는
@@ -83,14 +85,19 @@ const EFFORTS: { id: string; label: string; desc: string }[] = [
 ];
 const DEFAULT_EFFORT = 'high';
 
+// Mirrors the account's Codex catalog (`codex` caches it in ~/.codex/models_cache.json).
+// A slug missing here resets a saved choice to Auto (see modelId below), so drop
+// models only once Codex stops listing them.
 const CODEX_MODELS: typeof MODELS = [
   { id: '', label: 'Auto', desc: 'Codex 기본 모델' },
-  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', desc: '깊은 분석 · 높은 완성도' },
-  { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', desc: '균형 잡힌 일상 작업' },
-  { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', desc: '빠르고 명확한 반복 작업' },
-  { id: 'gpt-5.5', label: 'GPT-5.5', desc: '이전 세대 범용 모델' },
-  { id: 'gpt-5.4', label: 'GPT-5.4', desc: '복잡한 코딩 작업' },
-  { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', desc: '가볍고 빠른 코딩 작업' },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra', desc: '최상위 · 가장 어려운 작업' },
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', desc: '최신 · 코딩과 일상 작업의 주력' },
+  { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', desc: '최신 · 균형 잡힌 일상 작업' },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', desc: '빠르고 저렴 · 쉬운 작업' },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol', desc: '이전 세대 주력' },
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', desc: '구세대 · 깊은 분석' },
+  { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', desc: '구세대 · 균형 잡힌 작업' },
+  { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', desc: '구세대 · 빠른 반복 작업' },
 ];
 
 // Permission modes — the TUI's Shift+Tab cycle. Switching is applied to the LIVE
