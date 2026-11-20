@@ -471,17 +471,21 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			opts, _ = loadOpts(sessionID).Normalize()
 		}
 	}
+	s.mu.RLock()
+	teamTimeout := s.teamTimeoutSec
+	s.mu.RUnlock()
+	// Conductors get the dream team tools. A Codex conductor's pcd MCP server is
+	// spawned by codex itself from SelfPath, so it needs the pcd binary too.
+	teamTools := teamTimeout != nil && (kind == "claude" || (kind == "codex" && s.selfBin != ""))
+	// Claude always needs the token (its approval bridge); Codex only for the team
+	// endpoint, which checks the same per-session token.
 	var token string
-	if kind == "claude" {
+	if kind == "claude" || teamTools {
 		var err error
 		if token, err = s.tokens.Issue(sessionID); err != nil {
 			return err
 		}
 	}
-	s.mu.RLock()
-	teamTimeout := s.teamTimeoutSec
-	s.mu.RUnlock()
-	teamTools := kind == "claude" && teamTimeout != nil
 	toolTimeoutMs := 0
 	if teamTools {
 		toolTimeoutMs = (teamTimeout() + 60) * 1000
@@ -493,10 +497,15 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		if kind == "codex" {
 			// Codex maps "auto" to its default (on-request) approval policy, so gated calls
 			// still reach the broker and the same policy applies.
-			return NewCodexDriver(CodexConfig{
+			cfg := CodexConfig{
 				SessionID: sessionID, Cwd: cwd, Model: model, Mode: mode,
 				ResumeID: resume, Broker: s.broker,
-			})
+			}
+			if teamTools {
+				cfg.SelfPath, cfg.TeamURL, cfg.TeamToken = s.selfBin, s.baseURL+"/internal/native/team", token
+				cfg.ToolTimeoutSec = toolTimeoutMs / 1000
+			}
+			return NewCodexDriver(cfg)
 		}
 		return NewClaudeDriver(ClaudeConfig{
 			SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: cliMode,
@@ -1048,8 +1057,9 @@ func (s *NativeService) AppendPrefix(sessionID, text string) {
 	s.mu.Unlock()
 }
 
-// SetTeamTools gives Claude sessions spawned from now on the dream team tools;
-// timeoutSec is read at each spawn (member time limit, for MCP_TOOL_TIMEOUT).
+// SetTeamTools gives Claude and Codex sessions spawned from now on the dream team
+// tools; timeoutSec is read at each spawn (member time limit, for Claude's
+// MCP_TOOL_TIMEOUT).
 func (s *NativeService) SetTeamTools(timeoutSec func() int) {
 	s.mu.Lock()
 	s.teamTimeoutSec = timeoutSec
