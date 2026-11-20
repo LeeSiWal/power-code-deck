@@ -81,3 +81,17 @@ func TestTeamModeRoundTrip(t *testing.T) {
 		t.Fatalf("session = %q", got)
 	}
 }
+
+// TimeoutSec is clamped to TeamMaxTimeoutSec: conductors are spawned with a
+// fixed CLI tool timeout derived from it, so a live Settings change can never
+// outlast what the CLI will wait for.
+func TestTeamSettingsClampTimeout(t *testing.T) {
+	s := DefaultTeamSettings()
+	s.TimeoutSec = 3600
+	if got := NormalizeTeamSettings(s).TimeoutSec; got != 600 || TeamMaxTimeoutSec != 600 {
+		t.Fatalf("clamped = %d (max %d), want 600", got, TeamMaxTimeoutSec)
+	}
+	if TeamToolTimeoutSec != 660 {
+		t.Fatalf("tool timeout = %d, want 660", TeamToolTimeoutSec)
+	}
+}

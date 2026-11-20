@@ -151,7 +151,7 @@ func main() {
 		},
 		Conductor: nativeSvc.TeamConductor,
 	})
-	nativeSvc.SetTeamTools(func() int { return services.LoadTeamSettings(database).TimeoutSec })
+	nativeSvc.SetTeamTools()
 	nativeSvc.SetTurnHook(teamSvc.ResetTurn)
 	nativeSvc.SetTeamBriefSource(func(id, kind, model string) (string, bool) {
 		if !agentSvc.TeamMode(id) {

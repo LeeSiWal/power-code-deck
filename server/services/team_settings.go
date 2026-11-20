@@ -7,6 +7,14 @@ import (
 
 const teamSettingsKey = "team_settings"
 
+// TeamMaxTimeoutSec caps a member call's TimeoutSec. Conductors are spawned with
+// a fixed CLI tool timeout of TeamToolTimeoutSec (the cap plus a margin for the
+// server to answer), so no live Settings change can outlast what the CLI waits.
+const (
+	TeamMaxTimeoutSec  = 600
+	TeamToolTimeoutSec = TeamMaxTimeoutSec + 60
+)
+
 // TeamMember is one CLI a session can call as a read-only team member.
 type TeamMember struct {
 	ID      string `json:"id"`
@@ -46,7 +54,8 @@ func DefaultTeamSettings() TeamSettings {
 }
 
 // NormalizeTeamSettings drops unknown members, appends missing default ones and
-// replaces non-positive limits with the defaults.
+// replaces non-positive limits with the defaults; TimeoutSec is capped at
+// TeamMaxTimeoutSec.
 func NormalizeTeamSettings(s TeamSettings) TeamSettings {
 	def := DefaultTeamSettings()
 	known := map[string]bool{}
@@ -88,6 +97,9 @@ func NormalizeTeamSettings(s TeamSettings) TeamSettings {
 	}
 	if s.TimeoutSec <= 0 {
 		s.TimeoutSec = def.TimeoutSec
+	}
+	if s.TimeoutSec > TeamMaxTimeoutSec {
+		s.TimeoutSec = TeamMaxTimeoutSec
 	}
 	return s
 }

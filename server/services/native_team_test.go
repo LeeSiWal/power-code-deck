@@ -42,13 +42,13 @@ func TestNativeServiceCodexConductorTeamMCP(t *testing.T) {
 	argvFile, envFile := fakeCodex(t)
 	s := NewNativeService("http://127.0.0.1:33033")
 	s.selfBin = "/opt/pcd"
-	s.SetTeamTools(func() int { return 180 })
+	s.SetTeamTools()
 	if err := s.Start("agent-c", "codex", t.TempDir(), "", "", "", ""); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	defer s.Stop("agent-c")
 	argv := strings.Join(readLines(t, argvFile), " ")
-	if !strings.Contains(argv, `mcp_servers.pcd.command="/opt/pcd"`) || !strings.Contains(argv, "mcp_servers.pcd.tool_timeout_sec=240") {
+	if !strings.Contains(argv, `mcp_servers.pcd.command="/opt/pcd"`) || !strings.Contains(argv, "mcp_servers.pcd.tool_timeout_sec=660") {
 		t.Fatalf("argv lacks pcd server: %q", readLines(t, argvFile))
 	}
 	token := ""
@@ -89,7 +89,7 @@ func TestNativeServiceCodexWithoutTeamTools(t *testing.T) {
 	argvFile, _ = fakeCodex(t)
 	s2 := NewNativeService("http://127.0.0.1:33033")
 	s2.selfBin = ""
-	s2.SetTeamTools(func() int { return 180 })
+	s2.SetTeamTools()
 	if err := s2.Start("agent-e", "codex", t.TempDir(), "", "", "", ""); err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestSwitchKindQueuesTeamBrief(t *testing.T) {
 	fakeCodex(t)
 	s := NewNativeService("http://127.0.0.1:33033")
 	s.selfBin = "/opt/pcd"
-	s.SetTeamTools(func() int { return 180 })
+	s.SetTeamTools()
 	s.SetTeamBriefSource(func(id, kind, model string) (string, bool) { return "BRIEF:" + kind + "\n", true })
 	s.sessions["a"] = &nativeSession{id: "a", kind: "claude", driver: &recordingDriver{}, cwd: t.TempDir(), teamTools: true}
 	s.SetTeamBrief("a", "BRIEF:claude\n") // pending from the toggle
@@ -183,7 +183,7 @@ func TestFreshStartQueuesTeamBrief(t *testing.T) {
 		fakeCodex(t)
 		s := NewNativeService("http://127.0.0.1:33033")
 		s.selfBin = "/opt/pcd"
-		s.SetTeamTools(func() int { return 180 })
+		s.SetTeamTools()
 		s.SetTeamBriefSource(func(id, kind, model string) (string, bool) { return "BRIEF:" + kind + "\n", c.on })
 		if err := s.Start("b", "codex", t.TempDir(), "", c.resume, "", ""); err != nil {
 			t.Fatalf("%s: start: %v", c.name, err)
