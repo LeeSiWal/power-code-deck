@@ -416,3 +416,24 @@ func TestAskCanceledDoesNotRetry(t *testing.T) {
 		t.Fatalf("status %s calls %d", r.Status, h.callCount())
 	}
 }
+
+// An unknown member id is refused with the ids the conductor can actually call
+// (enabled, not itself), so it can correct the call.
+func TestAskUnknownMemberListsIDs(t *testing.T) {
+	h := newTeamHarness(t)
+	h.condAdapt, h.condModel = "claude", "claude-sonnet-5-5"
+	r := h.ask("gemini", "look")
+	if r.Status != "refused" {
+		t.Fatalf("got %+v", r)
+	}
+	for _, id := range []string{"codex", "claude-haiku"} {
+		if !strings.Contains(r.Reason, id) {
+			t.Errorf("reason %q lacks %s", r.Reason, id)
+		}
+	}
+	for _, id := range []string{"claude-sonnet", "claude-fable"} {
+		if strings.Contains(r.Reason, id) {
+			t.Errorf("reason %q lists %s (self or disabled)", r.Reason, id)
+		}
+	}
+}

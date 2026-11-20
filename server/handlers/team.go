@@ -13,7 +13,7 @@ import (
 type TeamNative interface {
 	TeamReady(id string) bool
 	TeamConductor(id string) (kind, model, cwd string, ok bool)
-	AppendPrefix(id, text string)
+	SetTeamBrief(id, text string)
 }
 
 // TeamModeGet reports whether dream team mode is on for a session, and whether
@@ -31,7 +31,9 @@ func TeamModeGet(agents *services.AgentService, native TeamNative) http.HandlerF
 }
 
 // TeamModeSet turns dream team mode on or off for a session. Turning it on
-// puts the team brief in front of the session's next message.
+// queues the team brief for the session's next message (only when its process
+// has the team tools; a new conductor conversation gets it at start); turning
+// it off drops a brief that has not been sent yet.
 func TeamModeSet(agents *services.AgentService, db *sql.DB, native TeamNative) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
@@ -51,9 +53,12 @@ func TeamModeSet(agents *services.AgentService, db *sql.DB, native TeamNative) h
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if body.On && !was {
+		switch {
+		case body.On && !was && native.TeamReady(id):
 			kind, model, _, _ := native.TeamConductor(id)
-			native.AppendPrefix(id, services.TeamBrief(services.LoadTeamSettings(db), kind, model))
+			native.SetTeamBrief(id, services.TeamBrief(services.LoadTeamSettings(db), kind, model))
+		case !body.On:
+			native.SetTeamBrief(id, "")
 		}
 		jsonResponse(w, map[string]bool{"on": body.On})
 	}

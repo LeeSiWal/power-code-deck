@@ -53,8 +53,15 @@ func TestTeamToggleHandler(t *testing.T) {
 	}
 	do("PUT", "/api/agents/"+a.ID+"/team", `{"on":true}`)
 	do("PUT", "/api/agents/"+a.ID+"/team", `{"on":false}`)
+	if len(nat.prefixes) != 1 || nat.cleared != 1 {
+		t.Fatalf("prefixes = %d cleared = %d, want 1/1", len(nat.prefixes), nat.cleared)
+	}
+	// A process without the team tools gets no brief (it could not call them);
+	// its next conductor conversation does, at start.
+	nat.ready = false
+	do("PUT", "/api/agents/"+a.ID+"/team", `{"on":true}`)
 	if len(nat.prefixes) != 1 {
-		t.Fatalf("prefixes = %d, want 1", len(nat.prefixes))
+		t.Fatalf("brief queued while not ready: %d", len(nat.prefixes))
 	}
 	if w := do("PUT", "/api/agents/nope/team", `{"on":true}`); w.Code != http.StatusNotFound {
 		t.Fatalf("unknown agent: %d", w.Code)
@@ -67,10 +74,17 @@ func TestTeamToggleHandler(t *testing.T) {
 type fakeTeamNative struct {
 	ready    bool
 	prefixes []string
+	cleared  int
 }
 
 func (f *fakeTeamNative) TeamReady(string) bool { return f.ready }
 func (f *fakeTeamNative) TeamConductor(string) (string, string, string, bool) {
 	return "claude", "claude-opus-5-5", "/w", true
 }
-func (f *fakeTeamNative) AppendPrefix(_ string, text string) { f.prefixes = append(f.prefixes, text) }
+func (f *fakeTeamNative) SetTeamBrief(_ string, text string) {
+	if text == "" {
+		f.cleared++
+		return
+	}
+	f.prefixes = append(f.prefixes, text)
+}

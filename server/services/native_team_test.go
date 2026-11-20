@@ -18,19 +18,6 @@ func TestSendResetsTeamTurn(t *testing.T) {
 	}
 }
 
-func TestAppendPrefixKeepsExisting(t *testing.T) {
-	s := &NativeService{sessions: map[string]*nativeSession{}}
-	s.AppendPrefix("a", "brief\n")
-	if s.prefix["a"] != "brief\n" {
-		t.Fatalf("first = %q", s.prefix["a"])
-	}
-	s.SetPrefix("b", "handoff")
-	s.AppendPrefix("b", "brief")
-	if s.prefix["b"] != "handoff\n\nbrief" {
-		t.Fatalf("appended = %q", s.prefix["b"])
-	}
-}
-
 func TestTeamConductorAndReady(t *testing.T) {
 	s := &NativeService{sessions: map[string]*nativeSession{}}
 	s.sessions["a"] = &nativeSession{id: "a", kind: "claude", model: "claude-opus-5-5", cwd: "/w", teamTools: true}
@@ -109,5 +96,104 @@ func TestNativeServiceCodexWithoutTeamTools(t *testing.T) {
 	defer s2.Stop("agent-e")
 	if got := strings.Join(readLines(t, argvFile), " "); got != "app-server --stdio" || s2.TeamReady("agent-e") {
 		t.Fatalf("no selfBin: argv = %q ready=%v", got, s2.TeamReady("agent-e"))
+	}
+}
+
+// recordingDriver records each text the CLI receives.
+type recordingDriver struct {
+	nativeExecution
+	sent []string
+}
+
+func (d *recordingDriver) Send(text string) error { d.sent = append(d.sent, text); return nil }
+func (d *recordingDriver) Stop()                  {}
+
+// A pending team brief survives a Delegator/SwitchKind SetPrefix and goes in
+// front of the handoff prefix, consumed once.
+func TestTeamBriefSurvivesSetPrefix(t *testing.T) {
+	d := &recordingDriver{}
+	s := &NativeService{sessions: map[string]*nativeSession{}}
+	s.sessions["a"] = &nativeSession{id: "a", kind: "claude", driver: d}
+	s.SetTeamBrief("a", "<드림팀 모드>\n</드림팀 모드>\n\n")
+	s.SetPrefix("a", "<강한 모델의 조언>\nadvice\n</강한 모델의 조언>\n\n[현재 요청]\n")
+	if err := s.Send("a", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Send("a", "again"); err != nil {
+		t.Fatal(err)
+	}
+	want := "<드림팀 모드>\n</드림팀 모드>\n\n<강한 모델의 조언>\nadvice\n</강한 모델의 조언>\n\n[현재 요청]\nhi"
+	if len(d.sent) != 2 || d.sent[0] != want || d.sent[1] != "again" {
+		t.Fatalf("sent = %q", d.sent)
+	}
+}
+
+// Queuing the brief again (on→off→on before the next message) never doubles it;
+// an empty brief clears a pending one.
+func TestTeamBriefDedupe(t *testing.T) {
+	d := &recordingDriver{}
+	s := &NativeService{sessions: map[string]*nativeSession{}}
+	s.sessions["a"] = &nativeSession{id: "a", kind: "claude", driver: d}
+	s.SetTeamBrief("a", "B\n")
+	s.SetTeamBrief("a", "B\n")
+	s.Send("a", "x")
+	s.SetTeamBrief("a", "B\n")
+	s.SetTeamBrief("a", "")
+	s.Send("a", "y")
+	if len(d.sent) != 2 || d.sent[0] != "B\nx" || d.sent[1] != "y" {
+		t.Fatalf("sent = %q", d.sent)
+	}
+}
+
+// A tool switch starts a new conductor conversation: the brief is queued once,
+// written for the new tool, alongside the handoff prefix.
+func TestSwitchKindQueuesTeamBrief(t *testing.T) {
+	fakeCodex(t)
+	s := NewNativeService("http://127.0.0.1:33033")
+	s.selfBin = "/opt/pcd"
+	s.SetTeamTools(func() int { return 180 })
+	s.SetTeamBriefSource(func(id, kind, model string) (string, bool) { return "BRIEF:" + kind + "\n", true })
+	s.sessions["a"] = &nativeSession{id: "a", kind: "claude", driver: &recordingDriver{}, cwd: t.TempDir(), teamTools: true}
+	s.SetTeamBrief("a", "BRIEF:claude\n") // pending from the toggle
+	if err := s.SwitchKind("a", "codex", "", "", "HANDOFF\n"); err != nil {
+		t.Fatalf("switch: %v", err)
+	}
+	defer s.Stop("a")
+	s.mu.RLock()
+	brief, prefix := s.teamBrief["a"], s.prefix["a"]
+	s.mu.RUnlock()
+	if brief != "BRIEF:codex\n" || prefix != "HANDOFF\n" {
+		t.Fatalf("brief %q prefix %q", brief, prefix)
+	}
+}
+
+// A fresh conductor conversation with team mode on gets the brief; off (or a
+// resumed conversation) gets none.
+func TestFreshStartQueuesTeamBrief(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		on     bool
+		resume string
+		want   string
+	}{
+		{"fresh on", true, "", "BRIEF:codex\n"},
+		{"fresh off", false, "", ""},
+		{"resumed on", true, "thr-1", ""},
+	} {
+		fakeCodex(t)
+		s := NewNativeService("http://127.0.0.1:33033")
+		s.selfBin = "/opt/pcd"
+		s.SetTeamTools(func() int { return 180 })
+		s.SetTeamBriefSource(func(id, kind, model string) (string, bool) { return "BRIEF:" + kind + "\n", c.on })
+		if err := s.Start("b", "codex", t.TempDir(), "", c.resume, "", ""); err != nil {
+			t.Fatalf("%s: start: %v", c.name, err)
+		}
+		s.mu.RLock()
+		got := s.teamBrief["b"]
+		s.mu.RUnlock()
+		s.Stop("b")
+		if got != c.want {
+			t.Errorf("%s: brief = %q, want %q", c.name, got, c.want)
+		}
 	}
 }

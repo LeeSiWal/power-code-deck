@@ -153,6 +153,12 @@ func main() {
 	})
 	nativeSvc.SetTeamTools(func() int { return services.LoadTeamSettings(database).TimeoutSec })
 	nativeSvc.SetTurnHook(teamSvc.ResetTurn)
+	nativeSvc.SetTeamBriefSource(func(id, kind, model string) (string, bool) {
+		if !agentSvc.TeamMode(id) {
+			return "", false
+		}
+		return services.TeamBrief(services.LoadTeamSettings(database), kind, model), true
+	})
 
 	// Control Room (v0.3.0): the multi-session overview aggregator. It projects
 	// existing state (agents + activity + pending approvals + notifications) into

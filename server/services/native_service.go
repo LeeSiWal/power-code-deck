@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -143,6 +142,12 @@ type NativeService struct {
 	// turn sent (TeamService.ResetTurn).
 	teamTimeoutSec func() int
 	turnHook       func(sessionID string)
+	// teamBrief is the dream team brief waiting for the session's next message.
+	// Kept apart from prefix so a handoff/advice SetPrefix cannot drop it, and
+	// set (not appended) so it is never queued twice. teamBriefFor supplies the
+	// brief when a new conductor conversation starts (ok=false: team mode off).
+	teamBrief    map[string]string
+	teamBriefFor func(sessionID, kind, model string) (string, bool)
 }
 
 type nativeSession struct {
@@ -526,6 +531,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		}
 		return native.New(providers.Identity{ExecutionID: rand.Text(), Provider: provider}, newWireDriver(resume))
 	}
+	freshConv := resumeID == "" // a new conversation that has not seen the team brief
 	d, err := newDriver(resumeID)
 	if err != nil {
 		s.tokens.Revoke(sessionID)
@@ -547,6 +553,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			return buildErr
 		}
 		d = replacement
+		freshConv = true
 		if err2 := d.Start(); err2 != nil {
 			s.tokens.Revoke(sessionID)
 			return err
@@ -585,6 +592,10 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	// on this device or another — resumes with them.
 	if save != nil {
 		save(sessionID, model, mode, effort)
+	}
+
+	if freshConv {
+		s.queueTeamBrief(sessionID)
 	}
 
 	go s.pump(sess)
@@ -746,7 +757,15 @@ func (s *NativeService) restart(sessionID, model, mode, effort string) error {
 	s.carry[sessionID] = carried
 	s.mu.Unlock()
 	old.driver.Stop() // its pump exits; the pump guard keeps it from evicting the new one
-	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, effort, false)
+	if err := s.startSession(sessionID, kind, cwd, model, resumeID, mode, effort, false); err != nil {
+		return err
+	}
+	// A process that just gained the team tools (started before them) needs the
+	// brief even though its conversation continues.
+	if !old.teamTools {
+		s.queueTeamBrief(sessionID)
+	}
+	return nil
 }
 
 // SetModel switches model, keeping the current permission mode and effort.
@@ -929,6 +948,12 @@ func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText s
 		driverText = p + driverText
 		delete(s.prefix, sessionID)
 	}
+	// The team brief goes first: a handoff/advice prefix ends right before the
+	// user's text ("[현재 요청]") and must stay adjacent to it.
+	if b := s.teamBrief[sessionID]; b != "" {
+		driverText = b + driverText
+		delete(s.teamBrief, sessionID)
+	}
 	note := s.notes[sessionID]
 	delete(s.notes, sessionID)
 	s.mu.Unlock()
@@ -1029,6 +1054,9 @@ func (s *NativeService) SwitchKind(sessionID, kind, model, effort, prefix string
 		s.mu.Unlock()
 		return err
 	}
+	// The new tool is a new conductor: it has never seen the brief, and the old
+	// one listed members for the previous tool.
+	s.queueTeamBrief(sessionID)
 	return nil
 }
 
@@ -1043,18 +1071,42 @@ func (s *NativeService) SetPrefix(sessionID, text string) {
 	s.mu.Unlock()
 }
 
-// AppendPrefix adds text after any prefix already waiting for the next message
-// (a blank line between), instead of replacing it.
-func (s *NativeService) AppendPrefix(sessionID, text string) {
+// SetTeamBrief queues the dream team brief for the session's next message,
+// replacing any brief already waiting ("" clears it). Independent of SetPrefix.
+func (s *NativeService) SetTeamBrief(sessionID, text string) {
 	s.mu.Lock()
-	if s.prefix == nil {
-		s.prefix = map[string]string{}
+	if s.teamBrief == nil {
+		s.teamBrief = map[string]string{}
 	}
-	if p := s.prefix[sessionID]; p != "" {
-		text = strings.TrimRight(p, "\n") + "\n\n" + text
+	if text == "" {
+		delete(s.teamBrief, sessionID)
+	} else {
+		s.teamBrief[sessionID] = text
 	}
-	s.prefix[sessionID] = text
 	s.mu.Unlock()
+}
+
+// SetTeamBriefSource sets how a new conductor conversation gets its brief: fn
+// returns it, or ok=false when team mode is off for the session.
+func (s *NativeService) SetTeamBriefSource(fn func(sessionID, kind, model string) (string, bool)) {
+	s.mu.Lock()
+	s.teamBriefFor = fn
+	s.mu.Unlock()
+}
+
+// queueTeamBrief queues a fresh brief for a session whose process has the team
+// tools, when its source says team mode is on.
+func (s *NativeService) queueTeamBrief(sessionID string) {
+	s.mu.RLock()
+	fn := s.teamBriefFor
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if fn == nil || sess == nil || !sess.teamTools {
+		return
+	}
+	if text, ok := fn(sessionID, sess.kind, sess.model); ok {
+		s.SetTeamBrief(sessionID, text)
+	}
 }
 
 // SetTeamTools gives Claude and Codex sessions spawned from now on the dream team

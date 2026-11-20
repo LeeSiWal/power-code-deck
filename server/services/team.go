@@ -132,7 +132,18 @@ func (t *TeamService) Ask(ctx context.Context, c TeamCall) TeamResult {
 		}
 	}
 	if !found {
-		return finish("refused", fmt.Sprintf("알 수 없는 직원입니다: %q", c.Member))
+		adapter, model, _, _ := t.d.Conductor(c.AgentID)
+		var ids []string
+		for _, x := range s.Members {
+			if x.Enabled && !isTeamSelf(x, adapter, model) {
+				ids = append(ids, x.ID)
+			}
+		}
+		avail := "없음"
+		if len(ids) > 0 {
+			avail = strings.Join(ids, ", ")
+		}
+		return finish("refused", fmt.Sprintf("알 수 없는 직원입니다: %q. 부를 수 있는 직원 id: %s", c.Member, avail))
 	}
 	res.Label = m.Label
 	if !m.Enabled {
