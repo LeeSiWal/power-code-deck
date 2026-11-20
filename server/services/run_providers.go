@@ -31,10 +31,28 @@ func (p *RunProviders) NewWith(provider providers.ID, id, cwd, model, effort str
 // Claude's plan permission mode and Codex's read-only sandbox. "" keeps the
 // implementation defaults.
 func (p *RunProviders) NewRole(provider providers.ID, id, cwd, model, effort, mode string) (providers.Execution, error) {
+	return p.NewRoleResume(provider, id, cwd, model, effort, mode, "")
+}
+
+// NewRoleResume is NewRole that continues the provider conversation named by
+// resume (Claude session_id / Codex threadId). "" starts a fresh conversation.
+func (p *RunProviders) NewRoleResume(provider providers.ID, id, cwd, model, effort, mode, resume string) (providers.Execution, error) {
+	driver, err := p.roleDriver(provider, id, cwd, model, effort, mode, resume)
+	if err != nil {
+		return nil, err
+	}
+	adapter, err := native.New(providers.Identity{ExecutionID: id, Provider: provider}, driver)
+	if err != nil {
+		p.Tokens.Revoke(id)
+		return nil, err
+	}
+	return &runExecution{Execution: adapter, cleanup: func() { p.Tokens.Revoke(id); p.Broker.CancelSession(id) }}, nil
+}
+
+func (p *RunProviders) roleDriver(provider providers.ID, id, cwd, model, effort, mode, resume string) (native.Driver, error) {
 	if p.Broker == nil || p.Tokens == nil || id == "" || cwd == "" {
 		return nil, fmt.Errorf("Run provider configuration is incomplete")
 	}
-	var driver native.Driver
 	switch provider {
 	case providers.Claude:
 		if p.ApproveURL == "" || p.SelfPath == "" {
@@ -44,18 +62,11 @@ func (p *RunProviders) NewRole(provider providers.ID, id, cwd, model, effort, mo
 		if err != nil {
 			return nil, err
 		}
-		driver = NewClaudeDriver(ClaudeConfig{SessionID: id, Cwd: cwd, ApproveURL: p.ApproveURL, ApproveToken: token, SelfPath: p.SelfPath, Model: model, Effort: effort, PermissionMode: mode})
+		return NewClaudeDriver(ClaudeConfig{SessionID: id, Cwd: cwd, ApproveURL: p.ApproveURL, ApproveToken: token, SelfPath: p.SelfPath, Model: model, Effort: effort, PermissionMode: mode, ResumeID: resume}), nil
 	case providers.Codex:
-		driver = NewCodexDriver(CodexConfig{SessionID: id, Cwd: cwd, Broker: p.Broker, Model: model, Effort: effort, Mode: mode})
-	default:
-		return nil, fmt.Errorf("unsupported Run provider %q", provider)
+		return NewCodexDriver(CodexConfig{SessionID: id, Cwd: cwd, Broker: p.Broker, Model: model, Effort: effort, Mode: mode, ResumeID: resume}), nil
 	}
-	adapter, err := native.New(providers.Identity{ExecutionID: id, Provider: provider}, driver)
-	if err != nil {
-		p.Tokens.Revoke(id)
-		return nil, err
-	}
-	return &runExecution{Execution: adapter, cleanup: func() { p.Tokens.Revoke(id); p.Broker.CancelSession(id) }}, nil
+	return nil, fmt.Errorf("unsupported Run provider %q", provider)
 }
 
 type runExecution struct {
