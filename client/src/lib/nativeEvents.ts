@@ -149,7 +149,11 @@ export function foldEvents(events: StreamEvent[]): ChatItem[] {
       // Whether OUR permission bridge is connected decides if approvals are even
       // possible. Without it the CLI denies every gated tool and still reports the
       // turn as a success — so this is worth showing, not hiding.
-      const bridgeOk = (ev.mcp_servers ?? []).some((m) => m.name === 'pcd' && m.status === 'connected');
+      // Codex is the exception: its approvals go through app-server itself, and pcd
+      // appears in its init only when the dream team tools are configured — so a
+      // Codex session without pcd is normal, not a broken bridge.
+      const codex = ev.claude_code_version === 'Codex app-server';
+      const bridgeOk = codex || (ev.mcp_servers ?? []).some((m) => m.name === 'pcd' && m.status === 'connected');
       const key = `${ev.model ?? ''}|${ev.cwd ?? ''}`;
       if (key === lastSessionKey) continue; // same session info — don't repeat the banner
       lastSessionKey = key;

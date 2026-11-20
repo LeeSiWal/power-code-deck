@@ -120,6 +120,12 @@ export interface DelegateJob {
 export interface AutoModelUsage { tool: string; model: string; effort: string; turns: number; reported: number; input: number; output: number; cacheCreation: number; cacheRead: number }
 export interface AutoIdleBucket { label: string; minSeconds: number; turns: number; reported: number; cacheRead: number; inputTotal: number }
 export interface AutoUsage { turns: number; models: AutoModelUsage[]; modelSwitches: number; toolSwitches: number; delegations: number; freshStarts: number; handoffTokens: number; idle: AutoIdleBucket[]; idleThresholdSeconds: number }
+// Dream team (server/services/team_settings.go). Adapter/model/label are pinned
+// by the server; a PUT only changes each member's `enabled` and the four limits.
+export interface TeamMember { id: string; adapter: string; model: string; label: string; enabled: boolean }
+export interface TeamSettings { members: TeamMember[]; resultMaxChars: number; maxCallsPerTurn: number; sessionTokenCap: number; timeoutSec: number }
+/** on: the session's toggle; ready: its running CLI already has the team tools. */
+export interface TeamMode { on: boolean; ready: boolean }
 // Settings → 로컬 모델 (GET/PUT/DELETE /v2/routing/local).
 export interface LocalModelEntry {
   id: string; url: string; kind: 'openai' | 'ollama' | string; model: string;
@@ -358,6 +364,12 @@ export const api = {
     apiFetch<RouteTurnResult>(`/agents/${encodeURIComponent(id)}/route-turn`, { method: 'POST', body: JSON.stringify({ goal, confirmTool }) }),
   autoUsage: (id: string) => apiFetch<AutoUsage>(`/agents/${encodeURIComponent(id)}/auto-usage`),
   autoUsageRecent: (days = 7) => apiFetch<AutoUsage>(`/auto-usage?days=${days}`),
+  getTeam: (id: string) => apiFetch<TeamMode>(`/agents/${encodeURIComponent(id)}/team`),
+  setTeam: (id: string, on: boolean) => apiFetch<{ on: boolean }>(`/agents/${encodeURIComponent(id)}/team`, { method: 'PUT', body: JSON.stringify({ on }) }),
+  teamSettings: () => apiFetch<TeamSettings>('/team/settings'),
+  saveTeamSettings: (s: TeamSettings) => apiFetch<TeamSettings>('/team/settings', { method: 'PUT', body: JSON.stringify(s) }),
+  teamResult: (id: string, callId: string) => apiFetch<{ text: string }>(`/agents/${encodeURIComponent(id)}/team/results/${encodeURIComponent(callId)}`),
+  raiseTeamCap: (id: string) => apiFetch<{ ok: boolean }>(`/agents/${encodeURIComponent(id)}/team/raise`, { method: 'POST' }),
   delegateStatus: (id: string, job: string) => apiFetch<DelegateJob>(`/agents/${encodeURIComponent(id)}/delegate/${encodeURIComponent(job)}`),
   freshStatus: (id: string, job: string) => apiFetch<FreshJob>(`/agents/${encodeURIComponent(id)}/fresh/${encodeURIComponent(job)}`),
   cancelFresh: (id: string, job: string) => apiFetch<void>(`/agents/${encodeURIComponent(id)}/fresh/${encodeURIComponent(job)}`, { method: 'DELETE' }),
