@@ -197,3 +197,28 @@ func TestFreshStartQueuesTeamBrief(t *testing.T) {
 		}
 	}
 }
+
+// A message queued while a turn is still running does not start a new turn, so
+// it must not reset the member-call counter.
+func TestSendMidTurnKeepsTeamTurn(t *testing.T) {
+	s := &NativeService{sessions: map[string]*nativeSession{}}
+	s.sessions["a"] = &nativeSession{id: "a", kind: "claude", driver: &recordingDriver{}}
+	var got int
+	s.SetTurnHook(func(string) { got++ })
+	if err := s.Send("a", "first"); err != nil { // starts a turn
+		t.Fatal(err)
+	}
+	if err := s.Send("a", "queued"); err != nil { // same turn, still running
+		t.Fatal(err)
+	}
+	if got != 1 {
+		t.Fatalf("hook calls = %d, want 1", got)
+	}
+	s.emit(s.sessions["a"], nativeResultEvent()) // the turn ends
+	if err := s.Send("a", "next"); err != nil {
+		t.Fatal(err)
+	}
+	if got != 2 {
+		t.Fatalf("hook calls = %d, want 2", got)
+	}
+}

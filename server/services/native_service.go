@@ -959,16 +959,19 @@ func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText s
 	note := s.notes[sessionID]
 	delete(s.notes, sessionID)
 	s.mu.Unlock()
-	if hook != nil {
-		hook(sessionID) // a new user turn: the member-call counter starts over
-	}
 	sess.mu.Lock()
+	newTurn := !sess.turnActive // a message queued mid-turn joins the running turn
 	sess.turnActive = true
 	sess.mu.Unlock()
+	if hook != nil && newTurn {
+		hook(sessionID) // a new user turn: the member-call counter starts over
+	}
 	if err := sess.driver.Send(driverText); err != nil {
-		sess.mu.Lock()
-		sess.turnActive = false
-		sess.mu.Unlock()
+		if newTurn { // a failed mid-turn send leaves the running turn alone
+			sess.mu.Lock()
+			sess.turnActive = false
+			sess.mu.Unlock()
+		}
 		return err
 	}
 	// Record the user turn in history NOW — at its real position, before the reply
