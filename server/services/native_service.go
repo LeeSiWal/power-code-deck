@@ -1100,13 +1100,18 @@ func (s *NativeService) SetTeamBriefSource(fn func(sessionID, kind, model string
 }
 
 // queueTeamBrief queues a fresh brief for a session whose process has the team
-// tools, when its source says team mode is on.
+// tools, when its source says team mode is on; a process without them drops any
+// brief still waiting.
 func (s *NativeService) queueTeamBrief(sessionID string) {
 	s.mu.RLock()
 	fn := s.teamBriefFor
 	sess := s.sessions[sessionID]
 	s.mu.RUnlock()
-	if fn == nil || sess == nil || !sess.teamTools {
+	if fn == nil || sess == nil {
+		return
+	}
+	if !sess.teamTools { // a brief would name tools this process does not have
+		s.SetTeamBrief(sessionID, "")
 		return
 	}
 	if text, ok := fn(sessionID, sess.kind, sess.model); ok {

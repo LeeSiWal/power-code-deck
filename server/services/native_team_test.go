@@ -222,3 +222,25 @@ func TestSendMidTurnKeepsTeamTurn(t *testing.T) {
 		t.Fatalf("hook calls = %d, want 2", got)
 	}
 }
+
+// Switching to a tool whose process has no team tools drops a pending brief:
+// it would tell the new tool to call tools it does not have.
+func TestSwitchKindWithoutTeamToolsDropsBrief(t *testing.T) {
+	fakeCodex(t)
+	s := NewNativeService("http://127.0.0.1:33033")
+	s.selfBin = "" // codex cannot get the pcd MCP server
+	s.SetTeamTools()
+	s.SetTeamBriefSource(func(id, kind, model string) (string, bool) { return "BRIEF:" + kind + "\n", true })
+	s.sessions["a"] = &nativeSession{id: "a", kind: "claude", driver: &recordingDriver{}, cwd: t.TempDir(), teamTools: true}
+	s.SetTeamBrief("a", "BRIEF:claude\n")
+	if err := s.SwitchKind("a", "codex", "", "", ""); err != nil {
+		t.Fatalf("switch: %v", err)
+	}
+	defer s.Stop("a")
+	s.mu.RLock()
+	brief, ok := s.teamBrief["a"]
+	s.mu.RUnlock()
+	if ok {
+		t.Fatalf("stale brief kept: %q", brief)
+	}
+}
