@@ -7,6 +7,7 @@ import (
 
 	_ "modernc.org/sqlite"
 	"powercodedeck/db"
+	"powercodedeck/internal/providers"
 )
 
 // Only auto sessions are recorded; unreported usage stays out of the sums (and
@@ -63,4 +64,48 @@ func TestAutoUsageRecordsTurns(t *testing.T) {
 			t.Fatal("turns survived their session")
 		}
 	}
+}
+
+// Team member calls are not conductor turns: they stay out of the turn counts,
+// per-model rows and handoff tokens, and are reported as their own total.
+func TestAutoUsageSeparatesTeamCalls(t *testing.T) {
+	database, err := sql.Open("sqlite", t.TempDir()+"/agents.db?_pragma=foreign_keys(ON)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	s := &AgentService{db: database, engine: &recordingEngine{}}
+	a, _ := s.Create(CreateAgentRequest{Preset: AutoPreset, Name: "자동", WorkingDir: t.TempDir()})
+	if _, err := s.Bind(a.ID, BindRequest{Preset: "claude-code", Command: "claude", NativeModel: "claude-opus-5-5", AutoProfile: "claude-opus"}); err != nil {
+		t.Fatal(err)
+	}
+	u := NewAutoUsage(database)
+	u.Note(a.ID, TurnMeta{Switch: "start", IdleSeconds: -1})
+	u.Observe(a.ID, nativeResultEventWithUsage(&StreamUsage{InputTokens: 100, OutputTokens: 20}))
+	haiku := TeamMember{ID: "claude-haiku", Adapter: "claude", Model: "claude-haiku-5-5"}
+	u.RecordTeam(a.ID, haiku, 500, &providers.Usage{InputTokens: 40, OutputTokens: 10, CacheCreationInputTokens: 5})
+	u.RecordTeam(a.ID, TeamMember{ID: "codex", Adapter: "codex"}, 300, nil)
+
+	for _, sum := range []UsageSummary{mustSummary(t, u, a.ID, time.Time{}), mustSummary(t, u, "", time.Now().Add(-time.Hour))} {
+		if sum.Turns != 1 || len(sum.Models) != 1 || sum.HandoffTokens != 0 {
+			t.Fatalf("team rows leaked into turn stats: %+v", sum)
+		}
+		tm := sum.Team
+		if tm.Calls != 2 || tm.Reported != 1 || tm.Unknown != 1 || tm.Input != 40 || tm.Output != 10 || tm.CacheCreation != 5 {
+			t.Fatalf("team total %+v", tm)
+		}
+	}
+}
+
+func mustSummary(t *testing.T, u *AutoUsage, agentID string, since time.Time) UsageSummary {
+	t.Helper()
+	sum, err := u.Summary(agentID, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sum
 }

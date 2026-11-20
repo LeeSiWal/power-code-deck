@@ -104,6 +104,21 @@ type UsageSummary struct {
 	HandoffTokens  int64        `json:"handoffTokens"` // estimated, from the handoff text size
 	Idle           []IdleBucket `json:"idle"`
 	IdleThresholdS int          `json:"idleThresholdSeconds"`
+	// Team is the dream team member calls, kept out of everything above: they
+	// are not conductor turns.
+	Team TeamUsage `json:"team"`
+}
+
+// TeamUsage totals dream team member calls. Reported counts the calls whose CLI
+// reported usage (token sums cover only those); Unknown the rest.
+type TeamUsage struct {
+	Calls         int   `json:"calls"`
+	Reported      int   `json:"reported"`
+	Unknown       int   `json:"unknown"`
+	Input         int64 `json:"input"`
+	Output        int64 `json:"output"`
+	CacheCreation int64 `json:"cacheCreation"`
+	CacheRead     int64 `json:"cacheRead"`
 }
 
 // idleBuckets split idle gaps around the 5-minute prompt cache lifetime.
@@ -115,6 +130,8 @@ func (u *AutoUsage) Summary(agentID string, since time.Time) (UsageSummary, erro
 	if agentID != "" {
 		where, args = "agent_id = ?", []any{agentID}
 	}
+	teamWhere := where + " AND switch_kind = 'team'"
+	where += " AND COALESCE(switch_kind, '') != 'team'"
 	sum := UsageSummary{Models: []ModelUsage{}}
 	rows, err := u.db.Query(`SELECT tool, model, effort, COUNT(*), COUNT(input_tokens), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
 		COALESCE(SUM(cache_creation),0), COALESCE(SUM(cache_read),0) FROM auto_turns WHERE `+where+` GROUP BY tool, model, effort ORDER BY COUNT(*) DESC`, args...)
@@ -144,6 +161,10 @@ func (u *AutoUsage) Summary(agentID string, since time.Time) (UsageSummary, erro
 			append(append([]any{}, args...), b.MinSeconds, max)...).Scan(&b.Turns, &b.Reported, &b.CacheRead, &b.InputTotal)
 		sum.Idle = append(sum.Idle, b)
 	}
+	_ = u.db.QueryRow(`SELECT COUNT(*), COUNT(input_tokens), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+		COALESCE(SUM(cache_creation),0), COALESCE(SUM(cache_read),0) FROM auto_turns WHERE `+teamWhere, args...).
+		Scan(&sum.Team.Calls, &sum.Team.Reported, &sum.Team.Input, &sum.Team.Output, &sum.Team.CacheCreation, &sum.Team.CacheRead)
+	sum.Team.Unknown = sum.Team.Calls - sum.Team.Reported
 	return sum, nil
 }
 
