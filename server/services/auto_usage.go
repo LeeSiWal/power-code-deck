@@ -158,6 +158,11 @@ func (u *AutoUsage) RecordMemo(agentID string, w MemoWriter, inputTokens int, us
 	u.recordAux(agentID, "memo", DelegateTarget{Adapter: w.Adapter, Model: w.Model, Effort: w.Effort}, inputTokens, usage)
 }
 
+// RecordTeam records a dream team member call (switch_kind "team").
+func (u *AutoUsage) RecordTeam(agentID string, m TeamMember, briefTokens int, usage *providers.Usage) {
+	u.recordAux(agentID, "team", DelegateTarget{ProfileID: m.ID, Adapter: m.Adapter, Model: m.Model}, briefTokens, usage)
+}
+
 func (u *AutoUsage) recordAux(agentID, kind string, t DelegateTarget, briefTokens int, usage *providers.Usage) {
 	effort := t.Effort
 	if t.Adapter != "claude" {

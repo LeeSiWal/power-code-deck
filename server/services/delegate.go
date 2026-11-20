@@ -105,15 +105,28 @@ func (d *Delegator) ask(ctx context.Context, job *DelegateJob, provider provider
 	if err := exec.Send(brief); err != nil {
 		return "", nil, err
 	}
-	// The answer is the result text (Claude) or, when the turn end carries none
-	// (Codex reports no result text or status), the assistant's own messages.
+	answer, o, err := collectAnswer(ctx, exec)
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", nil, fmt.Errorf("조언이 %s 안에 끝나지 않았습니다", delegateTimeout)
+		}
+		return "", nil, err
+	}
+	if answerFailed(o, answer) {
+		return "", o.Usage, fmt.Errorf("조언 호출 실패: %.300s", outcomeDetail(o))
+	}
+	return answer, o.Usage, nil
+}
+
+// collectAnswer reads one turn of a read-only role execution. The answer is the
+// result text (Claude) or, when the turn end carries none (Codex reports no
+// result text or status), the assistant's own top-level messages. A non-nil
+// error means the stream ended before the turn did; otherwise o is non-nil.
+func collectAnswer(ctx context.Context, exec providers.Execution) (answer string, o *providers.Outcome, err error) {
 	var said []string
 	for {
 		ev, err := exec.Next(ctx)
 		if err != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				return "", nil, fmt.Errorf("조언이 %s 안에 끝나지 않았습니다", delegateTimeout)
-			}
 			return "", nil, err
 		}
 		if ev.Kind == providers.Message && !ev.Delta && ev.Role == "assistant" && ev.ParentToolCallID == "" {
@@ -126,17 +139,22 @@ func (d *Delegator) ask(ctx context.Context, job *DelegateJob, provider provider
 		if ev.Kind != providers.TurnFinished || ev.Outcome == nil {
 			continue
 		}
-		o := ev.Outcome
-		answer := strings.TrimSpace(o.Text)
+		answer := strings.TrimSpace(ev.Outcome.Text)
 		if answer == "" {
 			answer = strings.TrimSpace(strings.Join(said, "\n\n"))
 		}
-		failed := o.IsError || o.Status == providers.CompletionFailed || o.Status == providers.CompletionInterrupted
-		if failed || answer == "" {
-			return "", o.Usage, fmt.Errorf("조언 호출 실패: %.300s", strings.TrimSpace(o.Text+" "+o.Reason+" "+o.Diagnostics))
-		}
-		return answer, o.Usage, nil
+		return answer, ev.Outcome, nil
 	}
+}
+
+// answerFailed reports a turn that errored, was interrupted or said nothing.
+func answerFailed(o *providers.Outcome, answer string) bool {
+	return o.IsError || o.Status == providers.CompletionFailed || o.Status == providers.CompletionInterrupted || answer == ""
+}
+
+// outcomeDetail is the outcome's own explanation of a failed turn.
+func outcomeDetail(o *providers.Outcome) string {
+	return strings.TrimSpace(o.Text + " " + o.Reason + " " + o.Diagnostics)
 }
 
 // Get returns a job of this agent.
