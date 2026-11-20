@@ -1,6 +1,6 @@
 // Framework-free assertions (type-checked by tsc like the other *.test.ts files).
 import {
-  agyPasteMessage, elapsedLabel, parseTeamResult, pickAgyTerminal, teamStatusLabel, teamTokensLabel, teamToolCall,
+  agyPasteMessage, elapsedLabel, parseTeamResult, pickAgyTerminal, teamLimitValue, teamStatusLabel, teamTokensLabel, teamToolCall,
 } from './teamTools';
 
 function equal(actual: unknown, expected: unknown, label: string) {
@@ -62,3 +62,13 @@ const agents = [
 equal(pickAgyTerminal(agents, '/p')?.id, 't2', 'running terminal agy preferred');
 equal(pickAgyTerminal(agents.slice(0, 3), '/p')?.id, 't1', 'stopped terminal agy reused');
 equal(pickAgyTerminal(agents.slice(0, 2), '/p'), undefined, 'native agy never reused');
+
+// Settings number inputs keep the typed string; it becomes a number only on
+// blur/save. Empty or non-numbers → 0 (the server restores the default), the
+// timeout is capped at the server's 600s.
+equal(teamLimitValue('timeoutSec', ''), 0, 'empty limit → 0');
+equal(teamLimitValue('timeoutSec', 'abc'), 0, 'garbage limit → 0');
+equal(teamLimitValue('maxCallsPerTurn', ' 4.7 '), 4, 'fraction floored');
+equal(teamLimitValue('maxCallsPerTurn', '-3'), 0, 'negative → 0');
+equal(teamLimitValue('timeoutSec', '9999'), 600, 'timeout capped at 600');
+equal(teamLimitValue('sessionTokenCap', '9999999'), 9999999, 'other limits not capped');

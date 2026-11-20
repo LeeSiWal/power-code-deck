@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { api, type RoutingAdapterStatus, type TeamSettings } from '../../lib/api';
 import { observationLabel } from '../../lib/routingLabels';
+import { TEAM_MAX_TIMEOUT_SEC, teamLimitValue, type TeamLimitKey } from '../../lib/teamTools';
 
-const LIMITS: { key: 'resultMaxChars' | 'maxCallsPerTurn' | 'sessionTokenCap' | 'timeoutSec'; label: string; hint: string }[] = [
+const LIMITS: { key: TeamLimitKey; label: string; hint: string }[] = [
   { key: 'resultMaxChars', label: '결과 최대 글자 수', hint: '넘으면 잘라서 지휘자에게 보냅니다' },
   { key: 'maxCallsPerTurn', label: '턴당 최대 호출', hint: '한 번의 답변에서 팀원을 부르는 횟수' },
   { key: 'sessionTokenCap', label: '세션 토큰 상한', hint: 'Claude 팀원의 입력+출력+캐시 생성 합계' },
-  { key: 'timeoutSec', label: '호출 시간 제한(초)', hint: '넘으면 팀원을 멈춥니다' },
+  { key: 'timeoutSec', label: '호출 시간 제한(초)', hint: `넘으면 팀원을 멈춥니다 (최대 ${TEAM_MAX_TIMEOUT_SEC}초)` },
 ];
 
 const GOOD = ['installed', 'authenticated'];
@@ -23,19 +24,34 @@ export function TeamPanel() {
   const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading');
   const [saving, setSaving] = useState<'idle' | 'busy' | 'done' | 'error'>('idle');
   const [adapters, setAdapters] = useState<RoutingAdapterStatus[] | null>(null);
+  // What the user is typing in each limit box; becomes a number on blur/save, so
+  // clearing a box to retype it does not snap it to 0 mid-edit.
+  const [texts, setTexts] = useState<Partial<Record<TeamLimitKey, string>>>({});
 
   useEffect(() => {
     api.teamSettings().then((s) => { setSaved(s); setDraft(s); setState('ok'); }).catch(() => setState('error'));
     api.routingSnapshot().then((s) => setAdapters(s.adapters ?? [])).catch(() => setAdapters(null));
   }, []);
 
-  const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(saved);
+  // The draft with any limit still being typed folded in.
+  const withTexts = (d: TeamSettings): TeamSettings => {
+    const out = { ...d };
+    for (const [k, v] of Object.entries(texts) as [TeamLimitKey, string][]) out[k] = teamLimitValue(k, v);
+    return out;
+  };
+  const commit = (key: TeamLimitKey) => {
+    const v = texts[key];
+    if (!draft || v === undefined) return;
+    setDraft({ ...draft, [key]: teamLimitValue(key, v) });
+    setTexts(({ [key]: _, ...rest }) => rest);
+  };
+  const dirty = !!draft && JSON.stringify(withTexts(draft)) !== JSON.stringify(saved);
   const save = async () => {
     if (!draft) return;
     setSaving('busy');
     try {
-      const s = await api.saveTeamSettings(draft);
-      setSaved(s); setDraft(s); setSaving('done');
+      const s = await api.saveTeamSettings(withTexts(draft));
+      setSaved(s); setDraft(s); setTexts({}); setSaving('done');
     } catch {
       setSaving('error');
     }
@@ -89,11 +105,11 @@ export function TeamPanel() {
               <label key={l.key} className="text-xs space-y-0.5">
                 <span className="block font-medium">{l.label}</span>
                 <input
-                  type="number"
-                  min={1}
+                  type="text"
                   inputMode="numeric"
-                  value={draft[l.key]}
-                  onChange={(e) => setDraft({ ...draft, [l.key]: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                  value={texts[l.key] ?? String(draft[l.key])}
+                  onChange={(e) => setTexts({ ...texts, [l.key]: e.target.value })}
+                  onBlur={() => commit(l.key)}
                   className="w-full bg-deck-bg border border-deck-border rounded px-2 py-1 text-xs outline-none focus:border-deck-accent"
                 />
                 <span className="block text-[11px] text-deck-text-dim">{l.hint}</span>
@@ -110,7 +126,7 @@ export function TeamPanel() {
             </button>
             {saving === 'done' && !dirty && <span className="text-xs text-emerald-400">저장했습니다</span>}
             {saving === 'error' && <span className="text-xs text-red-400">저장하지 못했습니다</span>}
-            <span className="text-[11px] text-deck-text-dim">0 이하는 기본값으로 돌아갑니다</span>
+            <span className="text-[11px] text-deck-text-dim">비우거나 0 이하로 두면 기본값으로 돌아갑니다</span>
           </div>
         </>
       )}

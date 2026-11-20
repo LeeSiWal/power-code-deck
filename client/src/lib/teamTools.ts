@@ -115,3 +115,17 @@ export function pickAgyTerminal<A extends AgentLike>(agents: A[], cwd: string): 
   const candidates = agents.filter((a) => a.command === 'agy' && a.preset !== 'antigravity' && a.workingDir === cwd);
   return candidates.find((a) => a.status === 'running') ?? candidates[0];
 }
+
+export type TeamLimitKey = 'resultMaxChars' | 'maxCallsPerTurn' | 'sessionTokenCap' | 'timeoutSec';
+
+/** The server's TimeoutSec cap (team_settings.go TeamMaxTimeoutSec). */
+export const TEAM_MAX_TIMEOUT_SEC = 600;
+
+/**
+ * Turns a Settings limit input's text into the value to save. Empty, garbage or
+ * ≤0 → 0, which the server replaces with the default; the timeout is capped.
+ */
+export function teamLimitValue(key: TeamLimitKey, text: string): number {
+  const n = Math.max(0, Math.floor(Number(text.trim()) || 0));
+  return key === 'timeoutSec' ? Math.min(n, TEAM_MAX_TIMEOUT_SEC) : n;
+}
