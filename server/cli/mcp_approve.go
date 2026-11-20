@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 )
 
 // `pcd mcp-approve` — the permission bridge.
@@ -31,8 +32,79 @@ import (
 //	PCD_APPROVE_URL     http://127.0.0.1:33033/internal/native/approve
 //	PCD_APPROVE_TOKEN   per-session secret; the server rejects anything else
 //	PCD_APPROVE_SESSION the agent/session id this claude belongs to
+//	PCD_MCP_TOOLS       comma list over approve,team (unset = approve only)
+//	PCD_TEAM_URL        http://127.0.0.1:33033/internal/native/team (team tools)
 
-const approveToolName = "approve"
+const (
+	approveToolName = "approve"
+	askMemberTool   = "ask_member"
+	handoffAgyTool  = "handoff_to_agy"
+)
+
+// enabledTools reads PCD_MCP_TOOLS. Unset means approve only, so every spawn
+// from before dream team mode behaves exactly as it did.
+func enabledTools() (approve, team bool) {
+	v := os.Getenv("PCD_MCP_TOOLS")
+	if v == "" {
+		return true, false
+	}
+	for _, t := range strings.Split(v, ",") {
+		switch strings.TrimSpace(t) {
+		case "approve":
+			approve = true
+		case "team":
+			team = true
+		}
+	}
+	return approve, team
+}
+
+// mcpTools is the tools/list payload for the enabled groups. Team descriptions
+// stay short: they ride in every conductor request's context.
+func mcpTools(approve, team bool) []any {
+	tools := []any{}
+	if approve {
+		tools = append(tools, map[string]any{
+			"name":        approveToolName,
+			"description": "Ask the PowerCodeDeck user to approve a tool call. Blocks until they answer.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"tool_name":   map[string]any{"type": "string"},
+					"input":       map[string]any{"type": "object"},
+					"tool_use_id": map[string]any{"type": "string"},
+				},
+				"required": []string{"tool_name", "input"},
+			},
+		})
+	}
+	if team {
+		tools = append(tools,
+			map[string]any{
+				"name":        askMemberTool,
+				"description": "Delegate a read-only task (reading/summarizing files, an independent review) to another CLI team member and get its answer. Members cannot edit files or run commands. Pass relative paths in files.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"member": map[string]any{"type": "string", "description": "member id from the team list"},
+						"task":   map[string]any{"type": "string"},
+						"files":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+					"required": []string{"member", "task"},
+				},
+			},
+			map[string]any{
+				"name":        handoffAgyTool,
+				"description": "Hand a task to the user's Antigravity (agy) app. Shows the user a card; the user runs it and pastes the result back later. Do not wait in this turn.",
+				"inputSchema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"task": map[string]any{"type": "string"}},
+					"required":   []string{"task"},
+				},
+			})
+	}
+	return tools
+}
 
 // mcpRequest is a JSON-RPC 2.0 frame from the CLI. Notifications have no id.
 type mcpRequest struct {
@@ -59,12 +131,14 @@ type mcpError struct {
 //
 //	{"tool_name":"Write","input":{...},"tool_use_id":"toolu_..."}
 type toolsCallParams struct {
-	Name      string `json:"name"`
-	Arguments struct {
-		ToolName  string          `json:"tool_name"`
-		Input     json.RawMessage `json:"input"`
-		ToolUseID string          `json:"tool_use_id"`
-	} `json:"arguments"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+type approveArgs struct {
+	ToolName  string          `json:"tool_name"`
+	Input     json.RawMessage `json:"input"`
+	ToolUseID string          `json:"tool_use_id"`
 }
 
 // approveRequest/Response are the bridge↔server contract (ours, not Anthropic's).
@@ -81,12 +155,16 @@ type approveResponse struct {
 	Message      string          `json:"message,omitempty"`
 }
 
-func cmdMCPApprove() {
-	in := bufio.NewScanner(os.Stdin)
+func cmdMCPApprove() { serveMCP(os.Stdin, os.Stdout) }
+
+// serveMCP speaks MCP over the given stream until it ends.
+func serveMCP(r io.Reader, w io.Writer) {
+	approveOn, teamOn := enabledTools()
+	in := bufio.NewScanner(r)
 	// Tool inputs can be large (a Write's whole file content), so don't let the
 	// default 64KB line cap truncate a frame into invalid JSON.
 	in.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	out := bufio.NewWriter(os.Stdout)
+	out := bufio.NewWriter(w)
 
 	send := func(resp mcpResponse) {
 		resp.JSONRPC = "2.0"
@@ -130,19 +208,7 @@ func cmdMCPApprove() {
 			// Notifications carry no id and must not be answered.
 
 		case "tools/list":
-			send(mcpResponse{ID: req.ID, Result: map[string]any{"tools": []any{map[string]any{
-				"name":        approveToolName,
-				"description": "Ask the PowerCodeDeck user to approve a tool call. Blocks until they answer.",
-				"inputSchema": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"tool_name":   map[string]any{"type": "string"},
-						"input":       map[string]any{"type": "object"},
-						"tool_use_id": map[string]any{"type": "string"},
-					},
-					"required": []string{"tool_name", "input"},
-				},
-			}}}})
+			send(mcpResponse{ID: req.ID, Result: map[string]any{"tools": mcpTools(approveOn, teamOn)}})
 
 		case "tools/call":
 			var p toolsCallParams
@@ -150,15 +216,26 @@ func cmdMCPApprove() {
 				send(mcpResponse{ID: req.ID, Error: &mcpError{Code: -32602, Message: "bad params"}})
 				continue
 			}
-			if p.Name != approveToolName {
+			if teamOn && (p.Name == askMemberTool || p.Name == handoffAgyTool) {
+				text, ok := askTeam(p.Name, p.Arguments)
+				result := map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}}
+				if !ok {
+					result["isError"] = true
+				}
+				send(mcpResponse{ID: req.ID, Result: result})
+				continue
+			}
+			if p.Name != approveToolName || !approveOn {
 				send(mcpResponse{ID: req.ID, Error: &mcpError{Code: -32601, Message: "unknown tool " + p.Name}})
 				continue
 			}
+			var a approveArgs
+			_ = json.Unmarshal(p.Arguments, &a)
 			decision := askServer(approveRequest{
 				SessionID: os.Getenv("PCD_APPROVE_SESSION"),
-				ToolName:  p.Arguments.ToolName,
-				Input:     p.Arguments.Input,
-				ToolUseID: p.Arguments.ToolUseID,
+				ToolName:  a.ToolName,
+				Input:     a.Input,
+				ToolUseID: a.ToolUseID,
 			})
 			// The CLI reads content[0].text as the JSON decision.
 			payload, _ := json.Marshal(decision)
@@ -219,3 +296,56 @@ func askServer(req approveRequest) approveResponse {
 	return out
 }
 
+// teamRequest is the bridge↔server contract for the team tools.
+type teamRequest struct {
+	SessionID string          `json:"sessionId"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+// askTeam forwards one team tool call to pcd and returns the server's JSON body
+// as the tool result text. Like askServer there is NO client timeout — the
+// server enforces the member time limit — and an unreachable deck becomes an
+// error result, never a made-up answer. ok=false marks such an error.
+func askTeam(tool string, args json.RawMessage) (string, bool) {
+	fail := func(reason string) (string, bool) {
+		b, _ := json.Marshal(map[string]string{"status": "failed", "reason": "PowerCodeDeck: " + reason})
+		return string(b), false
+	}
+	url := os.Getenv("PCD_TEAM_URL")
+	if url == "" {
+		return fail("team bridge is not configured (no PCD_TEAM_URL).")
+	}
+	if len(args) == 0 {
+		args = json.RawMessage(`{}`)
+	}
+	body, err := json.Marshal(teamRequest{SessionID: os.Getenv("PCD_APPROVE_SESSION"), Tool: tool, Arguments: args})
+	if err != nil {
+		return fail("could not encode the request.")
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fail("could not build the request.")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-PCD-Approve-Token", os.Getenv("PCD_APPROVE_TOKEN"))
+
+	client := &http.Client{Timeout: 0} // the server enforces TimeoutSec
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return fail(fmt.Sprintf("could not reach the deck (%v).", err))
+	}
+	defer resp.Body.Close()
+	out, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return fail("the deck's answer was unreadable.")
+	}
+	if resp.StatusCode != http.StatusOK {
+		msg := bytes.TrimSpace(out)
+		if len(msg) > 256 {
+			msg = msg[:256]
+		}
+		return fail(fmt.Sprintf("the deck refused the call (%d %s).", resp.StatusCode, msg))
+	}
+	return string(bytes.TrimSpace(out)), true
+}

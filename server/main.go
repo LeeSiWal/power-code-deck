@@ -133,6 +133,27 @@ func main() {
 	agentSvc.SetNativeLiveness(nativeSvc.Running)
 	hub.SetNativeService(nativeSvc)
 
+	// Dream team: Claude conductors can ask read-only members (other CLIs). The
+	// members run through their own RunProviders whose broker denies everything,
+	// so a Claude member's approval request and a Codex member's approval both
+	// end in a refusal rather than a card. Independent of PCD_V2_ENABLED.
+	teamSelf, err := os.Executable()
+	if err != nil {
+		teamSelf = "pcd"
+	}
+	teamTokens := services.NewApproveTokenStore()
+	teamBroker := services.NewDenyingBroker("읽기 전용 직원은 승인이 필요한 작업을 할 수 없습니다.")
+	teamProviders := &services.RunProviders{Broker: teamBroker, Tokens: teamTokens, SelfPath: teamSelf, ApproveURL: "http://127.0.0.1:" + cfg.Port + "/internal/team/approve"}
+	teamSvc := services.NewTeamService(services.TeamDeps{
+		DB: database, Agents: agentSvc, Usage: autoUsage,
+		NewExec: func(provider providers.ID, id, cwd, model, mode, resume string) (providers.Execution, error) {
+			return teamProviders.NewRoleResume(provider, id, cwd, model, "", mode, resume)
+		},
+		Conductor: nativeSvc.TeamConductor,
+	})
+	nativeSvc.SetTeamTools(func() int { return services.LoadTeamSettings(database).TimeoutSec })
+	nativeSvc.SetTurnHook(teamSvc.ResetTurn)
+
 	// Control Room (v0.3.0): the multi-session overview aggregator. It projects
 	// existing state (agents + activity + pending approvals + notifications) into
 	// per-session summaries and pushes changed ones as coalesced agent:summaries
@@ -212,6 +233,10 @@ func main() {
 	// Deliberately outside /api and its auth middleware: the caller is our own
 	// child process holding a per-session token, not a browser with a JWT.
 	r.HandleFunc("/internal/native/approve", handlers.NativeApprove(nativeSvc.Broker(), nativeSvc.Tokens())).Methods("POST")
+	// Dream team: conductors' ask_member/handoff_to_agy calls (native tokens), and
+	// the approval bridge of the members themselves (denies everything).
+	r.HandleFunc("/internal/native/team", handlers.NativeTeam(teamSvc, agentSvc, nativeSvc.Tokens())).Methods("POST")
+	r.HandleFunc("/internal/team/approve", handlers.NativeApprove(teamBroker, teamTokens)).Methods("POST")
 
 	r.HandleFunc("/api/auth/health", healthHandler).Methods("GET")
 	r.HandleFunc("/api/health", healthHandler).Methods("GET")
@@ -306,8 +331,10 @@ func main() {
 	api.HandleFunc("/agents/{id}/fresh/{job}", handlers.FreshStatus()).Methods("GET", "DELETE")
 	api.HandleFunc("/agents/{id}/auto-usage", handlers.AutoUsageOf(autoUsage)).Methods("GET")
 	api.HandleFunc("/agents/{id}/escalate", handlers.Escalate(agentSvc, nativeSvc, chooseTurn, autoUsage)).Methods("POST")
-	api.HandleFunc("/agents/{id}/team", handlers.TeamModeGet(agentSvc)).Methods("GET")
-	api.HandleFunc("/agents/{id}/team", handlers.TeamModeSet(agentSvc)).Methods("PUT")
+	api.HandleFunc("/agents/{id}/team", handlers.TeamModeGet(agentSvc, nativeSvc)).Methods("GET")
+	api.HandleFunc("/agents/{id}/team", handlers.TeamModeSet(agentSvc, database, nativeSvc)).Methods("PUT")
+	api.HandleFunc("/agents/{id}/team/results/{callId}", handlers.TeamResultGet(teamSvc)).Methods("GET")
+	api.HandleFunc("/agents/{id}/team/raise", handlers.TeamRaise(teamSvc)).Methods("POST")
 	api.HandleFunc("/team/settings", handlers.TeamSettingsGet(database)).Methods("GET")
 	api.HandleFunc("/team/settings", handlers.TeamSettingsPut(database)).Methods("PUT")
 	api.HandleFunc("/auto-usage", handlers.AutoUsageRecent(autoUsage)).Methods("GET")

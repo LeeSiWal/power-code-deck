@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -136,6 +137,12 @@ type NativeService struct {
 	// that knows nothing about them can still open the session correctly.
 	saveOptions func(agentID string, opts NativeOptions)
 	loadOptions func(agentID string) NativeOptions
+
+	// teamTimeoutSec, when set, gives Claude sessions the dream team tools; it
+	// is read at each spawn for MCP_TOOL_TIMEOUT. turnHook runs on every user
+	// turn sent (TeamService.ResetTurn).
+	teamTimeoutSec func() int
+	turnHook       func(sessionID string)
 }
 
 type nativeSession struct {
@@ -148,6 +155,7 @@ type nativeSession struct {
 	model         string        // remembered so a mode switch keeps the model, and vice-versa
 	mode          string        // permission mode: "" | acceptEdits | plan | bypassPermissions
 	effort        string        // low | medium | high | xhigh | max — fixed for the process's lifetime
+	teamTools     bool          // the process was spawned with the dream team MCP tools
 	opts          NativeOptions // set-once session options, also fixed for the process's lifetime
 	// history keeps the events already emitted, so a device that connects late (or
 	// reconnects from another device) can render the conversation so far. This is
@@ -470,6 +478,14 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			return err
 		}
 	}
+	s.mu.RLock()
+	teamTimeout := s.teamTimeoutSec
+	s.mu.RUnlock()
+	teamTools := kind == "claude" && teamTimeout != nil
+	toolTimeoutMs := 0
+	if teamTools {
+		toolTimeoutMs = (teamTimeout() + 60) * 1000
+	}
 	// One constructor for both attempts below, so the retry can never drift from the
 	// first try — and so the retry is not silently Claude-only, which is what used to
 	// leave a Codex agent permanently unopenable once a bad resume id was stored.
@@ -487,6 +503,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			Effort: effort, Options: opts,
 			ResumeID: resume, ApproveURL: s.baseURL + "/internal/native/approve",
 			ApproveToken: token, SelfPath: s.selfBin,
+			TeamTools: teamTools, TeamURL: s.baseURL + "/internal/native/team", ToolTimeoutMs: toolTimeoutMs,
 		})
 	}
 	newDriver := func(resume string) (nativeExecution, error) {
@@ -527,7 +544,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		}
 	}
 
-	sess := &nativeSession{id: sessionID, driver: d, kind: kind, cwd: cwd, model: model, mode: mode, effort: effort, opts: opts}
+	sess := &nativeSession{id: sessionID, driver: d, kind: kind, cwd: cwd, model: model, mode: mode, effort: effort, opts: opts, teamTools: teamTools}
 	s.mu.Lock()
 	carried, isSwitch := s.carry[sessionID]
 	delete(s.carry, sessionID)
@@ -898,6 +915,7 @@ func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText s
 		defer sess.sendMu.Unlock()
 	}
 	s.mu.Lock()
+	hook := s.turnHook
 	if p := s.prefix[sessionID]; p != "" {
 		driverText = p + driverText
 		delete(s.prefix, sessionID)
@@ -905,6 +923,9 @@ func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText s
 	note := s.notes[sessionID]
 	delete(s.notes, sessionID)
 	s.mu.Unlock()
+	if hook != nil {
+		hook(sessionID) // a new user turn: the member-call counter starts over
+	}
 	sess.mu.Lock()
 	sess.turnActive = true
 	sess.mu.Unlock()
@@ -1011,6 +1032,55 @@ func (s *NativeService) SetPrefix(sessionID, text string) {
 	}
 	s.prefix[sessionID] = text
 	s.mu.Unlock()
+}
+
+// AppendPrefix adds text after any prefix already waiting for the next message
+// (a blank line between), instead of replacing it.
+func (s *NativeService) AppendPrefix(sessionID, text string) {
+	s.mu.Lock()
+	if s.prefix == nil {
+		s.prefix = map[string]string{}
+	}
+	if p := s.prefix[sessionID]; p != "" {
+		text = strings.TrimRight(p, "\n") + "\n\n" + text
+	}
+	s.prefix[sessionID] = text
+	s.mu.Unlock()
+}
+
+// SetTeamTools gives Claude sessions spawned from now on the dream team tools;
+// timeoutSec is read at each spawn (member time limit, for MCP_TOOL_TIMEOUT).
+func (s *NativeService) SetTeamTools(timeoutSec func() int) {
+	s.mu.Lock()
+	s.teamTimeoutSec = timeoutSec
+	s.mu.Unlock()
+}
+
+// SetTurnHook runs fn with the session id each time a user turn is sent.
+func (s *NativeService) SetTurnHook(fn func(sessionID string)) {
+	s.mu.Lock()
+	s.turnHook = fn
+	s.mu.Unlock()
+}
+
+// TeamConductor reports a live Claude/Codex session's tool, current model and
+// working dir — what TeamService needs to run members beside it.
+func (s *NativeService) TeamConductor(sessionID string) (kind, model, cwd string, ok bool) {
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if sess == nil || (sess.kind != "claude" && sess.kind != "codex") {
+		return "", "", "", false
+	}
+	return sess.kind, sess.model, sess.cwd, true
+}
+
+// TeamReady reports whether the running process was spawned with the team tools.
+func (s *NativeService) TeamReady(sessionID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess := s.sessions[sessionID]
+	return sess != nil && sess.teamTools
 }
 
 // SetNextNote shows a message from the deck itself in the chat right after the

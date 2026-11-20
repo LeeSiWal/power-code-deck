@@ -88,3 +88,45 @@ func TestSendBeforeStartFails(t *testing.T) {
 		t.Fatal("Send succeeded on a session that never started")
 	}
 }
+
+// Conductors get the team tools and a tool timeout long enough for a member.
+func TestClaudeDriverTeamEnv(t *testing.T) {
+	d := NewClaudeDriver(ClaudeConfig{
+		SessionID: "agent-42", ApproveURL: "http://127.0.0.1:33033/internal/native/approve",
+		ApproveToken: "secret-tok", SelfPath: "/opt/pcd",
+		TeamTools: true, TeamURL: "http://127.0.0.1:33033/internal/native/team", ToolTimeoutMs: 240000,
+	})
+	var cfg struct {
+		MCPServers map[string]struct {
+			Env map[string]string `json:"env"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(d.mcpConfigJSON()), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	env := cfg.MCPServers["pcd"].Env
+	if env["PCD_MCP_TOOLS"] != "approve,team" || env["PCD_TEAM_URL"] != "http://127.0.0.1:33033/internal/native/team" {
+		t.Fatalf("mcp env = %+v", env)
+	}
+	procEnv := strings.Join(d.processEnv(), "\n")
+	if !strings.Contains(procEnv, "\nMCP_TOOL_TIMEOUT=240000") && !strings.HasPrefix(procEnv, "MCP_TOOL_TIMEOUT=240000") {
+		t.Fatal("process env lacks MCP_TOOL_TIMEOUT=240000")
+	}
+	if strings.Contains(procEnv, "secret-tok") {
+		t.Fatal("token leaked into the process env")
+	}
+	for _, a := range d.buildArgs() {
+		if strings.Contains(a, "secret-tok") && !strings.Contains(a, `"mcpServers"`) {
+			t.Fatalf("token in argv outside --mcp-config: %q", a)
+		}
+	}
+
+	// Default spawns (members, Runs) keep the approve-only server.
+	plain := NewClaudeDriver(ClaudeConfig{SessionID: "m", ApproveURL: "u", ApproveToken: "t", SelfPath: "/opt/pcd"})
+	if strings.Contains(plain.mcpConfigJSON(), "PCD_MCP_TOOLS") || strings.Contains(plain.mcpConfigJSON(), "PCD_TEAM_URL") {
+		t.Fatalf("plain config has team env: %s", plain.mcpConfigJSON())
+	}
+	if strings.Contains(strings.Join(plain.processEnv(), "\n"), "MCP_TOOL_TIMEOUT=240000") {
+		t.Fatal("plain spawn got the team tool timeout")
+	}
+}

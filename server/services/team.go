@@ -18,7 +18,8 @@ import (
 // teamFullTextTTL is how long a member's untruncated answer stays readable.
 const teamFullTextTTL = time.Hour
 
-const teamOffReason = "드림팀 모드가 꺼져 있습니다. 사용자에게 켜 달라고 하지 말고 직접 처리하세요."
+// TeamOffReason is what a conductor hears when it calls the team while the toggle is off.
+const TeamOffReason = "드림팀 모드가 꺼져 있습니다. 사용자에게 켜 달라고 하지 말고 직접 처리하세요."
 
 // TeamDeps is what TeamService needs; NewExec and Conductor are seams so tests
 // never start a real CLI.
@@ -116,7 +117,7 @@ func (t *TeamService) Ask(ctx context.Context, c TeamCall) TeamResult {
 	}
 
 	if !t.d.Agents.TeamMode(c.AgentID) {
-		return finish("refused", teamOffReason)
+		return finish("refused", TeamOffReason)
 	}
 	s := LoadTeamSettings(t.d.DB)
 	task := strings.TrimSpace(c.Task)

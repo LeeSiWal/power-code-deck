@@ -9,20 +9,30 @@ import (
 	"powercodedeck/services"
 )
 
-// TeamModeGet reports whether dream team mode is on for a session.
-func TeamModeGet(agents *services.AgentService) http.HandlerFunc {
+// TeamNative is the part of NativeService the toggle needs.
+type TeamNative interface {
+	TeamReady(id string) bool
+	TeamConductor(id string) (kind, model, cwd string, ok bool)
+	AppendPrefix(id, text string)
+}
+
+// TeamModeGet reports whether dream team mode is on for a session, and whether
+// its running process has the team tools (ready; false until the next restart
+// for sessions started before them).
+func TeamModeGet(agents *services.AgentService, native TeamNative) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
 		if _, err := agents.Get(id); err != nil {
 			jsonError(w, "agent not found", http.StatusNotFound)
 			return
 		}
-		jsonResponse(w, map[string]bool{"on": agents.TeamMode(id)})
+		jsonResponse(w, map[string]bool{"on": agents.TeamMode(id), "ready": native.TeamReady(id)})
 	}
 }
 
-// TeamModeSet turns dream team mode on or off for a session.
-func TeamModeSet(agents *services.AgentService) http.HandlerFunc {
+// TeamModeSet turns dream team mode on or off for a session. Turning it on
+// puts the team brief in front of the session's next message.
+func TeamModeSet(agents *services.AgentService, db *sql.DB, native TeamNative) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
 		var body struct {
@@ -36,9 +46,14 @@ func TeamModeSet(agents *services.AgentService) http.HandlerFunc {
 			jsonError(w, "agent not found", http.StatusNotFound)
 			return
 		}
+		was := agents.TeamMode(id)
 		if err := agents.SetTeamMode(id, body.On); err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if body.On && !was {
+			kind, model, _, _ := native.TeamConductor(id)
+			native.AppendPrefix(id, services.TeamBrief(services.LoadTeamSettings(db), kind, model))
 		}
 		jsonResponse(w, map[string]bool{"on": body.On})
 	}

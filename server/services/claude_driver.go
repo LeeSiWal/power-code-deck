@@ -57,6 +57,14 @@ type ClaudeConfig struct {
 	// SelfPath is the pcd binary to spawn as the MCP permission server — normally
 	// os.Executable(). It's a field so tests can point at a stub.
 	SelfPath string
+
+	// TeamTools adds the dream team tools (ask_member, handoff_to_agy) to the MCP
+	// server, calling back to TeamURL. Only conductors launched by NativeService
+	// set it; members and Runs keep the approve-only server. ToolTimeoutMs, when
+	// > 0, becomes the CLI's MCP_TOOL_TIMEOUT so a long member call isn't cut off.
+	TeamTools     bool
+	TeamURL       string
+	ToolTimeoutMs int
 }
 
 // has reports whether the CLI understands a flag. Unknown capabilities (no probe, or
@@ -270,15 +278,39 @@ func (d *ClaudeDriver) mcpConfigJSON() string {
 			"type":    "stdio",
 			"command": d.cfg.SelfPath,
 			"args":    []string{"mcp-approve"},
-			"env": map[string]string{
-				"PCD_APPROVE_URL":     d.cfg.ApproveURL,
-				"PCD_APPROVE_TOKEN":   d.cfg.ApproveToken,
-				"PCD_APPROVE_SESSION": d.cfg.SessionID,
-			},
+			"env":     d.mcpEnv(),
 		},
 	}}
 	b, _ := json.Marshal(cfg)
 	return string(b)
+}
+
+// mcpEnv is the bridge's env. Without TeamTools PCD_MCP_TOOLS stays unset,
+// which the bridge reads as approve only.
+func (d *ClaudeDriver) mcpEnv() map[string]string {
+	env := map[string]string{
+		"PCD_APPROVE_URL":     d.cfg.ApproveURL,
+		"PCD_APPROVE_TOKEN":   d.cfg.ApproveToken,
+		"PCD_APPROVE_SESSION": d.cfg.SessionID,
+	}
+	if d.cfg.TeamTools {
+		env["PCD_MCP_TOOLS"] = "approve,team"
+		env["PCD_TEAM_URL"] = d.cfg.TeamURL
+	}
+	return env
+}
+
+// processEnv is the CLI process's environment.
+func (d *ClaudeDriver) processEnv() []string {
+	locale := utf8Locale()
+	env := append(os.Environ(),
+		"LANG="+locale,
+		"LC_ALL="+locale,
+	)
+	if d.cfg.TeamTools && d.cfg.ToolTimeoutMs > 0 {
+		env = append(env, "MCP_TOOL_TIMEOUT="+strconv.Itoa(d.cfg.ToolTimeoutMs))
+	}
+	return withAgentPath(env)
 }
 
 // Start launches the CLI and begins streaming events. Events() is closed when the
@@ -307,11 +339,7 @@ func (d *ClaudeDriver) Start() error {
 
 	cmd := exec.Command(bin, d.buildArgs()...)
 	cmd.Dir = d.cfg.Cwd
-	locale := utf8Locale()
-	cmd.Env = withAgentPath(append(os.Environ(),
-		"LANG="+locale,
-		"LC_ALL="+locale,
-	))
+	cmd.Env = d.processEnv()
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
