@@ -645,6 +645,49 @@ func (s *AgentService) SetNativeOptions(id string, opts NativeOptions) {
 	_, _ = s.db.Exec("UPDATE agents SET native_options = ? WHERE id = ?", EncodeNativeOptions(opts), id)
 }
 
+// TeamMode reports whether the session may call team members (dream team mode).
+func (s *AgentService) TeamMode(id string) bool {
+	var on int
+	_ = s.db.QueryRow("SELECT COALESCE(team_mode, 0) FROM agents WHERE id = ?", id).Scan(&on)
+	return on != 0
+}
+
+// SetTeamMode turns dream team mode on or off for one session.
+func (s *AgentService) SetTeamMode(id string, on bool) error {
+	v := 0
+	if on {
+		v = 1
+	}
+	_, err := s.db.Exec("UPDATE agents SET team_mode = ? WHERE id = ?", v, id)
+	return err
+}
+
+// TeamSessions returns the conversation id each team member kept for this
+// session; a row that was never set or holds bad JSON yields an empty map.
+func (s *AgentService) TeamSessions(id string) map[string]string {
+	var raw string
+	_ = s.db.QueryRow("SELECT COALESCE(team_sessions, '') FROM agents WHERE id = ?", id).Scan(&raw)
+	out := map[string]string{}
+	if raw != "" {
+		if json.Unmarshal([]byte(raw), &out) != nil || out == nil {
+			out = map[string]string{}
+		}
+	}
+	return out
+}
+
+// SetTeamSession remembers a member's conversation id so its next call resumes it.
+func (s *AgentService) SetTeamSession(id, memberID, conv string) error {
+	m := s.TeamSessions(id)
+	m[memberID] = conv
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec("UPDATE agents SET team_sessions = ? WHERE id = ?", string(b), id)
+	return err
+}
+
 func (s *AgentService) Restart(id string) (*Agent, error) {
 	agent, err := s.Get(id)
 	if err != nil {
