@@ -3,12 +3,14 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 )
 
 // `pcd mcp-approve` — the permission bridge.
@@ -166,15 +168,37 @@ func serveMCP(r io.Reader, w io.Writer) {
 	in.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	out := bufio.NewWriter(w)
 
+	// Each tools/call runs in its own goroutine: a member can take minutes, and
+	// the CLI must still get permission answers (and be able to cancel) meanwhile.
+	// writeMu serializes frames onto stdout.
+	var writeMu sync.Mutex
 	send := func(resp mcpResponse) {
 		resp.JSONRPC = "2.0"
 		b, err := json.Marshal(resp)
 		if err != nil {
 			return
 		}
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		out.Write(b)
 		out.WriteByte('\n')
 		out.Flush()
+	}
+
+	// inflight maps a request id (compact JSON) to its call's cancel, so
+	// notifications/cancelled can close that call's HTTP request — the server
+	// handler's context then ends and TeamService stops the member.
+	var (
+		inflightMu sync.Mutex
+		inflight   = map[string]context.CancelFunc{}
+		wg         sync.WaitGroup
+	)
+	idKey := func(raw json.RawMessage) string {
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, raw); err != nil {
+			return string(raw)
+		}
+		return buf.String()
 	}
 
 	for in.Scan() {
@@ -204,8 +228,21 @@ func serveMCP(r io.Reader, w io.Writer) {
 				"serverInfo":      map[string]any{"name": "powercodedeck", "version": "0.1.0"},
 			}})
 
-		case "notifications/initialized", "notifications/cancelled":
+		case "notifications/initialized":
 			// Notifications carry no id and must not be answered.
+
+		case "notifications/cancelled":
+			var p struct {
+				RequestID json.RawMessage `json:"requestId"`
+			}
+			if json.Unmarshal(req.Params, &p) == nil && len(p.RequestID) > 0 {
+				inflightMu.Lock()
+				cancel := inflight[idKey(p.RequestID)]
+				inflightMu.Unlock()
+				if cancel != nil {
+					cancel()
+				}
+			}
 
 		case "tools/list":
 			send(mcpResponse{ID: req.ID, Result: map[string]any{"tools": mcpTools(approveOn, teamOn)}})
@@ -216,32 +253,25 @@ func serveMCP(r io.Reader, w io.Writer) {
 				send(mcpResponse{ID: req.ID, Error: &mcpError{Code: -32602, Message: "bad params"}})
 				continue
 			}
-			if teamOn && (p.Name == askMemberTool || p.Name == handoffAgyTool) {
-				text, ok := askTeam(p.Name, p.Arguments)
-				result := map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}}
-				if !ok {
-					result["isError"] = true
+			ctx, cancel := context.WithCancel(context.Background())
+			key := idKey(req.ID)
+			inflightMu.Lock()
+			inflight[key] = cancel
+			inflightMu.Unlock()
+			wg.Add(1)
+			go func(id json.RawMessage, p toolsCallParams) {
+				defer wg.Done()
+				resp := handleToolCall(ctx, id, p, approveOn, teamOn)
+				inflightMu.Lock()
+				delete(inflight, key)
+				inflightMu.Unlock()
+				cancelled := ctx.Err() != nil
+				cancel()
+				// MCP: a cancelled request should not be answered.
+				if !cancelled {
+					send(resp)
 				}
-				send(mcpResponse{ID: req.ID, Result: result})
-				continue
-			}
-			if p.Name != approveToolName || !approveOn {
-				send(mcpResponse{ID: req.ID, Error: &mcpError{Code: -32601, Message: "unknown tool " + p.Name}})
-				continue
-			}
-			var a approveArgs
-			_ = json.Unmarshal(p.Arguments, &a)
-			decision := askServer(approveRequest{
-				SessionID: os.Getenv("PCD_APPROVE_SESSION"),
-				ToolName:  a.ToolName,
-				Input:     a.Input,
-				ToolUseID: a.ToolUseID,
-			})
-			// The CLI reads content[0].text as the JSON decision.
-			payload, _ := json.Marshal(decision)
-			send(mcpResponse{ID: req.ID, Result: map[string]any{
-				"content": []any{map[string]any{"type": "text", "text": string(payload)}},
-			}})
+			}(req.ID, p)
 
 		default:
 			if len(req.ID) > 0 {
@@ -249,6 +279,37 @@ func serveMCP(r io.Reader, w io.Writer) {
 			}
 		}
 	}
+	// stdin ended: let in-flight calls finish and answer. When the CLI really
+	// exits it tears this process down anyway.
+	wg.Wait()
+}
+
+// handleToolCall runs one tools/call. ctx ends when the CLI cancels the call.
+func handleToolCall(ctx context.Context, id json.RawMessage, p toolsCallParams, approveOn, teamOn bool) mcpResponse {
+	if teamOn && (p.Name == askMemberTool || p.Name == handoffAgyTool) {
+		text, ok := askTeam(ctx, p.Name, p.Arguments)
+		result := map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}}
+		if !ok {
+			result["isError"] = true
+		}
+		return mcpResponse{ID: id, Result: result}
+	}
+	if p.Name != approveToolName || !approveOn {
+		return mcpResponse{ID: id, Error: &mcpError{Code: -32601, Message: "unknown tool " + p.Name}}
+	}
+	var a approveArgs
+	_ = json.Unmarshal(p.Arguments, &a)
+	decision := askServerCtx(ctx, approveRequest{
+		SessionID: os.Getenv("PCD_APPROVE_SESSION"),
+		ToolName:  a.ToolName,
+		Input:     a.Input,
+		ToolUseID: a.ToolUseID,
+	})
+	// The CLI reads content[0].text as the JSON decision.
+	payload, _ := json.Marshal(decision)
+	return mcpResponse{ID: id, Result: map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": string(payload)}},
+	}}
 }
 
 // askServer forwards one permission request to pcd and waits for the human.
@@ -261,6 +322,12 @@ func serveMCP(r io.Reader, w io.Writer) {
 // If we can't reach the server at all, deny — the one safe default. Never allow
 // on error: that would run an unapproved tool because a pipe broke.
 func askServer(req approveRequest) approveResponse {
+	return askServerCtx(context.Background(), req)
+}
+
+// askServerCtx is askServer bound to ctx: only an explicit cancel from the CLI
+// ends the wait — there is still no timeout.
+func askServerCtx(ctx context.Context, req approveRequest) approveResponse {
 	url := os.Getenv("PCD_APPROVE_URL")
 	if url == "" {
 		return approveResponse{Behavior: "deny", Message: "PowerCodeDeck: approval bridge is not configured (no PCD_APPROVE_URL)."}
@@ -269,7 +336,7 @@ func askServer(req approveRequest) approveResponse {
 	if err != nil {
 		return approveResponse{Behavior: "deny", Message: "PowerCodeDeck: could not encode the request."}
 	}
-	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return approveResponse{Behavior: "deny", Message: "PowerCodeDeck: could not build the request."}
 	}
@@ -307,7 +374,8 @@ type teamRequest struct {
 // as the tool result text. Like askServer there is NO client timeout — the
 // server enforces the member time limit — and an unreachable deck becomes an
 // error result, never a made-up answer. ok=false marks such an error.
-func askTeam(tool string, args json.RawMessage) (string, bool) {
+// Cancelling ctx (the CLI interrupted the call) closes the HTTP request.
+func askTeam(ctx context.Context, tool string, args json.RawMessage) (string, bool) {
 	fail := func(reason string) (string, bool) {
 		b, _ := json.Marshal(map[string]string{"status": "failed", "reason": "PowerCodeDeck: " + reason})
 		return string(b), false
@@ -323,7 +391,7 @@ func askTeam(tool string, args json.RawMessage) (string, bool) {
 	if err != nil {
 		return fail("could not encode the request.")
 	}
-	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fail("could not build the request.")
 	}

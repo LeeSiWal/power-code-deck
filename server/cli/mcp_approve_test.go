@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // askServer must DENY when it cannot reach the deck. Allowing on error would run
@@ -129,7 +132,7 @@ func toolNames(t *testing.T) ([]string, int) {
 }
 
 func TestMCPToolsListByEnv(t *testing.T) {
-	os.Unsetenv("PCD_MCP_TOOLS")
+	t.Setenv("PCD_MCP_TOOLS", "")
 	if got, _ := toolNames(t); strings.Join(got, ",") != "approve" {
 		t.Fatalf("unset: %v", got)
 	}
@@ -204,5 +207,125 @@ func TestMCPAskMemberUnreachable(t *testing.T) {
 	var r struct{ Status, Reason string }
 	if err := json.Unmarshal([]byte(text), &r); err != nil || r.Status != "failed" || r.Reason == "" {
 		t.Fatalf("text = %q", text)
+	}
+}
+
+// pipeMCP runs serveMCP on pipes so a test can interleave frames and read
+// replies as they arrive. Returns a writer for frames, a reply channel and a
+// stop func that closes stdin and waits for serveMCP to return.
+func pipeMCP(t *testing.T) (func(string), <-chan map[string]any, func()) {
+	t.Helper()
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		serveMCP(inR, outW)
+		outW.Close()
+		close(done)
+	}()
+	replies := make(chan map[string]any, 16)
+	go func() {
+		sc := bufio.NewScanner(outR)
+		for sc.Scan() {
+			var m map[string]any
+			if json.Unmarshal(sc.Bytes(), &m) == nil {
+				replies <- m
+			}
+		}
+		close(replies)
+	}()
+	write := func(line string) {
+		if _, err := io.WriteString(inW, line+"\n"); err != nil {
+			t.Errorf("write frame: %v", err)
+		}
+	}
+	stop := func() {
+		inW.Close()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("serveMCP did not return after stdin closed")
+		}
+	}
+	return write, replies, stop
+}
+
+// A slow team call must not block an approve call on the same server: the CLI
+// may need a permission answer while a member is still working.
+func TestMCPSlowTeamCallDoesNotBlockApprove(t *testing.T) {
+	release := make(chan struct{})
+	team := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		w.Write([]byte(`{"status":"done"}`))
+	}))
+	defer team.Close()
+	defer close(release)
+	approve := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"behavior":"allow"}`))
+	}))
+	defer approve.Close()
+	t.Setenv("PCD_MCP_TOOLS", "approve,team")
+	t.Setenv("PCD_TEAM_URL", team.URL)
+	t.Setenv("PCD_APPROVE_URL", approve.URL)
+
+	write, replies, stop := pipeMCP(t)
+	write(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask_member","arguments":{"member":"codex","task":"x"}}}`)
+	write(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"approve","arguments":{"tool_name":"Bash","input":{}}}}`)
+	select {
+	case m := <-replies:
+		if id, _ := m["id"].(float64); id != 2 {
+			t.Fatalf("first reply = %v, want the approve (id 2)", m)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("approve blocked behind the slow team call")
+	}
+	release <- struct{}{}
+	select {
+	case m := <-replies:
+		if id, _ := m["id"].(float64); id != 1 {
+			t.Fatalf("second reply = %v, want the team call (id 1)", m)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("team call never answered after release")
+	}
+	stop()
+}
+
+// notifications/cancelled for the in-flight call must close its HTTP request,
+// so the server handler's context ends and TeamService stops the member.
+func TestMCPCancelledClosesTeamRequest(t *testing.T) {
+	arrived := make(chan struct{})
+	closed := make(chan struct{})
+	team := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body) // like the real handler; the server watches the conn only after the body
+		close(arrived)
+		<-r.Context().Done()
+		close(closed)
+	}))
+	defer team.Close()
+	t.Setenv("PCD_MCP_TOOLS", "approve,team")
+	t.Setenv("PCD_TEAM_URL", team.URL)
+
+	write, replies, stop := pipeMCP(t)
+	write(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ask_member","arguments":{"member":"codex","task":"x"}}}`)
+	select {
+	case <-arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("team request never reached the server")
+	}
+	write(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":5,"reason":"interrupted"}}`)
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled call did not close its HTTP request")
+	}
+	stop()
+	// A cancelled request gets no response (MCP: the receiver should not reply).
+	for m := range replies {
+		t.Fatalf("unexpected reply after cancel: %v", m)
 	}
 }
