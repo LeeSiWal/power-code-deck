@@ -147,7 +147,7 @@ func TestTeamResultAndRaiseRoutes(t *testing.T) {
 	e := newTeamEnv(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/api/agents/{id}/team/results/{callId}", TeamResultGet(e.team)).Methods("GET")
-	r.HandleFunc("/api/agents/{id}/team/raise", TeamRaise(e.team)).Methods("POST")
+	r.HandleFunc("/api/agents/{id}/team/raise", TeamRaise(e.team, e.agents)).Methods("POST")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/agents/"+e.agent+"/team/results/tm_x", nil))
 	if w.Code != http.StatusNotFound {
@@ -157,6 +157,11 @@ func TestTeamResultAndRaiseRoutes(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/agents/"+e.agent+"/team/raise", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("raise: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/agents/nope/team/raise", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("raise unknown agent: %d", w.Code)
 	}
 }
 

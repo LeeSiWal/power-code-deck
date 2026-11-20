@@ -329,8 +329,8 @@ func TestAskRetryPolicy(t *testing.T) {
 	h.script = func(int, teamCall) *teamFakeExec {
 		return &teamFakeExec{startErr: errors.New(`exec: "codex": executable file not found in $PATH`)}
 	}
-	if r := h.ask("codex", "look"); r.Status != "not_installed" {
-		t.Fatalf("missing binary: %+v", r)
+	if r := h.ask("codex", "look"); r.Status != "not_installed" || h.callCount() != 1 {
+		t.Fatalf("missing binary: %+v, calls %d (want no retry)", r, h.callCount())
 	}
 }
 

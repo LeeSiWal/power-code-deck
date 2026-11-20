@@ -197,8 +197,9 @@ func (t *TeamService) Ask(ctx context.Context, c TeamCall) TeamResult {
 		// At most one automatic retry: a stale resume starts fresh; a fresh run
 		// tries once more unless it is a timeout, login or quota error.
 		kind := classifyTeamError(runCtx, err)
-		// A canceled call (the conductor was interrupted) is not retried either.
-		if kind != "timeout" && runCtx.Err() == nil && (resume != "" || (kind != "not_logged_in" && kind != "quota")) {
+		// A canceled call (the conductor was interrupted) is not retried either,
+		// nor a missing CLI (a second try cannot install it).
+		if kind != "timeout" && kind != "not_installed" && runCtx.Err() == nil && (resume != "" || (kind != "not_logged_in" && kind != "quota")) {
 			var more *providers.Usage
 			answer, conv, more, err = t.runMember(runCtx, res.CallID+"_2", provider, cwd, m.Model, "", brief)
 			usage = addTeamUsage(usage, more)

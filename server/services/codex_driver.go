@@ -501,8 +501,9 @@ func (d *CodexDriver) handleRequest(msg codexRPCMessage) {
 var codexTeamTools = map[string]bool{"ask_member": true, "handoff_to_agy": true}
 
 // codexToolInMessage pulls the tool out of Codex's approval prompt,
-// `Allow <server> to run tool "<tool>"?` (codex-cli 0.164.0).
-var codexToolInMessage = regexp.MustCompile(`to run tool "([^"]+)"`)
+// `Allow <server> to run tool "<tool>"?` (codex-cli 0.164.0). Anchored to the
+// whole message so a tool name quoted elsewhere in a prompt cannot match.
+var codexToolInMessage = regexp.MustCompile(`^Allow \S+ to run tool "([^"]+)"\?$`)
 
 // isTeamToolApproval recognises Codex's MCP tool-call approval — an elicitation
 // with _meta.codex_approval_kind "mcp_tool_call" — for pcd's team tools, and only

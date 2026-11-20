@@ -340,7 +340,7 @@ func main() {
 	api.HandleFunc("/agents/{id}/team", handlers.TeamModeGet(agentSvc, nativeSvc)).Methods("GET")
 	api.HandleFunc("/agents/{id}/team", handlers.TeamModeSet(agentSvc, database, nativeSvc)).Methods("PUT")
 	api.HandleFunc("/agents/{id}/team/results/{callId}", handlers.TeamResultGet(teamSvc)).Methods("GET")
-	api.HandleFunc("/agents/{id}/team/raise", handlers.TeamRaise(teamSvc)).Methods("POST")
+	api.HandleFunc("/agents/{id}/team/raise", handlers.TeamRaise(teamSvc, agentSvc)).Methods("POST")
 	api.HandleFunc("/team/settings", handlers.TeamSettingsGet(database)).Methods("GET")
 	api.HandleFunc("/team/settings", handlers.TeamSettingsPut(database)).Methods("PUT")
 	api.HandleFunc("/auto-usage", handlers.AutoUsageRecent(autoUsage)).Methods("GET")

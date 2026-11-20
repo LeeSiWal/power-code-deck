@@ -78,9 +78,14 @@ func TeamResultGet(team *services.TeamService) http.HandlerFunc {
 }
 
 // TeamRaise lifts the session's member token cap by one more step.
-func TeamRaise(team *services.TeamService) http.HandlerFunc {
+func TeamRaise(team *services.TeamService, agents *services.AgentService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		team.RaiseCap(mux.Vars(r)["id"])
+		id := mux.Vars(r)["id"]
+		if _, err := agents.Get(id); err != nil {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		team.RaiseCap(id)
 		jsonResponse(w, map[string]bool{"ok": true})
 	}
 }

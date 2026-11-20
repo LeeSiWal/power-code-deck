@@ -271,6 +271,15 @@ func TestCodexAutoAcceptsTeamMCPApproval(t *testing.T) {
 	if strings.Contains(writes.String(), `"accept"`) {
 		t.Fatalf("pcd/approve auto-accepted: %s", writes.String())
 	}
+	// The tool name is read only from a whole prompt of the known shape, not
+	// from a team tool name quoted somewhere inside a longer message.
+	writes.Reset()
+	d.handleRequest(codexRPCMessage{ID: json.RawMessage("52"), Method: "mcpServer/elicitation/request", Params: json.RawMessage(
+		`{"threadId":"thr-1","serverName":"pcd","mode":"form","message":"pcd wants something else; asked to run tool \"ask_member\" earlier. Allow?",
+		"requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call"}}`)})
+	if strings.Contains(writes.String(), `"accept"`) {
+		t.Fatalf("unanchored tool name auto-accepted: %s", writes.String())
+	}
 }
 
 func TestCodexInitReportsRealMCPStatus(t *testing.T) {
