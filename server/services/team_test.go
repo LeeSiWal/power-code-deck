@@ -437,3 +437,18 @@ func TestAskUnknownMemberListsIDs(t *testing.T) {
 		}
 	}
 }
+
+// Self-detection compares normalized model ids: a conductor on
+// claude-sonnet-5-5[1m] (or a dated id) is still the Sonnet member.
+func TestAskSelfExclusionNormalizesModel(t *testing.T) {
+	for _, model := range []string{"claude-sonnet-5-5[1m]", "Claude-Sonnet-5-5", "claude-sonnet-5-5-20261101"} {
+		h := newTeamHarness(t)
+		h.condAdapt, h.condModel = "claude", model
+		if r := h.ask("claude-sonnet", "look"); r.Status != "refused" {
+			t.Errorf("%s: %+v", model, r)
+		}
+		if b := TeamBrief(LoadTeamSettings(h.db), "claude", model); strings.Contains(b, "claude-sonnet:") {
+			t.Errorf("%s: brief lists self", model)
+		}
+	}
+}

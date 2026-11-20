@@ -8,6 +8,7 @@ import (
 	"fmt"
 	osexec "os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -315,9 +316,22 @@ func teamErrorReason(kind string, err error) string {
 }
 
 // isTeamSelf: a member is the conductor itself when it runs the same tool and
-// either the conductor's model or the tool's default model.
+// either the conductor's model or the tool's default model (ids compared
+// normalized, so claude-sonnet-5-5[1m] is still Sonnet).
 func isTeamSelf(m TeamMember, adapter, model string) bool {
-	return m.Adapter == adapter && (m.Model == "" || m.Model == model)
+	return m.Adapter == adapter && (m.Model == "" || normalizeTeamModel(m.Model) == normalizeTeamModel(model))
+}
+
+var teamModelDateSuffix = regexp.MustCompile(`-\d{8}$`)
+
+// normalizeTeamModel lowercases a model id and drops a trailing "[...]" variant
+// (e.g. "[1m]") and a "-YYYYMMDD" date suffix.
+func normalizeTeamModel(id string) string {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if i := strings.LastIndex(id, "["); i > 0 && strings.HasSuffix(id, "]") {
+		id = id[:i]
+	}
+	return teamModelDateSuffix.ReplaceAllString(id, "")
 }
 
 // teamFileInside accepts a relative path that stays inside the working dir.
