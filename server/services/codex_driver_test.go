@@ -141,6 +141,7 @@ func TestCodexStartAddsPcdMCP(t *testing.T) {
 		"-c", `mcp_servers.pcd.command="/opt/pcd"`,
 		"-c", `mcp_servers.pcd.args=["mcp-approve"]`,
 		"-c", `mcp_servers.pcd.env_vars=["PCD_MCP_TOOLS","PCD_TEAM_URL","PCD_APPROVE_TOKEN","PCD_APPROVE_SESSION"]`,
+		"-c", `shell_environment_policy.exclude=["PCD_APPROVE_TOKEN"]`,
 		"-c", "mcp_servers.pcd.tool_timeout_sec=240",
 		"app-server", "--stdio",
 	}
@@ -200,10 +201,16 @@ func TestCodexStartWithoutTeamConfigUnchanged(t *testing.T) {
 	if !strings.HasPrefix(joined, `-c mcp_servers.pcd.command="/opt/pcd"`) || !strings.HasSuffix(joined, "app-server --stdio") {
 		t.Fatalf("oss+team args = %q", joined)
 	}
+	if !strings.Contains(joined, `-c shell_environment_policy.exclude=["PCD_APPROVE_TOKEN"]`) {
+		t.Fatalf("team args lack the token shell exclude: %q", joined)
+	}
 	plainOSS := NewCodexDriver(CodexConfig{Model: "oss:http://127.0.0.1:1/v1:qwen"})
 	pargs, err := plainOSS.buildArgs()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(pargs, " "), "shell_environment_policy") {
+		t.Fatalf("plain oss args got the shell exclude: %q", pargs)
 	}
 	if strings.Contains(strings.Join(pargs, " "), "mcp_servers.pcd") || !strings.HasSuffix(strings.Join(pargs, " "), "app-server --stdio") {
 		t.Fatalf("plain oss args = %q", pargs)

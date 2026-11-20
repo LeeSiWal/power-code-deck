@@ -122,6 +122,9 @@ func (d *CodexDriver) buildArgs() ([]string, error) {
 			"-c", "mcp_servers.pcd.command="+string(cmdTOML),
 			"-c", `mcp_servers.pcd.args=["mcp-approve"]`,
 			"-c", "mcp_servers.pcd.env_vars="+codexTeamEnvVars,
+			// The token sits in codex's own env; keep it out of the shell commands
+			// codex runs rather than trusting Codex's default excludes.
+			"-c", `shell_environment_policy.exclude=["PCD_APPROVE_TOKEN"]`,
 		)
 		if d.cfg.ToolTimeoutSec > 0 {
 			args = append(args, "-c", "mcp_servers.pcd.tool_timeout_sec="+strconv.Itoa(d.cfg.ToolTimeoutSec))
