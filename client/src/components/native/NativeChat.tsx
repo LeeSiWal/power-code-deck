@@ -18,6 +18,8 @@ import { TIER_LABELS, autoSwitchNote, compactTokens, modelName, modelUsageLine, 
 import { AUTO_TOOL, SESSION_TOOLS, launchUrl, rememberTool, sessionName, setPendingStart, takePendingStart, toolForDriver, type PendingStart, type SessionTool } from '../../lib/sessionTools';
 import { clientCommand, type NativeDriverName } from '../../lib/nativeCommands';
 import { ChatDeckKeyboard, ChatDeckToggle, type ChatKeyboard } from './ChatDeckKeyboard';
+import { TeamToggle, TeamToolCard } from './TeamCards';
+import { teamToolCall } from '../../lib/teamTools';
 
 /**
  * NativeChat — a Claude session rendered from its event stream instead of a
@@ -772,7 +774,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
       )}
       <div ref={scrollRef} onScroll={onScroll} className="selectable flex-1 overflow-y-auto px-3 py-3 space-y-2">
         {items.map((item) => (
-          <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} />
+          <ChatRow key={`${item.kind}-${item.id}`} item={item} onAnswer={sendText} agentId={agentId} cwd={cwd} />
         ))}
         {!items.length && (
           <div className="text-deck-muted text-sm py-8 text-center">
@@ -1193,6 +1195,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
                 {currentMode.label}
               </button>}
               {driver === 'antigravity' && <span className="shrink-0 whitespace-nowrap text-xs text-deck-text-dim">CLI 설정 사용</span>}
+              {driver !== 'antigravity' && <TeamToggle agentId={agentId} onError={setError} />}
               {autoOn && onLocal && !working && items.some((i) => i.kind === 'user') && (
                 <button
                   onClick={escalate}
@@ -1279,7 +1282,7 @@ export function NativeChat({ agentId, cwd, model, driver = 'claude', autoRouted 
   );
 }
 
-function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) => void }) {
+function ChatRow({ item, onAnswer, agentId, cwd }: { item: ChatItem; onAnswer: (text: string) => void; agentId: string; cwd: string }) {
   if (item.kind === 'session') {
     // Model / version / cwd are chrome, not conversation — the toolbar already shows
     // the model, so rendering them here just pushes the chat down on every session.
@@ -1332,6 +1335,12 @@ function ChatRow({ item, onAnswer }: { item: ChatItem; onAnswer: (text: string) 
   // checklist is unreadable in a conversation. Render it as a checklist instead —
   // falling back to the generic row if the input isn't the shape we expect, so a
   // CLI schema change degrades to "plain tool card" rather than a blank.
+  // Dream team calls (ask_member / handoff_to_agy) get their own cards.
+  if (item.kind === 'tool') {
+    const team = teamToolCall(item.name, item.input);
+    if (team) return <TeamToolCard item={item} call={team} agentId={agentId} cwd={cwd} onSend={onAnswer} />;
+  }
+
   if (item.kind === 'tool' && item.name === 'TodoWrite') {
     const todos = todosFromInput(item.input);
     if (todos) return <TodoToolRow todos={todos} />;

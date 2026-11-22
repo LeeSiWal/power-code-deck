@@ -178,6 +178,10 @@ func Migrate(db *sql.DB) error {
 		// handing over the whole conversation again.
 		"ALTER TABLE agents ADD COLUMN fresh_turn INTEGER DEFAULT 0",
 		"ALTER TABLE agents ADD COLUMN fresh_memo TEXT DEFAULT ''",
+		// Dream team: whether this session may call other CLIs as read-only team
+		// members, and the conversation id each member kept ({"<memberID>":"<conv>"}).
+		"ALTER TABLE agents ADD COLUMN team_mode INTEGER DEFAULT 0",
+		"ALTER TABLE agents ADD COLUMN team_sessions TEXT DEFAULT ''",
 	} {
 		db.Exec(stmt)
 	}

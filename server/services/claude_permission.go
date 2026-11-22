@@ -182,6 +182,18 @@ func (b *PermissionBroker) forget(id string) {
 	b.mu.Unlock()
 }
 
+// NewDenyingBroker returns a broker that answers every approval request at once
+// with a deny carrying message. It is for read-only members: nothing ever waits
+// for a human. Ask releases b.mu before calling the handler and the answer
+// channel is buffered, so resolving inside the handler cannot deadlock.
+func NewDenyingBroker(message string) *PermissionBroker {
+	b := NewPermissionBroker()
+	b.SetAskHandler(func(req PermissionRequest) {
+		b.Resolve(req.ID, PermissionDecision{Behavior: "deny", Message: message})
+	})
+	return b
+}
+
 // InjectPendingForTest registers a request directly in the pending map and returns
 // its answer channel. It exists solely to support hub tests that need a
 // pending approval present without running Ask (which blocks a goroutine).

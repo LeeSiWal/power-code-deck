@@ -31,3 +31,16 @@ const storageItems = foldEvents(storageFailure);
 if (!isTurnActive(storageFailure) || storageItems[1].kind !== 'result' || !storageItems[1].notice) {
   throw new Error('Storage failure was hidden or incorrectly ended the live turn');
 }
+
+// Codex approvals go through app-server itself, never through the pcd bridge;
+// pcd only appears in its init when the team tools are configured. A Codex
+// session without it must not raise the "bridge not connected" alarm, while a
+// Claude session without it still must.
+const codexInit = foldEvents([{ type: 'system', subtype: 'init', model: 'gpt-6.1-sol', claude_code_version: 'Codex app-server' }])[0];
+if (codexInit.kind !== 'session' || !codexInit.bridgeOk) {
+  throw new Error('Codex session without pcd raised the bridge alarm');
+}
+const claudeInit = foldEvents([{ type: 'system', subtype: 'init', model: 'claude-opus-5-5', claude_code_version: '2.1.212', mcp_servers: [] }])[0];
+if (claudeInit.kind !== 'session' || claudeInit.bridgeOk) {
+  throw new Error('Claude session without pcd hid the bridge alarm');
+}

@@ -12,6 +12,14 @@ import (
 // 회귀 확인 항목: 선택지가 뜰 때 허용/거부 카드가 없어야 한다.
 const askUserQuestionTool = "AskUserQuestion"
 
+// teamAutoAllow are pcd's own dream team tools. They are gated by the session
+// toggle and caps inside TeamService, and the members they start are read-only,
+// so asking the user to approve each call would only add a card per delegation.
+var teamAutoAllow = map[string]bool{
+	"mcp__pcd__ask_member":     true,
+	"mcp__pcd__handoff_to_agy": true,
+}
+
 // NativeApprove is the deck side of the permission bridge: `pcd mcp-approve`
 // (spawned by Claude, see cli/mcp_approve.go) POSTs here when Claude wants to run
 // a tool, and this handler holds the HTTP response open until a human answers on
@@ -59,7 +67,7 @@ func NativeApprove(broker *services.PermissionBroker, tokens services.ApproveTok
 		// 입력에서 직접 렌더하므로(lib/nativeEvents.ts), 여기서 끊지 않으면 선택지와
 		// 허용/거부 카드가 동시에 뜬다. 게다가 native:approval은 BroadcastAll이라
 		// 컨트롤 룸 승인 피드와 "승인 필요" 푸시까지 오염된다.
-		if req.ToolName == askUserQuestionTool {
+		if req.ToolName == askUserQuestionTool || teamAutoAllow[req.ToolName] {
 			writeJSON(w, http.StatusOK, services.PermissionDecision{
 				Behavior:     "allow",
 				UpdatedInput: req.Input,

@@ -4,6 +4,7 @@ import { NotificationSettings } from '../components/settings/NotificationSetting
 import { UiScaleSettings } from '../components/settings/UiScaleSettings';
 import { RoutingMatrix } from '../components/settings/RoutingMatrix';
 import { AutoUsagePanel } from '../components/settings/AutoUsagePanel';
+import { TeamPanel } from '../components/settings/TeamPanel';
 import { LocalModelsPanel } from '../components/settings/LocalModelsPanel';
 import { ApprovalRules } from '../components/settings/ApprovalRules';
 import { BottomNav } from '../components/layout/BottomNav';
@@ -41,6 +42,7 @@ export function SettingsPage() {
         <RoutingMatrix />
         <LocalModelsPanel />
         <AutoUsagePanel />
+        <TeamPanel />
 
         <div className="card p-3">
           <div className="text-sm font-medium mb-1">About</div>

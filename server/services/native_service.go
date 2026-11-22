@@ -136,6 +136,18 @@ type NativeService struct {
 	// that knows nothing about them can still open the session correctly.
 	saveOptions func(agentID string, opts NativeOptions)
 	loadOptions func(agentID string) NativeOptions
+
+	// teamTools, when set, gives Claude/Codex conductors the dream team tools
+	// (with the fixed TeamToolTimeoutSec CLI tool timeout). turnHook runs on
+	// every user turn sent (TeamService.ResetTurn).
+	teamTools bool
+	turnHook       func(sessionID string)
+	// teamBrief is the dream team brief waiting for the session's next message.
+	// Kept apart from prefix so a handoff/advice SetPrefix cannot drop it, and
+	// set (not appended) so it is never queued twice. teamBriefFor supplies the
+	// brief when a new conductor conversation starts (ok=false: team mode off).
+	teamBrief    map[string]string
+	teamBriefFor func(sessionID, kind, model string) (string, bool)
 }
 
 type nativeSession struct {
@@ -148,6 +160,7 @@ type nativeSession struct {
 	model         string        // remembered so a mode switch keeps the model, and vice-versa
 	mode          string        // permission mode: "" | acceptEdits | plan | bypassPermissions
 	effort        string        // low | medium | high | xhigh | max — fixed for the process's lifetime
+	teamTools     bool          // the process was spawned with the dream team MCP tools
 	opts          NativeOptions // set-once session options, also fixed for the process's lifetime
 	// history keeps the events already emitted, so a device that connects late (or
 	// reconnects from another device) can render the conversation so far. This is
@@ -463,12 +476,26 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			opts, _ = loadOpts(sessionID).Normalize()
 		}
 	}
+	s.mu.RLock()
+	teamOn := s.teamTools
+	s.mu.RUnlock()
+	// Conductors get the dream team tools. A Codex conductor's pcd MCP server is
+	// spawned by codex itself from SelfPath, so it needs the pcd binary too.
+	teamTools := teamOn && (kind == "claude" || (kind == "codex" && s.selfBin != ""))
+	// Claude always needs the token (its approval bridge); Codex only for the team
+	// endpoint, which checks the same per-session token.
 	var token string
-	if kind == "claude" {
+	if kind == "claude" || teamTools {
 		var err error
 		if token, err = s.tokens.Issue(sessionID); err != nil {
 			return err
 		}
+	}
+	toolTimeoutMs := 0
+	if teamTools {
+		// Fixed from the TimeoutSec clamp, not the current setting: the process
+		// outlives Settings changes, and the server enforces TimeoutSec itself.
+		toolTimeoutMs = TeamToolTimeoutSec * 1000
 	}
 	// One constructor for both attempts below, so the retry can never drift from the
 	// first try — and so the retry is not silently Claude-only, which is what used to
@@ -477,16 +504,22 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		if kind == "codex" {
 			// Codex maps "auto" to its default (on-request) approval policy, so gated calls
 			// still reach the broker and the same policy applies.
-			return NewCodexDriver(CodexConfig{
+			cfg := CodexConfig{
 				SessionID: sessionID, Cwd: cwd, Model: model, Mode: mode,
 				ResumeID: resume, Broker: s.broker,
-			})
+			}
+			if teamTools {
+				cfg.SelfPath, cfg.TeamURL, cfg.TeamToken = s.selfBin, s.baseURL+"/internal/native/team", token
+				cfg.ToolTimeoutSec = toolTimeoutMs / 1000
+			}
+			return NewCodexDriver(cfg)
 		}
 		return NewClaudeDriver(ClaudeConfig{
 			SessionID: sessionID, Cwd: cwd, Model: model, PermissionMode: cliMode,
 			Effort: effort, Options: opts,
 			ResumeID: resume, ApproveURL: s.baseURL + "/internal/native/approve",
 			ApproveToken: token, SelfPath: s.selfBin,
+			TeamTools: teamTools, TeamURL: s.baseURL + "/internal/native/team", ToolTimeoutMs: toolTimeoutMs,
 		})
 	}
 	newDriver := func(resume string) (nativeExecution, error) {
@@ -500,6 +533,7 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 		}
 		return native.New(providers.Identity{ExecutionID: rand.Text(), Provider: provider}, newWireDriver(resume))
 	}
+	freshConv := resumeID == "" // a new conversation that has not seen the team brief
 	d, err := newDriver(resumeID)
 	if err != nil {
 		s.tokens.Revoke(sessionID)
@@ -521,13 +555,14 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 			return buildErr
 		}
 		d = replacement
+		freshConv = true
 		if err2 := d.Start(); err2 != nil {
 			s.tokens.Revoke(sessionID)
 			return err
 		}
 	}
 
-	sess := &nativeSession{id: sessionID, driver: d, kind: kind, cwd: cwd, model: model, mode: mode, effort: effort, opts: opts}
+	sess := &nativeSession{id: sessionID, driver: d, kind: kind, cwd: cwd, model: model, mode: mode, effort: effort, opts: opts, teamTools: teamTools}
 	s.mu.Lock()
 	carried, isSwitch := s.carry[sessionID]
 	delete(s.carry, sessionID)
@@ -559,6 +594,10 @@ func (s *NativeService) startSession(sessionID, kind, cwd, model, resumeID, mode
 	// on this device or another — resumes with them.
 	if save != nil {
 		save(sessionID, model, mode, effort)
+	}
+
+	if freshConv {
+		s.queueTeamBrief(sessionID)
 	}
 
 	go s.pump(sess)
@@ -720,7 +759,15 @@ func (s *NativeService) restart(sessionID, model, mode, effort string) error {
 	s.carry[sessionID] = carried
 	s.mu.Unlock()
 	old.driver.Stop() // its pump exits; the pump guard keeps it from evicting the new one
-	return s.startSession(sessionID, kind, cwd, model, resumeID, mode, effort, false)
+	if err := s.startSession(sessionID, kind, cwd, model, resumeID, mode, effort, false); err != nil {
+		return err
+	}
+	// A process that just gained the team tools (started before them) needs the
+	// brief even though its conversation continues.
+	if !old.teamTools {
+		s.queueTeamBrief(sessionID)
+	}
+	return nil
 }
 
 // SetModel switches model, keeping the current permission mode and effort.
@@ -898,20 +945,33 @@ func (s *NativeService) SendWithDisplayText(sessionID, driverText, displayText s
 		defer sess.sendMu.Unlock()
 	}
 	s.mu.Lock()
+	hook := s.turnHook
 	if p := s.prefix[sessionID]; p != "" {
 		driverText = p + driverText
 		delete(s.prefix, sessionID)
+	}
+	// The team brief goes first: a handoff/advice prefix ends right before the
+	// user's text ("[현재 요청]") and must stay adjacent to it.
+	if b := s.teamBrief[sessionID]; b != "" {
+		driverText = b + driverText
+		delete(s.teamBrief, sessionID)
 	}
 	note := s.notes[sessionID]
 	delete(s.notes, sessionID)
 	s.mu.Unlock()
 	sess.mu.Lock()
+	newTurn := !sess.turnActive // a message queued mid-turn joins the running turn
 	sess.turnActive = true
 	sess.mu.Unlock()
+	if hook != nil && newTurn {
+		hook(sessionID) // a new user turn: the member-call counter starts over
+	}
 	if err := sess.driver.Send(driverText); err != nil {
-		sess.mu.Lock()
-		sess.turnActive = false
-		sess.mu.Unlock()
+		if newTurn { // a failed mid-turn send leaves the running turn alone
+			sess.mu.Lock()
+			sess.turnActive = false
+			sess.mu.Unlock()
+		}
 		return err
 	}
 	// Record the user turn in history NOW — at its real position, before the reply
@@ -999,6 +1059,9 @@ func (s *NativeService) SwitchKind(sessionID, kind, model, effort, prefix string
 		s.mu.Unlock()
 		return err
 	}
+	// The new tool is a new conductor: it has never seen the brief, and the old
+	// one listed members for the previous tool.
+	s.queueTeamBrief(sessionID)
 	return nil
 }
 
@@ -1011,6 +1074,84 @@ func (s *NativeService) SetPrefix(sessionID, text string) {
 	}
 	s.prefix[sessionID] = text
 	s.mu.Unlock()
+}
+
+// SetTeamBrief queues the dream team brief for the session's next message,
+// replacing any brief already waiting ("" clears it). Independent of SetPrefix.
+func (s *NativeService) SetTeamBrief(sessionID, text string) {
+	s.mu.Lock()
+	if s.teamBrief == nil {
+		s.teamBrief = map[string]string{}
+	}
+	if text == "" {
+		delete(s.teamBrief, sessionID)
+	} else {
+		s.teamBrief[sessionID] = text
+	}
+	s.mu.Unlock()
+}
+
+// SetTeamBriefSource sets how a new conductor conversation gets its brief: fn
+// returns it, or ok=false when team mode is off for the session.
+func (s *NativeService) SetTeamBriefSource(fn func(sessionID, kind, model string) (string, bool)) {
+	s.mu.Lock()
+	s.teamBriefFor = fn
+	s.mu.Unlock()
+}
+
+// queueTeamBrief queues a fresh brief for a session whose process has the team
+// tools, when its source says team mode is on; a process without them drops any
+// brief still waiting.
+func (s *NativeService) queueTeamBrief(sessionID string) {
+	s.mu.RLock()
+	fn := s.teamBriefFor
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if fn == nil || sess == nil {
+		return
+	}
+	if !sess.teamTools { // a brief would name tools this process does not have
+		s.SetTeamBrief(sessionID, "")
+		return
+	}
+	if text, ok := fn(sessionID, sess.kind, sess.model); ok {
+		s.SetTeamBrief(sessionID, text)
+	}
+}
+
+// SetTeamTools gives Claude and Codex sessions spawned from now on the dream team
+// tools.
+func (s *NativeService) SetTeamTools() {
+	s.mu.Lock()
+	s.teamTools = true
+	s.mu.Unlock()
+}
+
+// SetTurnHook runs fn with the session id each time a user turn is sent.
+func (s *NativeService) SetTurnHook(fn func(sessionID string)) {
+	s.mu.Lock()
+	s.turnHook = fn
+	s.mu.Unlock()
+}
+
+// TeamConductor reports a live Claude/Codex session's tool, current model and
+// working dir — what TeamService needs to run members beside it.
+func (s *NativeService) TeamConductor(sessionID string) (kind, model, cwd string, ok bool) {
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if sess == nil || (sess.kind != "claude" && sess.kind != "codex") {
+		return "", "", "", false
+	}
+	return sess.kind, sess.model, sess.cwd, true
+}
+
+// TeamReady reports whether the running process was spawned with the team tools.
+func (s *NativeService) TeamReady(sessionID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess := s.sessions[sessionID]
+	return sess != nil && sess.teamTools
 }
 
 // SetNextNote shows a message from the deck itself in the chat right after the

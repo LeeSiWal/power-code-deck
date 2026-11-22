@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"powercodedeck/internal/ossbridge"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -28,6 +29,30 @@ type CodexConfig struct {
 	Mode     string
 	ResumeID string
 	Broker   *PermissionBroker
+	// SelfPath, TeamURL and TeamToken give a conductor the pcd MCP server with the
+	// dream team tools (ask_member, handoff_to_agy). Only NativeService sets them;
+	// members and Runs leave them empty and get no MCP server at all. The values
+	// reach the server through the codex process env (mcp_servers.pcd.env_vars),
+	// never argv.
+	SelfPath  string
+	TeamURL   string
+	TeamToken string
+	// ToolTimeoutSec overrides Codex's MCP tool-call timeout (60s by default) so
+	// ask_member can outlive a member's own time limit. 0 keeps the default.
+	ToolTimeoutSec int
+}
+
+// teamMCP reports whether the pcd MCP server is configured — all three or nothing.
+func (c CodexConfig) teamMCP() bool {
+	return c.SelfPath != "" && c.TeamURL != "" && c.TeamToken != ""
+}
+
+// codexBinary resolves the codex CLI; tests swap it for a fake script.
+var codexBinary = func() string {
+	if resolved := findAgentCommand("codex"); resolved != "" {
+		return resolved
+	}
+	return "codex"
 }
 
 type codexRPCMessage struct {
@@ -82,25 +107,66 @@ func NewCodexDriver(cfg CodexConfig) *CodexDriver {
 	}
 }
 
-func (d *CodexDriver) Start() error {
-	bin := "codex"
-	if resolved := findAgentCommand("codex"); resolved != "" {
-		bin = resolved
+// codexTeamEnvVars are forwarded from the codex process to the pcd MCP server.
+// Codex starts stdio MCP servers with a minimal env, so without env_vars none of
+// these would reach `pcd mcp-approve`.
+const codexTeamEnvVars = `["PCD_MCP_TOOLS","PCD_TEAM_URL","PCD_APPROVE_TOKEN","PCD_APPROVE_SESSION"]`
+
+// buildArgs is the app-server argv: the pcd MCP server first (when configured),
+// then any oss bridge overrides, then the subcommand.
+func (d *CodexDriver) buildArgs() ([]string, error) {
+	var args []string
+	if d.cfg.teamMCP() {
+		cmdTOML, _ := json.Marshal(d.cfg.SelfPath) // a JSON string is a valid TOML basic string
+		args = append(args,
+			"-c", "mcp_servers.pcd.command="+string(cmdTOML),
+			"-c", `mcp_servers.pcd.args=["mcp-approve"]`,
+			"-c", "mcp_servers.pcd.env_vars="+codexTeamEnvVars,
+			// The token sits in codex's own env; keep it out of the shell commands
+			// codex runs rather than trusting Codex's default excludes.
+			"-c", `shell_environment_policy.exclude=["PCD_APPROVE_TOKEN"]`,
+		)
+		if d.cfg.ToolTimeoutSec > 0 {
+			args = append(args, "-c", "mcp_servers.pcd.tool_timeout_sec="+strconv.Itoa(d.cfg.ToolTimeoutSec))
+		}
 	}
-	args := []string{"app-server", "--stdio"}
 	// A bridged local model ("oss:<endpoint>:<model>") runs through the
 	// loopback Responses→Chat bridge; see internal/ossbridge.
 	if ep, model, ok := ossbridge.ParseModel(d.cfg.Model); ok {
 		extra, err := ossbridge.CodexArgs(ep, model)
 		if err != nil {
-			return fmt.Errorf("codex local model setup: %w", err)
+			return nil, fmt.Errorf("codex local model setup: %w", err)
 		}
-		args = append(extra, args...)
+		args = append(args, extra...)
 	}
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = d.cfg.Cwd
+	return append(args, "app-server", "--stdio"), nil
+}
+
+// processEnv is the codex process env; with the pcd MCP server it carries the
+// values its env_vars forward (Codex conductors keep their own approval path, so
+// the server gets the team tools only).
+func (d *CodexDriver) processEnv() []string {
 	locale := utf8Locale()
-	cmd.Env = withAgentPath(append(os.Environ(), "LANG="+locale, "LC_ALL="+locale))
+	env := append(os.Environ(), "LANG="+locale, "LC_ALL="+locale)
+	if d.cfg.teamMCP() {
+		env = append(env,
+			"PCD_MCP_TOOLS=team",
+			"PCD_TEAM_URL="+d.cfg.TeamURL,
+			"PCD_APPROVE_TOKEN="+d.cfg.TeamToken,
+			"PCD_APPROVE_SESSION="+d.cfg.SessionID,
+		)
+	}
+	return withAgentPath(env)
+}
+
+func (d *CodexDriver) Start() error {
+	args, err := d.buildArgs()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(codexBinary(), args...)
+	cmd.Dir = d.cfg.Cwd
+	cmd.Env = d.processEnv()
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -400,6 +466,12 @@ func (d *CodexDriver) handleRequest(msg codexRPCMessage) {
 	}
 	input := map[string]any{"reason": p["reason"]}
 	tool := "Codex"
+	if msg.Method == "mcpServer/elicitation/request" && d.isTeamToolApproval(p) {
+		// Our own team tools: the toggle and caps are enforced deck-side, so the
+		// call needs no card (Claude conductors get the same in NativeApprove).
+		d.respond(msg.ID, map[string]any{"action": "accept", "content": map[string]any{}}, nil)
+		return
+	}
 	switch msg.Method {
 	case "item/commandExecution/requestApproval":
 		tool, input["command"], input["cwd"] = "Bash", p["command"], p["cwd"]
@@ -423,6 +495,35 @@ func (d *CodexDriver) handleRequest(msg codexRPCMessage) {
 		answer = "accept"
 	}
 	d.respond(msg.ID, map[string]any{"decision": answer}, nil)
+}
+
+// codexTeamTools are the pcd tools a conductor may call without a card.
+var codexTeamTools = map[string]bool{"ask_member": true, "handoff_to_agy": true}
+
+// codexToolInMessage pulls the tool out of Codex's approval prompt,
+// `Allow <server> to run tool "<tool>"?` (codex-cli 0.164.0). Anchored to the
+// whole message so a tool name quoted elsewhere in a prompt cannot match.
+var codexToolInMessage = regexp.MustCompile(`^Allow \S+ to run tool "([^"]+)"\?$`)
+
+// isTeamToolApproval recognises Codex's MCP tool-call approval — an elicitation
+// with _meta.codex_approval_kind "mcp_tool_call" — for pcd's team tools, and only
+// when this driver configured the pcd server itself.
+func (d *CodexDriver) isTeamToolApproval(p map[string]any) bool {
+	if !d.cfg.teamMCP() || p["serverName"] != "pcd" {
+		return false
+	}
+	meta, _ := p["_meta"].(map[string]any)
+	if meta == nil || meta["codex_approval_kind"] != "mcp_tool_call" {
+		return false
+	}
+	tool, _ := meta["tool_name"].(string)
+	if tool == "" {
+		msg, _ := p["message"].(string)
+		if m := codexToolInMessage.FindStringSubmatch(msg); m != nil {
+			tool = m[1]
+		}
+	}
+	return codexTeamTools[tool]
 }
 
 func (d *CodexDriver) respond(id json.RawMessage, result any, rpcErr any) {
@@ -479,12 +580,17 @@ func (d *CodexDriver) handleNotification(method string, raw json.RawMessage) {
 // claude_code_version of its own).
 const codexInitVersion = "Codex app-server"
 
+// emitSystem reports pcd as connected only when this process was given the pcd
+// MCP server; otherwise mcp_servers is omitted rather than faked.
 func (d *CodexDriver) emitSystem(model string) {
-	raw, _ := json.Marshal(map[string]any{
+	sysInit := map[string]any{
 		"type": "system", "subtype": "init", "session_id": d.ConversationID(),
 		"model": model, "cwd": d.cfg.Cwd, "claude_code_version": codexInitVersion,
-		"mcp_servers": []map[string]string{{"name": "pcd", "status": "connected"}},
-	})
+	}
+	if d.cfg.teamMCP() {
+		sysInit["mcp_servers"] = []map[string]string{{"name": "pcd", "status": "connected"}}
+	}
+	raw, _ := json.Marshal(sysInit)
 	ev, _ := ParseStreamEvent(raw)
 	d.events <- ev
 }
